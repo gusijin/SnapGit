@@ -1,0 +1,45 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability",
+  "windows": ["main", "editor-*"],
+  "permissions": [
+    "core:default",
+    "core:webview:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-set-size",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:app:default",
+    "core:path:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "fs:default",
+    "fs:allow-read",
+    "fs:allow-write",
+    "fs:allow-exists",
+    "fs:allow-create",
+    "fs:allow-mkdir",
+    "fs:allow-read-dir",
+    "fs:allow-watch",
+    "fs:read-all",
+    "fs:scope-home",
+    "fs:scope-home-recursive",
+    {
+      "identifier": "fs:allow-read",
+      "allow": ["$HOME/**"]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": ["$HOME/**"]
+    }
+  ]
+}

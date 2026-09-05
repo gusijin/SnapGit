@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>EditorWindow mock test</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: 'editor-test' } },
+        transformCallback: function () { return 1 },
+        unregisterCallback: function () {},
+        invoke: function (cmd, args) {
+          console.log('[MOCK invoke]', cmd, args)
+          if (cmd === 'get_edit_args') {
+            return Promise.resolve({ repoPath: 'C:/fake/repo', filePath: 'src/demo.txt', mode: 'diff' })
+          }
+          if (cmd === 'get_file_diff') {
+            return Promise.resolve({
+              old_content: ['line old 1', 'line old 2', 'line old 3'],
+              new_content: ['line new 1', 'line new 2 changed', 'line new 3'],
+              lines: []
+            })
+          }
+          if (cmd === 'close_edit_window') {
+            return Promise.resolve(null)
+          }
+          return Promise.reject('no mock for ' + cmd)
+        }
+      }
+    </script>
+    <script type="module" src="/src/editor-main.ts"></script>
+  </body>
+</html>

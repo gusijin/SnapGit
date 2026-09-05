@@ -1,0 +1,23 @@
+[package]
+name = "snapgit"
+version = "0.1.0"
+description = "A modern Git client built with Tauri"
+authors = ["HST"]
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2.11.5", features = ["default", "tray-icon", "image-png", "image-ico"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+git2 = "0.19.0"
+tokio = { version = "1.0", features = ["full"] }
+dirs = "5.0"
+tauri-plugin-dialog = "2.7.2"
+# watch feature：启用 fs 插件的文件监听（watch/watch_immediate 命令），
+# 未开启时前端调用 watch 会报 "Command watch not found"，自动刷新只能降级为窗口聚焦刷新
+tauri-plugin-fs = { version = "2.5.1", features = ["watch"] }
+tauri-plugin-shell = "2.3.5"
+rfd = "0.16"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }

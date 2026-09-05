@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角方底（iOS squircle 风格，rx≈22%） -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Git 三节点分支：主干竖线 + 分叉折线 -->
+  <g stroke="#ffffff" stroke-width="36" stroke-linecap="round" fill="none">
+    <path d="M 160 384 V 224"/>
+    <path d="M 160 224 H 352 V 96"/>
+  </g>
+  <!-- 三个提交节点 -->
+  <g fill="#ffffff">
+    <circle cx="160" cy="384" r="32"/>
+    <circle cx="160" cy="224" r="32"/>
+    <circle cx="352" cy="96" r="32"/>
+  </g>
+</svg>
