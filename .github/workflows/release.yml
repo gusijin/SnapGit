@@ -57,8 +57,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          target: ${{ matrix.target }}
-          args: --bundles nsis
+          args: --target ${{ matrix.target }} --bundles nsis
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -105,8 +104,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          target: ${{ matrix.target }}
-          args: --bundles dmg
+          args: --target ${{ matrix.target }} --bundles dmg
 
       - name: Upload dmg
         uses: actions/upload-artifact@v4
