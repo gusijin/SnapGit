@@ -21,3 +21,9 @@ rfd = "0.16"
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
+
+# git2 -> libgit2-sys 在 macOS/Linux 上会引入 openssl-sys，
+# 交叉编译时（如 Apple Silicon 交叉编译 Intel）找不到目标架构的系统 OpenSSL，
+# 启用 vendored 让 openssl 随源码一起编译，规避该问题
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
