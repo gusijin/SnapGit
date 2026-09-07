@@ -194,6 +194,4 @@ SnapGit/
 | `get_current_branch` | 获取当前分支 |
 | `open_folder_dialog` | 打开文件夹选择对话框 |
 
-## 许可证
 
-MIT
