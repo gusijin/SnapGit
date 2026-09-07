@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FileDiff } from '../types'
+import type { FileDiff, DiffLine } from '../types'
 import { computeAnchoredScrollTop } from '../diffScrollSync'
 import {
   Save, Pencil, History,
@@ -34,70 +34,39 @@ interface AlignedRow {
   newIdx: number | null
 }
 
-// 最长公共子序列 DP 表
-function lcsTable(a: string[], b: string[]): number[][] {
-  const n = a.length
-  const m = b.length
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+// 由后端返回的 diff.lines 构造对齐行（与 DiffViewer 共用同一份后端 diff，保证编辑窗口
+// 与查看面板的差异标注【像素级一致】）。后端已是 Myers 差分（O(ND)），几万行也能算出，
+// 前端不再跑 O(m*n) 的 LCS DP（那才是超大文件卡死/白屏的根因）。
+// 后端已把相邻 delete+add 合并为 modified 行，直接按 line_type 映射：
+//   context→eq / delete→del / add→add / modified→mod
+function buildAlignmentFromLines(lines: DiffLine[]): AlignedRow[] {
+  return lines.map((l): AlignedRow => {
+    switch (l.line_type) {
+      case 'delete':
+        return { type: 'del', oldIdx: l.old_line != null ? l.old_line - 1 : null, newIdx: null }
+      case 'add':
+        return { type: 'add', oldIdx: null, newIdx: l.new_line != null ? l.new_line - 1 : null }
+      case 'modified':
+        return { type: 'mod', oldIdx: l.old_line != null ? l.old_line - 1 : null, newIdx: l.new_line != null ? l.new_line - 1 : null }
+      case 'context':
+      default:
+        return { type: 'eq', oldIdx: l.old_line != null ? l.old_line - 1 : null, newIdx: l.new_line != null ? l.new_line - 1 : null }
     }
-  }
-  return dp
+  })
 }
 
-// 由 old/new 行构造对齐行（与 DiffViewer 的 old_line / new_line 语义一致）
-function buildAlignment(oldL: string[], newL: string[]): AlignedRow[] {
-  // 超大文件（与 Rust 端 MAX_DIFF_LINES 一致）：跳过 O(m*n) 的 LCS DP，
-  // 直接逐行 eq 对齐（行数不一致时按最大行数补 eq 行），保证编辑视图不卡死、仍可编辑保存。
-  const LIMIT = 5000
-  if (oldL.length > LIMIT || newL.length > LIMIT) {
-    const len = Math.max(oldL.length, newL.length)
-    const rows: AlignedRow[] = []
-    for (let k = 0; k < len; k++) {
-      const oldIdx = k < oldL.length ? k : null
-      const newIdx = k < newL.length ? k : null
-      rows.push({ type: 'eq', oldIdx, newIdx })
-    }
-    return rows
+// 构造对齐行：优先用后端 diff.lines（含真实差异标注）；lines 为空（超大 oversized / 二进制）
+// 时退化逐行 eq 对齐（行数不一致按最大行数补 eq 行），保证编辑视图仍可编辑保存。
+function buildAlignment(oldL: string[], newL: string[], lines: DiffLine[]): AlignedRow[] {
+  if (lines.length > 0) {
+    return buildAlignmentFromLines(lines)
   }
-  const dp = lcsTable(oldL, newL)
-  const ops: Array<{ type: 'eq' | 'del' | 'add'; oldIdx: number; newIdx: number }> = []
-  let i = 0
-  let j = 0
-  while (i < oldL.length && j < newL.length) {
-    if (oldL[i] === newL[j]) {
-      ops.push({ type: 'eq', oldIdx: i, newIdx: j })
-      i++
-      j++
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      ops.push({ type: 'del', oldIdx: i, newIdx: -1 })
-      i++
-    } else {
-      ops.push({ type: 'add', oldIdx: -1, newIdx: j })
-      j++
-    }
-  }
-  while (i < oldL.length) { ops.push({ type: 'del', oldIdx: i, newIdx: -1 }); i++ }
-  while (j < newL.length) { ops.push({ type: 'add', oldIdx: -1, newIdx: j }); j++ }
-
-  // 相邻 del/add 配对为 mod（同一处修改：左删 + 右增）
+  const len = Math.max(oldL.length, newL.length)
   const rows: AlignedRow[] = []
-  let k = 0
-  while (k < ops.length) {
-    const o = ops[k]
-    const n = ops[k + 1]
-    if (o.type === 'del' && n && n.type === 'add') {
-      rows.push({ type: 'mod', oldIdx: o.oldIdx, newIdx: n.newIdx })
-      k += 2
-    } else if (o.type === 'add' && n && n.type === 'del') {
-      rows.push({ type: 'mod', oldIdx: n.oldIdx, newIdx: o.newIdx })
-      k += 2
-    } else {
-      rows.push({ type: o.type, oldIdx: o.oldIdx >= 0 ? o.oldIdx : null, newIdx: o.newIdx >= 0 ? o.newIdx : null })
-      k++
-    }
+  for (let k = 0; k < len; k++) {
+    const oldIdx = k < oldL.length ? k : null
+    const newIdx = k < newL.length ? k : null
+    rows.push({ type: 'eq', oldIdx, newIdx })
   }
   return rows
 }
@@ -107,7 +76,7 @@ function buildAlignment(oldL: string[], newL: string[]): AlignedRow[] {
 // 原因导致行数漂移（K2≠K1），使左右 textarea 行数不等、右栏 maxScroll 偏小、
 // 拖到底时右栏内容显示不全。统一以这一次对齐的行数为准，右栏文本按 index 对应。
 const alignment = ref<AlignedRow[]>(
-  buildAlignment(props.diff.old_content, props.diff.new_content),
+  buildAlignment(props.diff.old_content, props.diff.new_content, props.diff.lines),
 )
 // 右侧可编辑内容初始为「对齐后的新版本」：删除行处留空行占位，与差异面板对齐一致。
 // 行数严格 = alignment.length（K），保证左右 textarea 行数一致、滚动同步正确。
@@ -141,9 +110,19 @@ interface CharSeg {
 }
 
 // 对一对字符串做字符级 LCS，返回左右两侧的分段（合并连续同类，减少 DOM 节点）
+// 超长行防护：字符级 LCS 是 O(m*n)，单行超长（压缩产物一行几万字符）会卡死前端。
+// 超阈值时放弃字符级标注、整行归为同色（eq）—— 行级底色已表达差异，与 Rust 端
+// diff_chars 的 MAX_CHAR_DIFF_LEN 保持一致（改动需两端同步）。
+const MAX_CHAR_DIFF_LEN = 2000
 function charDiffSegs(oldStr: string, newStr: string): { left: CharSeg[]; right: CharSeg[] } {
   const n = oldStr.length
   const m = newStr.length
+  if (n > MAX_CHAR_DIFF_LEN || m > MAX_CHAR_DIFF_LEN) {
+    return {
+      left: [{ text: oldStr, type: 'eq' }],
+      right: [{ text: newStr, type: 'eq' }],
+    }
+  }
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
@@ -383,7 +362,7 @@ function flashToast(msg: string) {
 watch(
   () => props.diff,
   (d) => {
-    const a = buildAlignment(d.old_content, d.new_content)
+    const a = buildAlignment(d.old_content, d.new_content, d.lines)
     alignment.value = a
     content.value = a.map((r) => (r.newIdx !== null ? (d.new_content[r.newIdx] ?? '') : '')).join('\n')
     newLinesRef.value = content.value.split('\n')

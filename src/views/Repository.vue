@@ -639,14 +639,42 @@ async function handleShowCommitFiles(commitId: string) {
     commitFiles.value = files
     currentCommitId.value = commitId
     fileViewMode.value = 'commit'
-    selectedFiles.value = []
-    selectedFileDiff.value = null
+    // 双击进入提交详情：同样自动展示第一个文件的差异，与单点击行为一致
+    await selectFirstCommitFile(files)
   } catch (e) {
     console.error('Get commit files error:', e)
   }
 }
 
+// 提取文件名（与 FileList.sortedFiles 的排序口径一致），用于确定「列表第一个文件」
+function fileNameOf(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/')
+  return parts[parts.length - 1] || path
+}
+
+// 提交文件按文件名排序，与 FileList 展示顺序一致，
+// 确保「第一个文件」= 文件列表顶部那一个（而非 Rust 返回的原始顺序）
+function firstCommitFilePath(files: FileStatus[]): string | null {
+  if (!files.length) return null
+  const sorted = [...files].sort((a, b) =>
+    fileNameOf(a.path).toLowerCase().localeCompare(fileNameOf(b.path).toLowerCase())
+  )
+  return sorted[0].path
+}
+
+// 选中提交后自动加载第一个文件的差异（复用 handleSelectFiles 的 diff 链路）
+async function selectFirstCommitFile(files: FileStatus[]) {
+  const first = firstCommitFilePath(files)
+  if (first) {
+    await handleSelectFiles([first])
+  } else {
+    selectedFiles.value = []
+    selectedFileDiff.value = null
+  }
+}
+
 // 提交历史视图：单击提交 → 加载该提交文件并切换右侧详情（复用现有 diff 链路）
+// 同时自动选中并展示文件列表第一个文件的差异，点一次提交即可见 diff（验收点）
 async function handleSelectCommit(commitId: string) {
   if (!repoPath.value) return
   try {
@@ -654,8 +682,7 @@ async function handleSelectCommit(commitId: string) {
     commitFiles.value = files
     currentCommitId.value = commitId
     fileViewMode.value = 'commit'
-    selectedFiles.value = []
-    selectedFileDiff.value = null
+    await selectFirstCommitFile(files)
   } catch (e) {
     console.error('Get commit files error:', e)
   }

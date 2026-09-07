@@ -92,29 +92,90 @@ function syncScroll(source: 'left' | 'right') {
 const ROW_HEIGHT = 18 // 行高：与编辑文件对比（DiffEditor）一致
 const firstChangeIdx = ref(-1)
 
-// 渲染上限：差异行数超过阈值时只渲染前 N 行并提示截断。
-// 超大文件（如压缩后的 js、生成产物）的 diff 可达数万行，一次性渲染
-// 左右两份完整 DOM 会让主线程长时间停顿，表现为整窗冻结/白屏后突然恢复。
-const MAX_RENDER_LINES = 6000
-const truncated = computed(() => !!props.diff && props.diff.lines.length > MAX_RENDER_LINES)
+// 虚拟滚动：超大 diff（数千到数万行）不再一次性渲染整份左右 DOM（会导致主线程长时间
+// 停顿、整窗冻结），而是只渲染「可视窗口 + 上下缓冲」的行，用上下 spacer 撑开真实
+// 滚动高度。用户滚动到哪、渲染到哪，滚动条位置与行号/差异色/概览标尺全部保持一致。
+const OVERSCAN = 40          // 可视区外上/下各多渲染 40 行，滚动时减少空白闪烁
+const VIEW_BUFFER = 20       // 可视窗口估算的额外余量（行）
+const scrollTop = ref(0)
+const viewportH = ref(0)
+
+// 虚拟窗口切片参数：基于当前滚动位置 + 视口高度，算出现有渲染的 [start, end) 范围。
+// ⚠️ start 必须 clamp 到 [0, total-1]：diff 刷新变短而 scrollTop 残留旧值（如从 2 万行
+// 文件刷成 100 行）时，若不加 clamp 会算出 start > total、end < start，renderLines 兜底
+// 显示前 200 行但 topPad = start×18 把内容顶飞到几千像素外。clamp 后窗口永远自洽。
+function computeWindow(total: number): { start: number; end: number } {
+  if (total <= 0) return { start: 0, end: 0 }
+  const vh = viewportH.value || 600
+  const visibleCount = Math.ceil(vh / ROW_HEIGHT) + VIEW_BUFFER
+  const maxStart = Math.max(0, total - 1)
+  const start = Math.min(Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN), maxStart)
+  const end = Math.min(total, start + visibleCount + OVERSCAN * 2)
+  return { start, end }
+}
+
+// 可视窗口 [start, end)（含 overscan），基于当前滚动位置 + 视口高度动态切片
 const renderLines = computed(() => {
-  if (!props.diff) return []
-  return props.diff.lines.length > MAX_RENDER_LINES
-    ? props.diff.lines.slice(0, MAX_RENDER_LINES)
-    : props.diff.lines
+  const lines = props.diff?.lines ?? []
+  if (lines.length === 0) return []
+  const { start, end } = computeWindow(lines.length)
+  return lines.slice(start, end)
 })
+
+// 上下 spacer 高度（px）：用 padding 撑出真实可滚动高度，虚拟窗口只渲染可视片段
+const topPad = computed(() => {
+  const total = (props.diff?.lines ?? []).length
+  if (total === 0) return 0
+  return computeWindow(total).start * ROW_HEIGHT
+})
+const bottomPad = computed(() => {
+  const total = (props.diff?.lines ?? []).length
+  if (total === 0) return 0
+  return Math.max(0, (total - computeWindow(total).end) * ROW_HEIGHT)
+})
+
+// 虚拟窗口起始行下标（全量 lines 里的位置），用于行号高亮 first-change 的对齐
+const topIdx = computed(() => {
+  const total = (props.diff?.lines ?? []).length
+  return computeWindow(total).start
+})
+
+// 记录滚动位置，供 renderLines 动态切片
+function onScroll(e: Event) {
+  const el = e.target as HTMLElement
+  scrollTop.value = el.scrollTop
+  viewportH.value = el.clientHeight
+}
+
+// 左右栏滚动：同时做 1:1 滚动同步 + 虚拟窗口切片（更新 scrollTop/viewportH）
+function onLeftScroll(e: Event) {
+  onScroll(e)
+  syncScroll('left')
+}
+function onRightScroll(e: Event) {
+  onScroll(e)
+  syncScroll('right')
+}
+
+// 测量可视高度（挂载 + 尺寸变化时）
+function measureViewport() {
+  const el = leftScrollRef.value || rightScrollRef.value
+  if (el) viewportH.value = el.clientHeight
+}
 
 watch(
   () => props.diff,
   async (newDiff) => {
     firstChangeIdx.value = -1
+    // 切换文件：重置虚拟窗口到顶部，避免旧 scrollTop 残留导致 spacer 高度错乱
+    scrollTop.value = 0
+    measureViewport()
     if (!newDiff || newDiff.lines.length === 0) return
     // 自动刷新（autoScroll=false）时不重算 firstChangeIdx，避免高亮闪烁动画
     if (props.autoScroll === false) return
-    // 只在可见范围内找第一个变更行（超出渲染上限的部分不参与滚动定位）
-    const limit = Math.min(newDiff.lines.length, MAX_RENDER_LINES)
+    // 找第一个变更行（现在虚拟滚动能定位到全文件的任意差异，不再受渲染上限约束）
     let idx = -1
-    for (let i = 0; i < limit; i++) {
+    for (let i = 0; i < newDiff.lines.length; i++) {
       if (newDiff.lines[i].line_type !== 'context') {
         idx = i
         break
@@ -147,13 +208,19 @@ watch(
 )
 
 onMounted(() => {
-  window.addEventListener('resize', equalizeScrollHeights)
+  window.addEventListener('resize', onResize)
+  measureViewport()
   equalizeScrollHeights()
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', equalizeScrollHeights)
+  window.removeEventListener('resize', onResize)
 })
+
+function onResize() {
+  measureViewport()
+  equalizeScrollHeights()
+}
 
 function getLineTypeClass(type: string): string {
   switch (type) {
@@ -164,14 +231,16 @@ function getLineTypeClass(type: string): string {
   }
 }
 
-// 差异位置标记：可见范围内的所有非 context 行
+// 差异位置标记：基于【完整 diff.lines】（而非虚拟窗口切片），概览标尺才能覆盖全文件
 const diffMarkers = computed(() => {
-  return renderLines.value
+  const lines = props.diff?.lines ?? []
+  return lines
     .map((line, idx) => ({ idx, type: line.line_type }))
     .filter(m => m.type !== 'context')
 })
 
-const totalLines = computed(() => renderLines.value.length)
+// 总行数：基于完整 diff.lines，用于概览标尺的比例计算与 diff 全貌
+const totalLines = computed(() => (props.diff?.lines ?? []).length)
 
 // ---- Beyond Compare / IDEA 风格差异连接带 ----
 // 连续非 context 行合并为一个差异块（hunk），分别取左/右侧「有内容行」的视觉纵向范围，
@@ -184,10 +253,12 @@ interface DiffHunk {
 
 const GUTTER_W = 26 // 中间 gutter 宽度（与 .middle-gutter CSS 一致）
 
-const bandsHeight = computed(() => renderLines.value.length * ROW_HEIGHT)
+// 连接带总高度与 hunk 列表都基于【完整 diff.lines】，虚拟滚动只影响「渲染哪些行」，
+// 不影响连接带的几何计算（否则带子会随窗口切片错位）
+const bandsHeight = computed(() => totalLines.value * ROW_HEIGHT)
 
 const hunks = computed<DiffHunk[]>(() => {
-  const lines = renderLines.value
+  const lines = props.diff?.lines ?? []
   const result: DiffHunk[] = []
   const x0 = 0.75              // 左边缘（内缩避免描边裁剪）
   const x1 = GUTTER_W - 0.75   // 右边缘
@@ -313,19 +384,20 @@ const fileName = () => {
           <div
             class="side left-side"
             ref="leftScrollRef"
-            @scroll="syncScroll('left')"
+            @scroll="onLeftScroll"
           >
             <div
               class="side-inner"
               ref="leftInnerRef"
             >
+              <div :style="{ height: topPad + 'px' }"></div>
               <div
                 v-for="(line, idx) in renderLines"
-                :key="idx"
+                :key="topIdx + idx"
                 class="table-row"
                 :class="[line.line_type !== 'add' ? getLineTypeClass(line.line_type) : '', {
                   'empty': line.line_type === 'add',
-                  'first-change': idx === firstChangeIdx
+                  'first-change': (topIdx + idx) === firstChangeIdx
                 }]"
               >
                 <span class="line-num">{{ line.old_line ?? '' }}</span>
@@ -340,6 +412,7 @@ const fileName = () => {
                   <template v-else>{{ line.line_type === 'add' ? '' : line.content }}</template>
                 </span>
               </div>
+              <div :style="{ height: bottomPad + 'px' }"></div>
             </div>
           </div>
         </div>
@@ -369,19 +442,20 @@ const fileName = () => {
           <div
             class="side right-side"
             ref="rightScrollRef"
-            @scroll="syncScroll('right')"
+            @scroll="onRightScroll"
           >
             <div
               class="side-inner"
               ref="rightInnerRef"
             >
+              <div :style="{ height: topPad + 'px' }"></div>
               <div
                 v-for="(line, idx) in renderLines"
-                :key="idx"
+                :key="topIdx + idx"
                 class="table-row"
                 :class="[line.line_type !== 'delete' ? getLineTypeClass(line.line_type) : '', {
                   'empty': line.line_type === 'delete',
-                  'first-change': idx === firstChangeIdx
+                  'first-change': (topIdx + idx) === firstChangeIdx
                 }]"
               >
                 <span class="line-num">{{ line.new_line ?? '' }}</span>
@@ -396,6 +470,7 @@ const fileName = () => {
                   <template v-else>{{ line.line_type === 'delete' ? '' : line.content }}</template>
                 </span>
               </div>
+              <div :style="{ height: bottomPad + 'px' }"></div>
             </div>
           </div>
           <!-- 差异位置标记条（固定，不随滚动移动） -->
@@ -409,11 +484,6 @@ const fileName = () => {
             ></div>
           </div>
         </div>
-      </div>
-
-      <!-- 超大文件截断提示 -->
-      <div v-if="truncated" class="diff-truncated">
-        {{ t('diffViewer.truncated', { n: MAX_RENDER_LINES }) }}
       </div>
     </div>
   </div>

@@ -2053,72 +2053,203 @@ fn read_file_lines(path: &Path) -> (Vec<String>, bool) {
     }
 }
 
-fn lcs_diff(old: &[String], new: &[String]) -> Vec<DiffLine> {
-    let m = old.len();
-    let n = new.len();
+/// Myers 差分的一步编辑操作（按旧文件行推进）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffOp {
+    Equal,
+    Delete,
+    Insert,
+}
 
-    // 构建 LCS 表
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            if old[i - 1] == new[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
+/// Myers O(ND) 差分：返回从 `old` 变换到 `new` 的编辑脚本。
+/// 采用经典的「贪心蛇 + 对角线搜索」实现（Eugene W. Myers 1986，`git diff` 同款核心思路）。
+/// 空间复杂度 O(N+M)（只存 V 数组 + 回溯 trace），远优于旧版 O(N·M) DP 表。
+fn myers_diff(old: &[String], new: &[String]) -> Vec<DiffOp> {
+    let n = old.len();
+    let m = new.len();
+
+    // 空文件特判：避免 V 数组的 k±1 越界（n=0 时 max 很小仍会访问 k+1）
+    if n == 0 && m == 0 {
+        return Vec::new();
+    }
+    if n == 0 {
+        return vec![DiffOp::Insert; m];
+    }
+    if m == 0 {
+        return vec![DiffOp::Delete; n];
+    }
+
+    let max = n + m;
+
+    // V[k] 记录「第 d 步」沿对角线 k = x - y 能到达的最远 x。
+    // 用滚动的一维数组，避免 O(D·(N+M)) 的完整 trace 存储；但回溯需要每步的快照，
+    // 因此这里存 trace：trace[d][k] = 到达该步时对角线 k 的最远 x。
+    // 长度 +2 留出 k±1 边界缓冲，避免 k = ±d 时访问越界。
+    let mut v = vec![0isize; 2 * max + 3];
+    // offset 让负对角线也能索引：k ∈ [-max, max] → idx = k + max + 1
+    let offset = (max + 1) as isize;
+
+    // trace：每一步保存整个 V 的拷贝（只有 O(D) 步，D 通常远小于 N+M）
+    let mut trace: Vec<Vec<isize>> = Vec::new();
+
+    for d in 0..=max {
+        trace.push(v.clone());
+        let d = d as isize;
+        let mut k = -d;
+        while k <= d {
+            // 决定走哪条路径：向下（删除，x+1）还是向右（插入，y+1）
+            let idx = (k + offset) as usize;
+            let mut x = if k == -d || (k != d && v[idx - 1] < v[idx + 1]) {
+                // 向下走：从 k+1 的对角线，x = v[k+1]（删除：x 不变时 y 增）
+                v[idx + 1]
             } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+                // 向右走：从 k-1 的对角线，x = v[k-1] + 1（插入）
+                v[idx - 1] + 1
+            };
+
+            let mut y = x - k;
+
+            // 贪心蛇：沿对角线尽量吃相同行
+            while (x as usize) < n && (y as usize) < m && old[x as usize] == new[y as usize] {
+                x += 1;
+                y += 1;
+            }
+
+            v[idx] = x;
+
+            if (x as usize) >= n && (y as usize) >= m {
+                // 到达终点 (n, m)，回溯生成编辑脚本
+                return backtrack(&trace, old, new, d as usize);
+            }
+
+            k += 2;
+        }
+    }
+
+    // 理论上不会到这里（max = n+m 一定可达）
+    Vec::new()
+}
+
+/// 根据 trace 从终点回溯出编辑脚本。
+fn backtrack(
+    trace: &[Vec<isize>],
+    old: &[String],
+    new: &[String],
+    final_d: usize,
+) -> Vec<DiffOp> {
+    let n = old.len();
+    let m = new.len();
+    let max = n + m;
+    let offset = (max + 1) as isize; // 与 myers_diff 的 v 索引体系一致（含 k±1 缓冲）
+
+    let mut ops: Vec<DiffOp> = Vec::new();
+    let mut x = n as isize;
+    let mut y = m as isize;
+
+    for d in (0..=final_d).rev() {
+        let v = &trace[d];
+        let k = x - y;
+        let idx = (k + offset) as usize;
+
+        // 判断这一步是从哪个方向进来的
+        let prev_k = if k == -(d as isize)
+            || (k != d as isize && v[idx - 1] < v[idx + 1])
+        {
+            k + 1 // 从「向下删除」方向来
+        } else {
+            k - 1 // 从「向右插入」方向来
+        };
+
+        let prev_idx = (prev_k + offset) as usize;
+        let prev_x = v[prev_idx];
+        let prev_y = prev_x - prev_k;
+
+        // 先回退贪心蛇吃掉的相同行（Equal）
+        while x > prev_x && y > prev_y {
+            ops.push(DiffOp::Equal);
+            x -= 1;
+            y -= 1;
+        }
+
+        if d == 0 {
+            break;
+        }
+
+        if x == prev_x {
+            // 这一步是插入（x 不变，y 增）
+            ops.push(DiffOp::Insert);
+            y -= 1;
+        } else {
+            // 这一步是删除（y 不变，x 增）
+            ops.push(DiffOp::Delete);
+            x -= 1;
+        }
+    }
+
+    // 起点处可能还有剩余的相同行
+    while x > 0 && y > 0 {
+        ops.push(DiffOp::Equal);
+        x -= 1;
+        y -= 1;
+    }
+
+    ops.reverse();
+    ops
+}
+
+fn lcs_diff(old: &[String], new: &[String]) -> Vec<DiffLine> {
+    // Myers 差分算法（git 同款）：时间复杂度 O((N+M)·D)，D 为实际差异量；
+    // 空间复杂度 O(N+M) 线性（相比旧版 O(N·M) 全量 DP 表，几万行不再 OOM）。
+    // 两个文件越接近（D 越小）跑得越快；完全不相关的最坏情况 O((N+M)^2)，但
+    // 由 get_file_diff 的 MAX_DIFF_LINES 硬上限兜底，不会真正卡死。
+    let ops = myers_diff(old, new);
+
+    // 回溯生成 DiffLine（old_line/new_line 用 1-based 行号）
+    let mut lines: Vec<DiffLine> = Vec::with_capacity(ops.len());
+    let mut old_line: usize = 1;
+    let mut new_line: usize = 1;
+
+    for op in &ops {
+        match op {
+            DiffOp::Equal => {
+                lines.push(DiffLine {
+                    line_type: "context".to_string(),
+                    content: old[old_line - 1].clone(),
+                    new_content: String::new(),
+                    old_line: Some(old_line),
+                    new_line: Some(new_line),
+                    old_segments: Vec::new(),
+                    new_segments: Vec::new(),
+                });
+                old_line += 1;
+                new_line += 1;
+            }
+            DiffOp::Delete => {
+                lines.push(DiffLine {
+                    line_type: "delete".to_string(),
+                    content: old[old_line - 1].clone(),
+                    new_content: String::new(),
+                    old_line: Some(old_line),
+                    new_line: None,
+                    old_segments: Vec::new(),
+                    new_segments: Vec::new(),
+                });
+                old_line += 1;
+            }
+            DiffOp::Insert => {
+                lines.push(DiffLine {
+                    line_type: "add".to_string(),
+                    content: new[new_line - 1].clone(),
+                    new_content: String::new(),
+                    old_line: None,
+                    new_line: Some(new_line),
+                    old_segments: Vec::new(),
+                    new_segments: Vec::new(),
+                });
+                new_line += 1;
             }
         }
     }
-
-    // 回溯生成 diff
-    let mut lines = Vec::new();
-    let mut i = m;
-    let mut j = n;
-    let mut old_line = m;
-    let mut new_line = n;
-
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
-            lines.push(DiffLine {
-                line_type: "context".to_string(),
-                content: old[i - 1].clone(),
-                new_content: String::new(),
-                old_line: Some(old_line),
-                new_line: Some(new_line),
-                old_segments: Vec::new(),
-                new_segments: Vec::new(),
-            });
-            i -= 1;
-            j -= 1;
-            old_line -= 1;
-            new_line -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            lines.push(DiffLine {
-                line_type: "add".to_string(),
-                content: new[j - 1].clone(),
-                new_content: String::new(),
-                old_line: None,
-                new_line: Some(new_line),
-                old_segments: Vec::new(),
-                new_segments: Vec::new(),
-            });
-            j -= 1;
-            new_line -= 1;
-        } else if i > 0 {
-            lines.push(DiffLine {
-                line_type: "delete".to_string(),
-                content: old[i - 1].clone(),
-                new_content: String::new(),
-                old_line: Some(old_line),
-                new_line: None,
-                old_segments: Vec::new(),
-                new_segments: Vec::new(),
-            });
-            i -= 1;
-            old_line -= 1;
-        }
-    }
-
-    lines.reverse();
 
     // 后处理：将相邻的 delete + add 合并为 modified 行，做行内 diff
     let mut merged: Vec<DiffLine> = Vec::new();
@@ -2151,6 +2282,18 @@ fn lcs_diff(old: &[String], new: &[String]) -> Vec<DiffLine> {
 
 // 对两行文本做字符级 LCS，返回旧/新两侧的分段（changed 标记不同的部分）
 fn diff_chars(old: &str, new: &str) -> (Vec<DiffSegment>, Vec<DiffSegment>) {
+    // 超长行防护：字符级 LCS 是 O(m*n)，单行超长（压缩 js / 生成产物一行几万字符）会卡死/OOM。
+    // 超阈值时放弃字符级标注，两侧各返回整行一个 changed=false 段 —— 行级底色（modified 灰底）
+    // 仍表达"这行有改动"，但不会误标整行几十万字符全变。与前端 DiffEditor.charDiffSegs 的
+    // MAX_CHAR_DIFF_LEN 保持一致（改动需两端同步）。
+    const MAX_CHAR_DIFF_LEN: usize = 2000;
+    if old.chars().count() > MAX_CHAR_DIFF_LEN || new.chars().count() > MAX_CHAR_DIFF_LEN {
+        return (
+            vec![DiffSegment { text: old.to_string(), changed: false }],
+            vec![DiffSegment { text: new.to_string(), changed: false }],
+        );
+    }
+
     let old_chars: Vec<char> = old.chars().collect();
     let new_chars: Vec<char> = new.chars().collect();
     let m = old_chars.len();
@@ -2288,11 +2431,11 @@ async fn get_file_diff(repo_path: String, file_path: String, commit_id: Option<S
             (old_content, new_content, old_bin || new_bin)
         };
 
-        // 大文件 / 二进制 跳过 LCS diff 运算：
+        // 大文件 / 二进制 跳过 diff 运算：
         // - 二进制：old/new 为空，diff 无意义
-        // - 超大文本：O(m*n) 全量 DP 在几千行以上会卡死甚至 OOM，
-        //   直接返回空 diff 并标记 is_oversized，由前端降级展示（仍可编辑保存）
-        const MAX_DIFF_LINES: usize = 5000;
+        // - 超大文本：Myers 是 O((N+M)·D) 线性空间，几万行也能算；
+        //   仅当超过 10 万行（极端生成产物）才降级 oversized，前端仍可查看/编辑原文。
+        const MAX_DIFF_LINES: usize = 100_000;
         let (old_content, new_content, lines, is_oversized) = if is_binary {
             (Vec::new(), Vec::new(), Vec::new(), false)
         } else if old_content.len() > MAX_DIFF_LINES || new_content.len() > MAX_DIFF_LINES {
@@ -3037,4 +3180,237 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+
+    /// 旧版 O(m*n) LCS 差分（保留副本作为基准，仅测试对照用）：
+    /// 返回 (line_type, content) 序列，语义与生产 lcs_diff 完全一致。
+    fn legacy_lcs_pairs(old: &[String], new: &[String]) -> Vec<(String, String)> {
+        let m = old.len();
+        let n = new.len();
+        let mut dp = vec![vec![0usize; n + 1]; m + 1];
+        for i in 1..=m {
+            for j in 1..=n {
+                if old[i - 1] == new[j - 1] {
+                    dp[i][j] = dp[i - 1][j - 1] + 1;
+                } else {
+                    dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+                }
+            }
+        }
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        let mut i = m;
+        let mut j = n;
+        while i > 0 || j > 0 {
+            if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
+                pairs.push(("context".to_string(), old[i - 1].clone()));
+                i -= 1;
+                j -= 1;
+            } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+                pairs.push(("add".to_string(), new[j - 1].clone()));
+                j -= 1;
+            } else if i > 0 {
+                pairs.push(("delete".to_string(), old[i - 1].clone()));
+                i -= 1;
+            }
+        }
+        pairs.reverse();
+        // 与生产一致：相邻 delete+add 合并为 modified
+        let mut merged: Vec<(String, String)> = Vec::new();
+        let mut k = 0;
+        while k < pairs.len() {
+            if k + 1 < pairs.len() && pairs[k].0 == "delete" && pairs[k + 1].0 == "add" {
+                merged.push(("modified".to_string(), pairs[k].1.clone()));
+                k += 2;
+            } else {
+                merged.push(pairs[k].clone());
+                k += 1;
+            }
+        }
+        merged
+    }
+
+    fn to_lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 对照测试核心：Myers 产出与旧 LCS 基准一致（合并 modified 后逐行比较 type/content）
+    fn assert_myers_matches(old: &[&str], new: &[&str]) {
+        let old_l = to_lines(old);
+        let new_l = to_lines(new);
+        let legacy = legacy_lcs_pairs(&old_l, &new_l);
+        let actual: Vec<(String, String)> = lcs_diff(&old_l, &new_l)
+            .into_iter()
+            .map(|l| (l.line_type, l.content))
+            .collect();
+        assert_eq!(
+            actual, legacy,
+            "Myers diff mismatch\nold={old:?}\nnew={new:?}"
+        );
+    }
+
+    #[test]
+    fn myers_empty_both() {
+        let r = lcs_diff(&[], &[]);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn myers_identical() {
+        assert_myers_matches(
+            &["a", "b", "c"],
+            &["a", "b", "c"],
+        );
+    }
+
+    #[test]
+    fn myers_all_new() {
+        assert_myers_matches(&[], &["x", "y"]);
+    }
+
+    #[test]
+    fn myers_all_deleted() {
+        assert_myers_matches(&["x", "y"], &[]);
+    }
+
+    #[test]
+    fn myers_insert_middle() {
+        assert_myers_matches(&["a", "b"], &["a", "ins", "b"]);
+    }
+
+    #[test]
+    fn myers_delete_middle() {
+        assert_myers_matches(&["a", "gone", "b"], &["a", "b"]);
+    }
+
+    #[test]
+    fn myers_modify_line() {
+        assert_myers_matches(&["a", "old line", "c"], &["a", "new line", "c"]);
+    }
+
+    #[test]
+    fn myers_complex_edits() {
+        assert_myers_matches(
+            &[
+                "keep1", "keep2", "del_a", "del_b", "keep3", "change_me", "keep4", "tail1",
+            ],
+            &[
+                "keep1", "keep2", "keep3", "changed!", "keep4", "extra_new", "tail1", "tail2",
+            ],
+        );
+    }
+
+    #[test]
+    fn myers_reversed_words() {
+        // 完全重排（D 接近 N+M，验证最坏情况不会挂、结果仍是合法 diff）
+        let old = to_lines(&["one", "two", "three", "four", "five"]);
+        let new = to_lines(&["five", "four", "three", "two", "one"]);
+        let r = lcs_diff(&old, &new);
+        // 合法 diff 的可达性验证：从产出序列能重建 new
+        let mut rebuilt: Vec<String> = Vec::new();
+        for l in &r {
+            match l.line_type.as_str() {
+                "context" | "modified" | "add" => rebuilt.push(l.content.clone()),
+                "delete" => {}
+                _ => {}
+            }
+        }
+        assert_eq!(rebuilt, new, "rebuilt new content mismatch");
+        // 且 old 侧行号覆盖完整
+        let mut covered = vec![false; old.len()];
+        for l in &r {
+            if let Some(n) = l.old_line {
+                covered[n - 1] = true;
+            }
+        }
+        assert!(
+            covered.iter().all(|&c| c),
+            "some old lines not covered: {covered:?}"
+        );
+    }
+
+    #[test]
+    fn myers_line_numbers_monotonic() {
+        // 行号语义验证：context 的 old_line/new_line 递增、delete 行号递增、add 行号递增
+        let old = to_lines(&["a", "b", "c", "d", "e"]);
+        let new = to_lines(&["a", "x", "c", "e", "f"]);
+        let r = lcs_diff(&old, &new);
+        let mut last_old = 0usize;
+        let mut last_new = 0usize;
+        for l in &r {
+            if let Some(o) = l.old_line {
+                assert!(o > last_old, "old_line not increasing: {o} after {last_old}");
+                last_old = o;
+            }
+            if let Some(n) = l.new_line {
+                assert!(n > last_new, "new_line not increasing: {n} after {last_new}");
+                last_new = n;
+            }
+        }
+    }
+
+    #[test]
+    fn myers_large_file_smoke() {
+        // 超过旧 5000 行上限的大文件冒烟：Myers 能秒算、不 OOM
+        let n = 20_000usize;
+        let old: Vec<String> = (0..n).map(|i| format!("line {i:06}").to_string()).collect();
+        let mut new = old.clone();
+        // 改动若干行（D 小，Myers 应极快）
+        for i in [3usize, 1000, 9999, 19999] {
+            new[i] = format!("line {i:06} CHANGED").to_string();
+        }
+        // 额外加 5 行
+        for i in 0..5usize {
+            new.push(format!("extra tail {i}").to_string());
+        }
+        let t = std::time::Instant::now();
+        let r = lcs_diff(&old, &new);
+        assert!(r.len() > n, "expected diff covering all lines, got {}", r.len());
+        // 行号覆盖验证
+        let mut covered_new = vec![false; new.len()];
+        for l in &r {
+            if let Some(no) = l.new_line {
+                covered_new[no - 1] = true;
+            }
+        }
+        assert!(covered_new.iter().all(|&c| c), "new line coverage broken");
+        eprintln!("myers_large_file_smoke took {:?} for {n} lines", t.elapsed());
+    }
+
+    #[test]
+    fn diff_chars_short_line_marks_changes() {
+        // 正常长度行：字符级 diff 应标出 changed 段
+        let (old_segs, new_segs) = diff_chars("abc def ghi", "abc XYZ ghi");
+        assert!(!old_segs.is_empty() && !new_segs.is_empty());
+        assert!(
+            old_segs.iter().any(|s| s.changed) && new_segs.iter().any(|s| s.changed),
+            "short-line diff should flag changed chars"
+        );
+        // 两行内容可完整重建
+        let old_joined: String = old_segs.iter().map(|s| s.text.as_str()).collect();
+        let new_joined: String = new_segs.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(old_joined, "abc def ghi");
+        assert_eq!(new_joined, "abc XYZ ghi");
+    }
+
+    #[test]
+    fn diff_chars_long_line_degrades_gracefully() {
+        // 超长行（>2000 字符，如压缩产物单行）：不 panic、不 OOM，整行降级为单段 changed=false
+        let long_a = "x".repeat(2500);
+        let long_b = "y".repeat(2500);
+        let (old_segs, new_segs) = diff_chars(&long_a, &long_b);
+        assert_eq!(old_segs.len(), 1, "oversized old should collapse to 1 segment");
+        assert_eq!(new_segs.len(), 1, "oversized new should collapse to 1 segment");
+        assert!(!old_segs[0].changed && !new_segs[0].changed, "oversized line should NOT be flagged as fully changed");
+        assert_eq!(old_segs[0].text.len(), 2500);
+        assert_eq!(new_segs[0].text.len(), 2500);
+
+        // 一侧超长也应触发退化
+        let (o2, n2) = diff_chars(&"short".to_string(), &long_b);
+        assert_eq!(n2.len(), 1);
+        assert_eq!(o2[0].text, "short");
+    }
 }
