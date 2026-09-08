@@ -149,6 +149,12 @@ const logAreaFlex = ref(1)
 const isResizingCenter = ref(false)
 const CENTER_MIN_FLEX = 0.2
 
+// 左侧面板（仓库面板）宽度 —— 与中间面板（变更文件）之间的左右拖拽
+const leftPanelWidth = ref(320)
+const isResizingLeftPanel = ref(false)
+const LEFT_PANEL_MIN = 200
+const LEFT_PANEL_MAX = 560
+
 // 对话框
 const showCommitDialog = ref(false)
 const commitMessage = ref('')
@@ -273,6 +279,39 @@ function stopResizeCenter() {
   isResizingCenter.value = false
   document.removeEventListener('mousemove', onResizeCenterMove)
   document.removeEventListener('mouseup', stopResizeCenter)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.body.style.webkitUserSelect = ''
+}
+
+// ===== 左侧面板（仓库面板）左右拖拽 =====
+let leftResizeStartX = 0
+let leftResizeStartWidth = 0
+
+function startResizeLeftPanel(e: MouseEvent) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isResizingLeftPanel.value = true
+  leftResizeStartX = e.clientX
+  leftResizeStartWidth = leftPanelWidth.value
+  document.addEventListener('mousemove', onResizeLeftPanelMove)
+  document.addEventListener('mouseup', stopResizeLeftPanel)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.body.style.webkitUserSelect = 'none'
+}
+
+function onResizeLeftPanelMove(e: MouseEvent) {
+  if (!isResizingLeftPanel.value) return
+  const deltaX = e.clientX - leftResizeStartX
+  const newWidth = leftResizeStartWidth + deltaX
+  leftPanelWidth.value = Math.min(LEFT_PANEL_MAX, Math.max(LEFT_PANEL_MIN, newWidth))
+}
+
+function stopResizeLeftPanel() {
+  isResizingLeftPanel.value = false
+  document.removeEventListener('mousemove', onResizeLeftPanelMove)
+  document.removeEventListener('mouseup', stopResizeLeftPanel)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
   document.body.style.webkitUserSelect = ''
@@ -1652,7 +1691,7 @@ onBeforeUnmount(() => {
     <!-- 主布局 -->
     <div class="main-layout">
       <!-- 左侧面板 -->
-      <aside class="left-panel">
+      <aside class="left-panel" :style="{ width: leftPanelWidth + 'px' }">
         <RepositoryList 
           :projects="scannedProjects"
           :current-path="repoPath"
@@ -1696,6 +1735,9 @@ onBeforeUnmount(() => {
           @stash-drop="handleStashDrop"
         />
       </aside>
+
+      <!-- 仓库面板与变更文件面板之间的左右拖拽分隔条 -->
+      <div class="resize-handle-col" @mousedown="startResizeLeftPanel"></div>
 
       <!-- 中间面板 -->
       <section class="center-panel">
@@ -2054,12 +2096,10 @@ onBeforeUnmount(() => {
 
 /* 左侧面板 */
 .left-panel {
-  width: 320px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-secondary);
-  border-right: 1px solid var(--border-color);
   min-height: 0;
 }
 
@@ -2108,6 +2148,24 @@ onBeforeUnmount(() => {
   margin: -3px 0;
   position: relative;
   z-index: 1;
+}
+
+/* 仓库面板 ↔ 中间面板的左右拖拽分隔条 */
+.resize-handle-col {
+  flex-shrink: 0;
+  width: 1px;
+  padding: 0 3px;
+  box-sizing: content-box;
+  background-clip: content-box;
+  background-color: var(--border-color);
+  cursor: col-resize;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 1;
+}
+
+.resize-handle-col:hover {
+  background-color: var(--accent-primary);
 }
 
 .diff-area {
