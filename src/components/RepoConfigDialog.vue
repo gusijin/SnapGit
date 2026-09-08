@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
-import { getRepoConfig } from '../api/git'
+import { getRepoConfig, openFileDialog, setSshKeyPath } from '../api/git'
 import type { RepoConfig, SshKeyInfo } from '../api/git'
 import {
   Dialog,
@@ -27,6 +27,12 @@ const error = ref('')
 const cfg = ref<RepoConfig | null>(null)
 const showRaw = ref(false)
 
+// SSH 私钥路径（id_rsa）编辑态
+const editSshKeyPath = ref('')
+const savingSshKey = ref(false)
+const sshKeyMsg = ref('')
+const sshKeyErr = ref(false)
+
 onMounted(async () => {
   if (!props.open || !props.repoPath) return
   await load()
@@ -41,10 +47,42 @@ async function load() {
   error.value = ''
   try {
     cfg.value = await getRepoConfig(props.repoPath)
+    editSshKeyPath.value = extractSshKeyPath(cfg.value?.core_ssh_command || null)
+    sshKeyMsg.value = ''
+    sshKeyErr.value = false
   } catch (e) {
     error.value = String(e)
   } finally {
     loading.value = false
+  }
+}
+
+// 从 core.sshCommand 中解析出 -i 指定的私钥路径（回填编辑框）
+function extractSshKeyPath(cmd: string | null): string {
+  if (!cmd) return ''
+  const m = cmd.match(/-i\s+"([^"]+)"|-i\s+'([^']+)'|-i\s+(\S+)/)
+  return m ? (m[1] || m[2] || m[3] || '') : ''
+}
+
+async function onBrowseSshKey() {
+  const p = await openFileDialog()
+  if (p) editSshKeyPath.value = p
+}
+
+async function onSaveSshKey() {
+  const path = editSshKeyPath.value.trim()
+  savingSshKey.value = true
+  sshKeyMsg.value = ''
+  sshKeyErr.value = false
+  try {
+    await setSshKeyPath(props.repoPath, path)
+    await load()
+    sshKeyMsg.value = path ? t('repoConfig.saved') : t('repoConfig.cleared')
+  } catch (e) {
+    sshKeyMsg.value = String(e)
+    sshKeyErr.value = true
+  } finally {
+    savingSshKey.value = false
   }
 }
 
@@ -123,6 +161,28 @@ const sshKeyPairs = computed(() => {
           <div class="field-row">
             <span class="field-label">credential.helper</span>
             <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
+          </div>
+
+          <!-- SSH 私钥路径（id_rsa）可编辑 -->
+          <div class="ssh-key-edit">
+            <div class="field-label">{{ t('repoConfig.sshKeyPath') }}</div>
+            <div class="ssh-key-input-row">
+              <input
+                v-model="editSshKeyPath"
+                class="ssh-key-input"
+                :placeholder="t('repoConfig.sshKeyPlaceholder')"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <Button variant="outline" class="ssh-key-btn" @click="onBrowseSshKey" :disabled="savingSshKey">
+                {{ t('repoConfig.browse') }}
+              </Button>
+              <Button class="ssh-key-btn" @click="onSaveSshKey" :disabled="savingSshKey || !editSshKeyPath.trim()">
+                {{ t('repoConfig.save') }}
+              </Button>
+            </div>
+            <div class="ssh-key-hint">{{ t('repoConfig.sshKeyHint') }}</div>
+            <div v-if="sshKeyMsg" class="ssh-key-msg" :class="{ error: sshKeyErr }">{{ sshKeyMsg }}</div>
           </div>
 
           <div v-if="cfg.core_ssh_command || cfg.git_ssh_command_env || cfg.ssh_auth_sock_env" class="env-box">
@@ -305,6 +365,106 @@ export default { name: 'RepoConfigDialog' }
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* SSH 私钥路径编辑 */
+.ssh-key-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+.ssh-key-edit .field-label {
+  min-width: 0;
+}
+.ssh-key-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ssh-key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: Consolas, Monaco, monospace;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  outline: none;
+}
+.ssh-key-input:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-bg);
+}
+.ssh-key-btn {
+  flex-shrink: 0;
+}
+.ssh-key-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.ssh-key-msg {
+  font-size: 11.5px;
+  color: var(--success-color, #22c55e);
+}
+.ssh-key-msg.error {
+  color: var(--danger-color, #ef4444);
+}
+
+/* SSH 私钥路径编辑 */
+.ssh-key-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+.ssh-key-edit .field-label {
+  min-width: 0;
+}
+.ssh-key-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ssh-key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: Consolas, Monaco, monospace;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  outline: none;
+}
+.ssh-key-input:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-bg);
+}
+.ssh-key-btn {
+  flex-shrink: 0;
+}
+.ssh-key-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.ssh-key-msg {
+  font-size: 11.5px;
+  color: var(--success-color, #22c55e);
+}
+.ssh-key-msg.error {
+  color: var(--danger-color, #ef4444);
 }
 
 .env-box {

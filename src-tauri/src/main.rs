@@ -1772,6 +1772,42 @@ fn open_folder_dialog() -> Result<Option<String>> {
     }
 }
 
+#[command]
+fn open_file_dialog() -> Result<Option<String>> {
+    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    match rfd::FileDialog::new().pick_file() {
+        Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+        None => Ok(None),
+    }
+}
+
+#[command]
+async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
+    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let key_path = key_path.trim().to_string();
+    if key_path.is_empty() {
+        // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
+        let _ = git_command()
+            .arg("-C").arg(&repo_path)
+            .arg("config").arg("--local").arg("--unset")
+            .arg("core.sshCommand")
+            .output();
+        return Ok(String::new());
+    }
+    // 写入标准 ssh 私钥指定命令：仅用该私钥，避免 ssh-agent 里其他 key 干扰
+    let cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key_path);
+    let status = git_command()
+        .arg("-C").arg(&repo_path)
+        .arg("config").arg("--local")
+        .arg("core.sshCommand").arg(&cmd)
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(cmd),
+        Ok(s) => Err(format!("git config 写入失败，退出码: {}", s)),
+        Err(e) => Err(format!("执行 git 失败: {}", e)),
+    }
+}
+
 // ===== 项目扫描 =====
 
 fn get_scan_directories() -> Vec<PathBuf> {
@@ -3160,6 +3196,8 @@ fn main() {
             delete_remote_branch,
             check_remote_branch_deletable,
             open_folder_dialog,
+            open_file_dialog,
+            set_ssh_key_path,
             load_recent_repositories,
             save_recent_repository,
             remove_recent_repository,

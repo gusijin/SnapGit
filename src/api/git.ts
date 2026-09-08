@@ -150,6 +150,15 @@ export async function openFolderDialog(): Promise<string | null> {
   return result
 }
 
+export async function openFileDialog(): Promise<string | null> {
+  const result = await invoke<string | null>('open_file_dialog')
+  return result
+}
+
+export async function setSshKeyPath(repoPath: string, keyPath: string): Promise<string> {
+  return await invoke('set_ssh_key_path', { repoPath, keyPath })
+}
+
 export async function scanProjects(): Promise<ScannedProject[]> {
   return await invoke('scan_projects')
 }
