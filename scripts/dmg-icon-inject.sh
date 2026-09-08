@@ -134,13 +134,13 @@ with open(out, 'w') as f:
     for i in range(0, len(hexstr), 32):
         chunk = hexstr[i:i + 32]
         spaced = ' '.join(chunk[j:j + 2] for j in range(0, len(chunk), 2))
-        f.write("  $" + spaced + "\n")
+        f.write('  $"' + spaced + '"\n')
     f.write("};\n")
 PY
   else
     {
       echo "data 'icns' (128) {"
-      od -An -v -tx1 "$ICON_SRC" | tr -s ' ' | sed 's/^ //' | awk '{ printf "  $%s\n", $0 }'
+      od -An -v -tx1 "$ICON_SRC" | tr -s ' ' | sed 's/^ //' | awk '{ printf "  $\"%s\"\n", $0 }'
       echo "};"
     } > "$REZ_SRC"
   fi
