@@ -1110,6 +1110,9 @@ const showPushDialog = ref(false)
 const pushDialogBranch = ref('')
 const showCloneDialog = ref(false)
 const showRepoConfig = ref(false)
+// 仓库配置对话框实际展示的仓库路径：菜单栏「编辑-配置」用当前仓库，
+// 仓库面板右键「配置」用右键选中的那个仓库（两者共用同一对话框）
+const configRepoPath = ref('')
 const showCheckoutBranch = ref(false)
 const branchPanelRef = ref<InstanceType<typeof BranchPanel> | null>(null)
 
@@ -1254,6 +1257,12 @@ async function handleCloned(targetPath: string) {
 function requestDeleteProject(project: ScannedProject) {
   projectToDelete.value = project
   showDeleteDialog.value = true
+}
+
+// 仓库面板右键「配置」：针对右键选中的仓库打开仓库配置对话框（与菜单栏「编辑-配置」共用）
+function openRepoConfig(project: ScannedProject) {
+  configRepoPath.value = project.path
+  showRepoConfig.value = true
 }
 
 function confirmDeleteProject() {
@@ -1529,6 +1538,7 @@ function handleMenuAction(payload: any) {
       mainView.value = 'log'
       break
     case 'repo-config':
+      configRepoPath.value = repoPath.value
       showRepoConfig.value = true
       break
     case 'stash':
@@ -1703,6 +1713,7 @@ onBeforeUnmount(() => {
           :switching-shown="switchingShown"
           @select-project="openScannedProject"
           @delete-project="requestDeleteProject"
+          @config-project="openRepoConfig"
           @load-file-tree="loadProjectFileTree"
           @select-file="handleSelectFileFromTree"
         />
@@ -1994,7 +2005,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <RepoConfigDialog
         v-model:open="showRepoConfig"
-        :repo-path="repoPath"
+        :repo-path="configRepoPath"
       />
     </Teleport>
 

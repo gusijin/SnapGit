@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderOpen, Loader2, Trash2, ChevronRight, ChevronDown } from 'lucide-vue-next'
+import { Folder, FolderOpen, Loader2, Trash2, ChevronRight, ChevronDown, Settings } from 'lucide-vue-next'
 import type { ScannedProject, FileTreeNode, FileStatus } from '../types'
 // 文件类型图标映射与变更文件面板 FileList 共用同一套，保证风格统一
 import { getFileIcon } from '../utils/fileIcons'
@@ -19,7 +19,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['select-project', 'delete-project', 'select-file', 'load-file-tree'])
+const emit = defineEmits(['select-project', 'delete-project', 'config-project', 'select-file', 'load-file-tree'])
 const { t } = useI18n()
 
 const expandedPaths = ref<Set<string>>(new Set())
@@ -186,6 +186,13 @@ function handleDeleteProject() {
   closeContextMenu()
 }
 
+function handleConfigProject() {
+  if (contextMenuProject.value) {
+    emit('config-project', contextMenuProject.value)
+  }
+  closeContextMenu()
+}
+
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
   if (!target.closest('.context-menu') && !target.closest('.project-item')) {
@@ -326,6 +333,10 @@ onUnmounted(() => {
         <div class="context-menu-item" @click="handleOpenProject">
           <FolderOpen class="menu-icon" :size="14" />
           <span>{{ t('repositoryList.open') }}</span>
+        </div>
+        <div class="context-menu-item" @click="handleConfigProject">
+          <Settings class="menu-icon" :size="14" />
+          <span>{{ t('repositoryList.config') }}</span>
         </div>
         <div class="context-menu-divider"></div>
         <div class="context-menu-item danger" @click="handleDeleteProject">

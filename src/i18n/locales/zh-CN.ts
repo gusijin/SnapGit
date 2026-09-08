@@ -410,6 +410,7 @@ export default {
     noFiles: '无文件',
     noProjects: '暂无项目',
     open: '打开',
+    config: '配置',
     delete: '删除',
   },
   editorWindow: {
