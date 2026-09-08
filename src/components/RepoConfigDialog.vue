@@ -104,7 +104,7 @@ const sshKeyPairs = computed(() => {
         <!-- 基本信息 -->
         <section class="cfg-section">
           <h4 class="section-title">{{ t('repoConfig.basic') }}</h4>
-          <div class="grid-2">
+          <div class="field-stack">
             <div class="field-row">
               <span class="field-label">user.name</span>
               <code class="field-value mono">{{ cfg.user_name || t('repoConfig.notConfigured') }}</code>
@@ -301,13 +301,10 @@ export default { name: 'RepoConfigDialog' }
   font-family: Consolas, Monaco, monospace;
 }
 
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 20px;
-}
-@media (max-width: 520px) {
-  .grid-2 { grid-template-columns: 1fr; }
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .env-box {

@@ -27,33 +27,6 @@ const showContextMenu = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
 const lastSelectedIndex = ref(-1)
 
-// 轻量 Hint
-const hintVisible = ref(false)
-const hintPos = ref({ x: 0, y: 0 })
-const hintText = ref('')
-let hideHintTimer: number | null = null
-
-function showHint(file: FileStatus, event: MouseEvent) {
-  if (hideHintTimer) { clearTimeout(hideHintTimer); hideHintTimer = null }
-  const fname = getFileName(file.path)
-  const action = props.viewMode === 'working-tree' ? t('fileList.hintOpenEdit') : t('fileList.hintViewDiff')
-  hintText.value = `${action}：${fname}`
-  hintPos.value = { x: event.clientX + 12, y: event.clientY + 12 }
-  hintVisible.value = true
-}
-
-function moveHint(event: MouseEvent) {
-  if (!hintVisible.value) return
-  hintPos.value = { x: event.clientX + 12, y: event.clientY + 12 }
-}
-
-function hideHint() {
-  if (hideHintTimer) clearTimeout(hideHintTimer)
-  hideHintTimer = window.setTimeout(() => {
-    hintVisible.value = false
-  }, 100)
-}
-
 // 当文件列表刷新（新增/删除/重排序）时钉住滚动位置（像素），
 // 避免视口内容因列表结构变化而跳动或闪烁。
 // 注：曾用"锚定首行 path 并滚回顶部"方案，但列表在首行上方增删文件时，
@@ -266,9 +239,6 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
         @click="scheduleSelectFile(file, $event)"
         @dblclick="handleOpenFile(file, $event)"
         @contextmenu="handleRightClick($event, file)"
-        @mouseenter="showHint(file, $event)"
-        @mousemove="moveHint($event)"
-        @mouseleave="hideHint"
       >
         <component :is="getFileIcon(getFileName(file.path))" :size="16" class="file-icon" />
         <div class="file-info">
@@ -281,17 +251,6 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
         </div>
       </div>
     </div>
-
-    <!-- 自定义轻量 Hint -->
-    <Teleport to="body">
-      <div
-        v-if="hintVisible"
-        class="file-hint"
-        :style="{ left: hintPos.x + 'px', top: hintPos.y + 'px' }"
-      >
-        {{ hintText }}
-      </div>
-    </Teleport>
 
     <Teleport to="body">
       <div
@@ -529,28 +488,5 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
 
 .menu-item.danger .menu-icon {
   color: var(--danger-color, #f44747);
-}
-
-/* 轻量 Hint — 跟随主题 */
-.file-hint {
-  position: fixed;
-  z-index: 9999;
-  padding: 3px 8px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.5;
-  pointer-events: none;
-  white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-  opacity: 0;
-  animation: hintIn 0.1s ease forwards;
-}
-
-@keyframes hintIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
 }
 </style>
