@@ -2137,33 +2137,35 @@ onBeforeUnmount(() => {
   border-right: none;
 }
 
-.resize-handle {
-  flex-shrink: 0;
-  height: 1px;
-  padding: 3px 0;
-  box-sizing: content-box;
-  background-clip: content-box;
-  background-color: var(--border-color);
-  cursor: ns-resize;
-  margin: -3px 0;
-  position: relative;
-  z-index: 1;
-}
-
-/* 仓库面板 ↔ 中间面板的左右拖拽分隔条 */
+/* 统一拖拽分隔条（上下 + 左右共用同一套外观） */
+.resize-handle,
 .resize-handle-col {
   flex-shrink: 0;
-  width: 1px;
-  padding: 0 3px;
   box-sizing: content-box;
   background-clip: content-box;
   background-color: var(--border-color);
-  cursor: col-resize;
-  margin: 0 -3px;
   position: relative;
   z-index: 1;
 }
 
+/* 纵向拖拽（上下拉动）：仓库列表↔分支面板、文件↔差异↔日志 */
+.resize-handle {
+  height: 1px;
+  padding: 3px 0;
+  margin: -3px 0;
+  cursor: ns-resize;
+}
+
+/* 横向拖拽（左右拉动）：仓库面板 ↔ 中间面板 */
+.resize-handle-col {
+  width: 1px;
+  padding: 0 3px;
+  margin: 0 -3px;
+  cursor: col-resize;
+}
+
+/* hover 高亮统一 */
+.resize-handle:hover,
 .resize-handle-col:hover {
   background-color: var(--accent-primary);
 }
