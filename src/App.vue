@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import { onMounted, onBeforeUnmount } from 'vue'
+import GitRequiredDialog from '@/components/GitRequiredDialog.vue'
+import { useGit } from '@/stores/git'
 
 // Chrome 区域（菜单栏 / 工具栏 / 面板标题栏 / 分组与表头标题）禁用右键：
 // 右键点击这些区域时不弹出任何上下文菜单。
@@ -14,8 +16,11 @@ function onContextMenuCapture(e: MouseEvent) {
   }
 }
 
+const { detectGit } = useGit()
+
 onMounted(() => {
   document.addEventListener('contextmenu', onContextMenuCapture, true)
+  detectGit()
 })
 
 onBeforeUnmount(() => {
@@ -25,6 +30,7 @@ onBeforeUnmount(() => {
 
 <template>
   <RouterView />
+  <GitRequiredDialog />
 </template>
 
 <style scoped>

@@ -8,6 +8,16 @@ export default {
     name: 'SnapGit',
     subtitle: '现代化的 Git 客户端',
   },
+  git: {
+    required: {
+      title: '未检测到 Git',
+      desc: 'SnapGit 需要 Git 才能管理仓库，请先安装 Git。',
+      winHint: 'Windows 上请安装 Git for Windows（安装时建议勾选“Git from command line”）。',
+      macHint: 'macOS 上可安装 Xcode 命令行工具，或下载 Git for Mac。',
+      download: '下载 Git',
+      retry: '我已安装，重新检测',
+    },
+  },
   common: {
     confirm: '确定',
     cancel: '取消',

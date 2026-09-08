@@ -1808,6 +1808,53 @@ async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String>
     }
 }
 
+// 检测系统是否可用 git：优先 PATH，Windows 额外探测常见安装路径。
+// 返回 { available, version, path }，供前端判断是否需要引导用户安装 Git。
+#[command]
+fn detect_git() -> Result<serde_json::Value> {
+    let candidates: Vec<String> = if cfg!(target_os = "windows") {
+        vec![
+            "git".into(),
+            "C:\\Program Files\\Git\\cmd\\git.exe".into(),
+            "C:\\Program Files (x86)\\Git\\cmd\\git.exe".into(),
+            "C:\\Program Files\\Git\\bin\\git.exe".into(),
+        ]
+    } else {
+        vec!["git".into(), "/usr/bin/git".into()]
+    };
+    let os_str = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    for c in candidates {
+        if let Ok(out) = std::process::Command::new(&c).arg("--version").output() {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                // 形如 "git version 2.45.1.windows.1"
+                let version = raw
+                    .strip_prefix("git version ")
+                    .unwrap_or(&raw)
+                    .to_string();
+                return Ok(serde_json::json!({
+                    "available": true,
+                    "version": version,
+                    "path": c,
+                    "os": os_str,
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "available": false,
+        "version": "",
+        "path": "",
+        "os": os_str,
+    }))
+}
+
 // ===== 项目扫描 =====
 
 fn get_scan_directories() -> Vec<PathBuf> {
@@ -3144,6 +3191,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // macOS: 使用系统原生菜单栏（显示在屏幕顶部）
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏
@@ -3198,6 +3246,7 @@ fn main() {
             open_folder_dialog,
             open_file_dialog,
             set_ssh_key_path,
+            detect_git,
             load_recent_repositories,
             save_recent_repository,
             remove_recent_repository,

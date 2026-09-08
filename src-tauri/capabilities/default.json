@@ -33,6 +33,7 @@
     "fs:read-all",
     "fs:scope-home",
     "fs:scope-home-recursive",
+    "shell:allow-open",
     {
       "identifier": "fs:allow-read",
       "allow": ["$HOME/**"]

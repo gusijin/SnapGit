@@ -7,6 +7,16 @@ export default {
     name: 'SnapGit',
     subtitle: 'A modern Git client',
   },
+  git: {
+    required: {
+      title: 'Git not found',
+      desc: 'SnapGit needs Git to manage repositories. Please install Git first.',
+      winHint: 'On Windows, install Git for Windows (recommended: check "Git from command line").',
+      macHint: 'On macOS, install Xcode Command Line Tools, or download Git for Mac.',
+      download: 'Download Git',
+      retry: 'I\'ve installed, re-detect',
+    },
+  },
   common: {
     confirm: 'Confirm',
     cancel: 'Cancel',
