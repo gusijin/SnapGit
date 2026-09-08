@@ -117,7 +117,37 @@ for DMG in "$@"; do
   # 3. 写入 Icon\r（注入 icns resource fork 数据）
   echo "  [3/6] 写入 Icon\r ..."
   ICON_DEST="$MOUNT_DIR/$ICON_NAME"
-  if ! "$REZ" -append "$ICON_SRC" -o "$ICON_DEST"; then
+  REZ_SRC="$TMPDIR_ICON/icon.r"
+
+  # Rez 是资源编译器，只吃 .r 源文件（文本），不能直接吃 .icns 二进制。
+  # 这里先把 .icns 二进制 hex 化成一份 .r 源，再编译进 Icon\r 的 resource fork。
+  # 优先用 python3（macos runner 预装），否则用 BSD od 兜底。
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$ICON_SRC" "$REZ_SRC" <<'PY'
+import sys
+src, out = sys.argv[1], sys.argv[2]
+data = open(src, 'rb').read()
+hexstr = data.hex()  # 连续 hex 字符串
+with open(out, 'w') as f:
+    f.write("data 'icns' (128) {\n")
+    # 每 16 字节（32 个 hex 字符）一行，行内每字节空一格，便于 Rez 解析
+    for i in range(0, len(hexstr), 32):
+        chunk = hexstr[i:i + 32]
+        spaced = ' '.join(chunk[j:j + 2] for j in range(0, len(chunk), 2))
+        f.write("  $" + spaced + "\n")
+    f.write("};\n")
+PY
+  else
+    {
+      echo "data 'icns' (128) {"
+      od -An -v -tx1 "$ICON_SRC" | tr -s ' ' | sed 's/^ //' | awk '{ printf "  $%s\n", $0 }'
+      echo "};"
+    } > "$REZ_SRC"
+  fi
+
+  # 确保 Icon\r 文件存在（Rez -o 会写它的 resource fork）
+  : > "$ICON_DEST"
+  if ! "$REZ" "$REZ_SRC" -o "$ICON_DEST"; then
     echo "  ! Rez 注入失败" >&2
     exit 71
   fi
