@@ -106,6 +106,25 @@ jobs:
         with:
           args: --target ${{ matrix.target }} --bundles dmg
 
+      # Tauri 的 dmg bundler 只设置卷宗图标（挂载后），不设置 dmg 文件本身的 Finder 图标
+      # （在 macOS Finder 列表里看到的 .dmg 文件图标）。这里补一刀，让 dmg 文件本身也显示 SnapGit 图标。
+      # 原理：dmg → UDRW → 挂载 → 写 Icon\r + SetFile -a C → 卸载 → 转回 UDZO
+      # 仅 macOS + Xcode CLT 可跑，所以放在 build-macos job 里。
+      - name: Inject custom Finder icon into dmg (${{ matrix.arch }})
+        run: |
+          chmod +x scripts/dmg-icon-inject.sh
+          bash scripts/dmg-icon-inject.sh \
+            src-tauri/icons/icon.icns \
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+      - name: Verify dmg icons
+        run: |
+          ls -la src-tauri/target/${{ matrix.target }}/release/bundle/dmg/
+          # 简单 smoke check：图标脚本退出 0 且产物存在
+          for f in src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg; do
+            test -s "$f" || { echo "dmg 为空: $f" >&2; exit 1; }
+          done
+
       - name: Upload dmg
         uses: actions/upload-artifact@v4
         with:

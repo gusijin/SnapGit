@@ -1,0 +1,5 @@
+# Force LF line endings for shell scripts.
+# macOS/Linux bash 不识别 \r，加这个避免 Windows 开发机提交时把脚本写成 CRLF
+# （在 macOS runner 上跑就会报 `'\r': command not found`）。
+*.sh                text eol=lf
+.gitattributes      text eol=lf
