@@ -2164,12 +2164,6 @@ onBeforeUnmount(() => {
   cursor: col-resize;
 }
 
-/* hover 高亮统一 */
-.resize-handle:hover,
-.resize-handle-col:hover {
-  background-color: var(--accent-primary);
-}
-
 .diff-area {
   min-height: 0;
 }
