@@ -1,6 +1,6 @@
 # SnapGit
 
-**[⬇ 下载最新版 → Releases]([https://gitcode.com/gusijin1/SnapGit/releases](https://github.com/gusijin/SnapGit/tree/main/releases))**
+**[⬇ 下载最新版 → Releases](https://github.com/gusijin/SnapGit/releases)**
 Windows x64 / x86（32 位）`exe`、macOS Apple Silicon / Intel `dmg`
 
 现代化的 Git 客户端，基于 Tauri 2 + Vue 3 构建。
