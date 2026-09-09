@@ -321,7 +321,7 @@ defineExpose({ openCreateDialog })
     </div>
     <div class="panel-content" @contextmenu.prevent.stop="void 0">
       <div v-if="localBranches.length > 0" class="group">
-        <div class="group-title" @click="toggleGroup('local')">
+        <div class="group-title group-branch" @click="toggleGroup('local')">
           <span class="group-title-left">
             <ChevronRight v-if="!expanded.local" :size="12" class="group-caret" />
             <ChevronDown v-else :size="12" class="group-caret" />
@@ -356,7 +356,7 @@ defineExpose({ openCreateDialog })
       </div>
 
       <div v-if="remoteBranches.length > 0" class="group">
-        <div class="group-title" @click="toggleGroup('remote')">
+        <div class="group-title group-branch" @click="toggleGroup('remote')">
           <span class="group-title-left">
             <ChevronRight v-if="!expanded.remote" :size="12" class="group-caret" />
             <ChevronDown v-else :size="12" class="group-caret" />
@@ -786,6 +786,11 @@ defineExpose({ openCreateDialog })
   border-radius: 999px;
   color: var(--text-secondary);
   font-weight: 700;
+}
+
+/* 本地/远程分支分组的数量 badge 不加粗（储藏栏保持加粗） */
+.group-branch .group-count {
+  font-weight: 400;
 }
 
 .branch-item {

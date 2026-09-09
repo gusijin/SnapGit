@@ -355,7 +355,7 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
 }
 
 .file-item.selected {
-  background-color: var(--bg-active);
+  background-color: var(--bg-selected);
 }
 
 .file-item.conflict .file-name {

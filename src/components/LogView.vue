@@ -391,7 +391,7 @@ onMounted(() => {
 
 .log-item {
   display: grid;
-  grid-template-columns: 110px 1fr 200px 180px;
+  grid-template-columns: 110px 1fr 150px 150px;
   gap: 12px;
   padding: 8px 12px;
   min-height: 38px;
@@ -409,8 +409,7 @@ onMounted(() => {
 
 .log-item.selected,
 .log-item.selected:hover {
-  background-color: var(--brand-bg);
-  box-shadow: inset 3px 0 0 var(--accent-primary);
+  background-color: var(--bg-selected);
 }
 
 .log-item:active {
@@ -436,7 +435,7 @@ onMounted(() => {
   height: 10px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--brand-primary) 0%, var(--accent-primary) 100%);
+  background: #111111;
   border: 2px solid var(--bg-secondary);
   box-shadow: 0 0 0 1px var(--border-medium);
 }
@@ -445,15 +444,11 @@ onMounted(() => {
   font-family: Consolas, Monaco, monospace;
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent-text);
-  background-color: var(--brand-bg);
+  color: #111111;
+  background-color: #e5e7eb;
   padding: 1px 7px;
   border-radius: 10px;
   white-space: nowrap;
-}
-
-.log-item.selected .commit-message {
-  color: var(--accent-text);
 }
 
 .commit-message {
