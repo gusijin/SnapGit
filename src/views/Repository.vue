@@ -2260,7 +2260,7 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
-:global([data-theme='dark']) .init-repo-icon {
+:global([data-theme='dark'] .init-repo-icon) {
   background: radial-gradient(circle at 30% 30%, #22c55e, #15803d);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
