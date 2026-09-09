@@ -11,6 +11,11 @@ import {
 } from '../api/git'
 import type { Commit, Branch, FileStatus, ScannedProject, FileTreeNode, FileDiff, StashEntry } from '../types'
 import { useTheme } from '../stores/theme'
+import {
+  useLayout, flushLayout,
+  LEFT_PANEL_MIN, LEFT_PANEL_MAX,
+  BRANCH_PANEL_MIN_FLEX, BRANCH_PANEL_MAX_FLEX, CENTER_MIN_FLEX,
+} from '../stores/layout'
 import MenuBar from '../components/MenuBar.vue'
 import TitleBar from '../components/TitleBar.vue'
 import ToolBar from '../components/ToolBar.vue'
@@ -135,25 +140,14 @@ const repoName = computed(() => {
   return norm.split(/[\\/]/).pop() || norm
 })
 
-// 分支面板大小
-const branchPanelFlex = ref(1)
+// 面板尺寸：从持久化 store 读取（首次启动用默认值，之后恢复上次拖拽的位置）
+const {
+  leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex,
+} = useLayout()
 const isResizingBranchPanel = ref(false)
-const BRANCH_PANEL_MIN_FLEX = 0.5
-const BRANCH_PANEL_MAX_FLEX = 5.0
 const REPO_LIST_FLEX = 1
-
-// 中间面板大小
-const fileListFlex = ref(1)
-const diffAreaFlex = ref(1.4)
-const logAreaFlex = ref(1)
 const isResizingCenter = ref(false)
-const CENTER_MIN_FLEX = 0.2
-
-// 左侧面板（仓库面板）宽度 —— 与中间面板（变更文件）之间的左右拖拽
-const leftPanelWidth = ref(320)
 const isResizingLeftPanel = ref(false)
-const LEFT_PANEL_MIN = 200
-const LEFT_PANEL_MAX = 560
 
 // 对话框
 const showCommitDialog = ref(false)
@@ -205,6 +199,7 @@ function onResizeBranchPanelMove(e: MouseEvent) {
 
 function stopResizeBranchPanel() {
   isResizingBranchPanel.value = false
+  flushLayout()
   document.removeEventListener('mousemove', onResizeBranchPanelMove)
   document.removeEventListener('mouseup', stopResizeBranchPanel)
   document.body.style.cursor = ''
@@ -277,6 +272,7 @@ function onResizeCenterMove(e: MouseEvent) {
 
 function stopResizeCenter() {
   isResizingCenter.value = false
+  flushLayout()
   document.removeEventListener('mousemove', onResizeCenterMove)
   document.removeEventListener('mouseup', stopResizeCenter)
   document.body.style.cursor = ''
@@ -310,6 +306,7 @@ function onResizeLeftPanelMove(e: MouseEvent) {
 
 function stopResizeLeftPanel() {
   isResizingLeftPanel.value = false
+  flushLayout()
   document.removeEventListener('mousemove', onResizeLeftPanelMove)
   document.removeEventListener('mouseup', stopResizeLeftPanel)
   document.body.style.cursor = ''
@@ -1626,6 +1623,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopResizeBranchPanel()
   stopResizeCenter()
+  stopResizeLeftPanel()
   window.removeEventListener('focus', onWindowFocus)
   stopFileWatcher()
   if (diffLoadingTimer) {
