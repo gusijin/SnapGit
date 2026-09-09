@@ -249,12 +249,6 @@ onUnmounted(() => {
             <Folder v-if="!isSwitching(project)" class="project-icon" :size="14" />
             <Loader2 v-else class="project-icon switching-spinner" :size="14" />
             <span class="project-name">{{ project.name }}</span>
-            <span 
-              v-if="project.current_branch && project.current_branch !== 'unknown'" 
-              class="branch-name"
-            >
-              {{ project.current_branch }}
-            </span>
           </div>
 
           <!-- 展开的文件树 -->
@@ -446,7 +440,7 @@ onUnmounted(() => {
 }
 
 .project-item.active {
-  background-color: var(--bg-active);
+  background-color: var(--bg-selected);
 }
 
 .project-item.active .project-name {
@@ -513,24 +507,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   font-weight: 500;
   min-width: 0;
-}
-
-.branch-name {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  padding: 2px 6px;
-  background-color: var(--bg-tertiary);
-  border-radius: 3px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  max-width: 80px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.project-item.active .branch-name {
-  background-color: rgba(255, 255, 255, 0.15);
-  color: var(--text-bright);
 }
 
 /* 项目内联文件树 */

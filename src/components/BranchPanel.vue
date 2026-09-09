@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Branch, StashEntry } from '../types'
 import { getUpstream, checkRemoteBranchDeletable } from '../api/git'
-import { GitBranchPlus, ArrowUpFromLine, ArrowDownToLine, GitMerge, Pencil, Download, Archive, Sparkles, Trash2 } from 'lucide-vue-next'
+import { GitBranchPlus, ArrowUpFromLine, ArrowDownToLine, GitMerge, Pencil, Download, Archive, Sparkles, Trash2, ChevronDown, ChevronRight } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -52,6 +52,17 @@ function cancelCheckout() {
 
 const localBranches = computed(() => props.branches.filter(b => !b.is_remote))
 const remoteBranches = computed(() => props.branches.filter(b => b.is_remote))
+
+// ===== 分组折叠 / 展开 =====
+const expanded = reactive<{ local: boolean; remote: boolean; stash: boolean }>({
+  local: true,
+  remote: true,
+  stash: true,
+})
+
+function toggleGroup(key: 'local' | 'remote' | 'stash') {
+  expanded[key] = !expanded[key]
+}
 
 // ===== 分支右键菜单 =====
 const contextMenu = ref<{ visible: boolean; x: number; y: number; branch: Branch | null }>({
@@ -310,80 +321,98 @@ defineExpose({ openCreateDialog })
     </div>
     <div class="panel-content" @contextmenu.prevent.stop="void 0">
       <div v-if="localBranches.length > 0" class="group">
-        <div class="group-title">
-          <span>{{ t('branchPanel.local') }}</span>
+        <div class="group-title" @click="toggleGroup('local')">
+          <span class="group-title-left">
+            <ChevronRight v-if="!expanded.local" :size="12" class="group-caret" />
+            <ChevronDown v-else :size="12" class="group-caret" />
+            <span>{{ t('branchPanel.local') }}</span>
+          </span>
           <span class="group-count">{{ localBranches.length }}</span>
         </div>
-        <div
-          v-for="branch in localBranches"
-          :key="branch.name"
-          class="branch-item"
-          :class="{ active: branch.is_current }"
-          @dblclick="!branch.is_current && checkout(branch.name)"
-          @contextmenu="openContextMenu($event, branch)"
-        >
-          <span class="branch-name">{{ branch.name }}</span>
-          <span v-if="branch.ahead > 0" class="ahead-badge" :title="t('branchPanel.aheadTitle', { n: branch.ahead })">
-            ↑{{ branch.ahead }}
-          </span>
-          <span v-if="branch.behind > 0" class="behind-badge" :title="t('branchPanel.behindTitle', { n: branch.behind })">
-            ↓{{ branch.behind }}
-          </span>
-          <button
-            v-if="!branch.is_current"
-            class="checkout-btn"
-            :title="t('branchPanel.checkoutTitle')"
-            @click.stop="checkout(branch.name)"
-          >{{ t('branchPanel.checkout') }}</button>
+        <div v-show="expanded.local" class="group-body">
+          <div
+            v-for="branch in localBranches"
+            :key="branch.name"
+            class="branch-item"
+            :class="{ active: branch.is_current }"
+            @dblclick="!branch.is_current && checkout(branch.name)"
+            @contextmenu="openContextMenu($event, branch)"
+          >
+            <span class="branch-name">{{ branch.name }}</span>
+            <span v-if="branch.ahead > 0" class="ahead-badge" :title="t('branchPanel.aheadTitle', { n: branch.ahead })">
+              ↑{{ branch.ahead }}
+            </span>
+            <span v-if="branch.behind > 0" class="behind-badge" :title="t('branchPanel.behindTitle', { n: branch.behind })">
+              ↓{{ branch.behind }}
+            </span>
+            <button
+              v-if="!branch.is_current"
+              class="checkout-btn"
+              :title="t('branchPanel.checkoutTitle')"
+              @click.stop="checkout(branch.name)"
+            >{{ t('branchPanel.checkout') }}</button>
+          </div>
         </div>
       </div>
 
       <div v-if="remoteBranches.length > 0" class="group">
-        <div class="group-title">
-          <span>{{ t('branchPanel.remote') }}</span>
+        <div class="group-title" @click="toggleGroup('remote')">
+          <span class="group-title-left">
+            <ChevronRight v-if="!expanded.remote" :size="12" class="group-caret" />
+            <ChevronDown v-else :size="12" class="group-caret" />
+            <span>{{ t('branchPanel.remote') }}</span>
+          </span>
           <span class="group-count">{{ remoteBranches.length }}</span>
         </div>
-        <div
-          v-for="branch in remoteBranches"
-          :key="branch.name"
-          class="branch-item remote"
-          @contextmenu="openContextMenu($event, branch)"
-        >
-          <span class="branch-name">{{ branch.name }}</span>
+        <div v-show="expanded.remote" class="group-body">
+          <div
+            v-for="branch in remoteBranches"
+            :key="branch.name"
+            class="branch-item remote"
+            @contextmenu="openContextMenu($event, branch)"
+          >
+            <span class="branch-name">{{ branch.name }}</span>
+          </div>
         </div>
       </div>
 
       <!-- 储藏列表 -->
       <div v-if="stashes.length > 0" class="group">
-        <div class="group-title">
-          <span>{{ t('branchPanel.stash') }}</span>
+        <div class="group-title" @click="toggleGroup('stash')">
+          <span class="group-title-left">
+            <ChevronRight v-if="!expanded.stash" :size="12" class="group-caret" />
+            <ChevronDown v-else :size="12" class="group-caret" />
+            <span>{{ t('branchPanel.stash') }}</span>
+          </span>
           <span class="group-count">{{ stashes.length }}</span>
         </div>
-        <div
-          v-for="stash in stashes"
-          :key="stash.stash_ref"
-          class="branch-item stash-item"
-          :title="t('branchPanel.stashTitle', { message: stash.message || t('branchPanel.stashNoDesc'), branch: stash.branch })"
-          @contextmenu="openStashContextMenu($event, stash)"
-        >
-          <Archive :size="13" class="stash-icon" />
-          <span class="stash-label">{{ stash.index }}: {{ stash.message || t('branchPanel.stashNoDesc') }}</span>
-          <span class="stash-branch" :title="t('branchPanel.stashBranch')">{{ stash.branch }}</span>
-          <div class="stash-actions">
-            <button
-              class="stash-btn"
-              :title="t('branchPanel.applyStashKeep')"
-              @click.stop="emit('stash-apply', stash.stash_ref, false)"
-            >
-              <Sparkles :size="13" />
-            </button>
-            <button
-              class="stash-btn stash-btn-danger"
-              :title="t('branchPanel.dropStash')"
-              @click.stop="emit('stash-drop', stash.stash_ref)"
-            >
-              <Trash2 :size="13" />
-            </button>
+        <div v-show="expanded.stash" class="group-body">
+          <div
+            v-for="stash in stashes"
+            :key="stash.stash_ref"
+            class="branch-item stash-item"
+            :title="t('branchPanel.stashTitle', { message: stash.message || t('branchPanel.stashNoDesc'), branch: stash.branch })"
+            @contextmenu="openStashContextMenu($event, stash)"
+          >
+            <Archive :size="13" class="stash-icon" />
+            <span class="stash-label">{{ stash.index }}: {{ stash.message || t('branchPanel.stashNoDesc') }}</span>
+            <span class="stash-branch" :title="t('branchPanel.stashBranch')">{{ stash.branch }}</span>
+            <div class="stash-actions">
+              <button
+                class="stash-btn"
+                :title="t('branchPanel.applyStashKeep')"
+                @click.stop="emit('stash-apply', stash.stash_ref, false)"
+              >
+                <Sparkles :size="13" />
+              </button>
+              <button
+                class="stash-btn stash-btn-danger"
+                :title="t('branchPanel.dropStash')"
+                @click.stop="emit('stash-drop', stash.stash_ref)"
+              >
+                <Trash2 :size="13" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -708,49 +737,86 @@ defineExpose({ openCreateDialog })
 }
 
 .group {
-  margin-bottom: 0;
+  margin-bottom: 2px;
+}
+
+.group:not(:first-child) {
+  border-top: 1px solid var(--border-light);
 }
 
 .group-title {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 10px;
+  padding: 5px 10px 5px 12px;
   font-size: 10px;
-  color: var(--text-tertiary);
-  font-weight: 600;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background-color: var(--bg-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.group-title:hover {
   background-color: var(--bg-tertiary);
+}
+
+.group-title-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.group-caret {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
 }
 
 .group-count {
   font-size: 10px;
-  padding: 1px 6px;
-  background-color: var(--bg-secondary);
-  border-radius: 8px;
-  color: var(--text-tertiary);
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-weight: 700;
 }
 
 .branch-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px 4px 20px;
+  padding: 5px 10px 5px 22px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
+  border-radius: 0 5px 5px 0;
+  margin-right: 6px;
+  transition: background-color 0.12s, color 0.12s;
 }
 
 .branch-item:hover {
   background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .branch-item.active {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
+  background-color: var(--bg-selected);
+  font-weight: 600;
 }
 
 .branch-item.remote {
-  opacity: 0.7;
+  color: var(--text-muted);
+}
+
+.branch-item.remote:hover {
+  color: var(--text-secondary);
 }
 
 .branch-name {
@@ -761,8 +827,8 @@ defineExpose({ openCreateDialog })
 .ahead-badge {
   font-size: 10px;
   padding: 1px 5px;
-  background-color: var(--bg-add, rgba(78, 201, 176, 0.15));
-  color: var(--color-add, #4ec9b0);
+  background-color: var(--bg-add);
+  color: var(--color-add);
   border-radius: 8px;
   font-family: Consolas, Monaco, monospace;
   font-weight: 600;
@@ -772,8 +838,8 @@ defineExpose({ openCreateDialog })
 .behind-badge {
   font-size: 10px;
   padding: 1px 5px;
-  background-color: var(--bg-mod, rgba(226, 192, 141, 0.15));
-  color: var(--color-mod, #e2c08d);
+  background-color: var(--bg-mod);
+  color: var(--color-mod);
   border-radius: 8px;
   font-family: Consolas, Monaco, monospace;
   font-weight: 600;
@@ -783,13 +849,13 @@ defineExpose({ openCreateDialog })
 .checkout-btn {
   padding: 2px 8px;
   font-size: 10px;
-  background: none;
-  border: 1px solid var(--bg-active);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-medium);
   color: var(--accent-text);
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background-color 0.12s;
 }
 
 .branch-item:hover .checkout-btn {
@@ -797,7 +863,8 @@ defineExpose({ openCreateDialog })
 }
 
 .checkout-btn:hover {
-  background-color: var(--bg-active);
+  background-color: var(--bg-tertiary);
+  border-color: var(--accent-primary);
   color: var(--text-bright);
 }
 

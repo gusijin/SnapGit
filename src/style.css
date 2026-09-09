@@ -60,6 +60,7 @@
   --bg-toolbar: #1e293b;          /* 工具栏 */
   --bg-hover: #28344a;            /* 悬停 */
   --bg-active: #1e3a5f;           /* 选中态（深蓝） */
+  --bg-selected: #2c3645;         /* 选中态淡灰（分支/仓库列表选中） */
   --bg-input: #0f172a;            /* 输入底 */
   --bg-overlay: rgba(2, 6, 23, 0.7);
 
@@ -127,6 +128,7 @@
   --bg-toolbar: #f1f5f9;          /* slate-100 */
   --bg-hover: #f1f5f9;
   --bg-active: #eaf1fc;           /* WorkBuddy 浅蓝卡片 */
+  --bg-selected: #eaeff5;         /* 选中态淡灰（分支/仓库列表选中） */
   --bg-input: #ffffff;
   --bg-overlay: rgba(15, 23, 42, 0.5);
 
