@@ -148,7 +148,7 @@ onMounted(() => {
         <ArrowLeft :size="14" />
       </button>
       <span>{{ t('logView.logTitle') }}</span>
-      <span class="count">({{ filteredCommits.length }})</span>
+      <span class="count">{{ filteredCommits.length }}</span>
       <div class="search-box">
         <Search :size="13" class="search-icon" />
         <input

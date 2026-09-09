@@ -388,10 +388,9 @@ onUnmounted(() => {
 .count-badge {
   font-size: 10px;
   padding: 1px 6px;
-  background-color: var(--bg-active);
-  color: var(--text-bright);
+  background-color: var(--bg-tertiary);
+  color: var(--text-tertiary);
   border-radius: 8px;
-  font-weight: 600;
 }
 
 .list-content {

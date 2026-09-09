@@ -218,8 +218,8 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
     <div class="panel-header">
       <span v-if="viewMode === 'working-tree'">{{ t('fileList.changedFiles') }}</span>
       <span v-else>{{ t('fileList.commitFiles') }}</span>
-      <span class="count" v-if="files.length > 0">({{ files.length }})</span>
-      <span class="count" v-else>(0)</span>
+      <span class="count" v-if="files.length > 0">{{ files.length }}</span>
+      <span class="count" v-else>0</span>
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 

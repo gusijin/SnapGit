@@ -791,6 +791,12 @@ defineExpose({ openCreateDialog })
 /* 本地/远程分支分组的数量 badge 不加粗（储藏栏保持加粗） */
 .group-branch .group-count {
   font-weight: 400;
+  min-width: auto;
+  height: auto;
+  padding: 1px 6px;
+  display: inline;
+  border-radius: 8px;
+  color: var(--text-tertiary);
 }
 
 .branch-item {
