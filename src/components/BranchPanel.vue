@@ -807,8 +807,6 @@ defineExpose({ openCreateDialog })
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
-  border-radius: 0 5px 5px 0;
-  margin-right: 6px;
   transition: background-color 0.12s, color 0.12s;
 }
 

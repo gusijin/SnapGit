@@ -435,7 +435,7 @@ onMounted(() => {
   height: 10px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: #111111;
+  background: var(--text-tertiary);
   border: 2px solid var(--bg-secondary);
   box-shadow: 0 0 0 1px var(--border-medium);
 }
