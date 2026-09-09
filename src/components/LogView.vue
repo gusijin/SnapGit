@@ -169,7 +169,8 @@ onMounted(() => {
     </div>
 
     <div v-else class="log-list">
-      <div class="log-items" ref="logItemsRef" @scroll="onLogScroll">
+      <!-- @contextmenu.prevent.stop：日志列表禁用右键，不弹出任何菜单（搜索框不在本容器内，仍可正常右键粘贴） -->
+      <div class="log-items" ref="logItemsRef" @scroll="onLogScroll" @contextmenu.prevent.stop>
         <div 
           v-for="commit in filteredCommits" 
           :key="commit.id"
