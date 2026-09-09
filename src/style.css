@@ -94,6 +94,15 @@
   --bg-mod: rgba(251, 191, 36, 0.12);
   --bg-del: rgba(248, 113, 113, 0.12);
 
+  /* 语法高亮配色（IDEA Darcula 风格，随主题切换） */
+  --syntax-keyword: #cc7832;
+  --syntax-string: #6a8759;
+  --syntax-number: #6897bb;
+  --syntax-comment: #808080;
+  --syntax-function: #ffc66d;
+  --syntax-type: #a9b7c6;
+  --syntax-constant: #9876aa;
+
   --scrollbar-track: #1e293b;
   --scrollbar-thumb: #334155;
   --scrollbar-thumb-hover: #475569;
@@ -151,6 +160,15 @@
   --bg-add: rgba(22, 163, 74, 0.1);
   --bg-mod: rgba(217, 119, 6, 0.1);
   --bg-del: rgba(220, 38, 38, 0.1);
+
+  /* 语法高亮配色（IDEA Light 风格，随主题切换） */
+  --syntax-keyword: #0033b3;
+  --syntax-string: #067d17;
+  --syntax-number: #1750eb;
+  --syntax-comment: #8c8c8c;
+  --syntax-function: #7c4dff;
+  --syntax-type: #1f1f9c;
+  --syntax-constant: #660e7a;
 
   --scrollbar-track: #f1f5f9;
   --scrollbar-thumb: #cbd5e1;

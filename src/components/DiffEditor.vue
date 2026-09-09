@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FileDiff, DiffLine } from '../types'
+import { fileLang, tokenizeLine, type Token } from '../syntaxHighlight'
 import { computeAnchoredScrollTop } from '../diffScrollSync'
 import {
   Save, Pencil, History,
@@ -25,6 +26,9 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits(['save', 'close', 'navigate-file', 'reload'])
 const { t } = useI18n()
+
+// 语法高亮语言（按文件路径扩展名推断），用于编辑窗口逐行关键字着色
+const lang = computed(() => fileLang(props.filePath))
 
 // ---- 行对齐模型：左(旧)/右(新) 按 diff 逐行对齐，复刻「查看差异面板」的行号与对比 ----
 // 每一行对应 diff 的一个对齐单元：eq 未改 / del 旧版有·新版无 / add 新版有·旧版无 / mod 两侧配对修改
@@ -103,62 +107,7 @@ watch(content, (val) => {
   }, 50)
 })
 
-// ---- 字符级差异着色（行内具体字符）----
-interface CharSeg {
-  text: string
-  type: 'eq' | 'del' | 'add'
-}
-
-// 对一对字符串做字符级 LCS，返回左右两侧的分段（合并连续同类，减少 DOM 节点）
-// 超长行防护：字符级 LCS 是 O(m*n)，单行超长（压缩产物一行几万字符）会卡死前端。
-// 超阈值时放弃字符级标注、整行归为同色（eq）—— 行级底色已表达差异，与 Rust 端
-// diff_chars 的 MAX_CHAR_DIFF_LEN 保持一致（改动需两端同步）。
-const MAX_CHAR_DIFF_LEN = 2000
-function charDiffSegs(oldStr: string, newStr: string): { left: CharSeg[]; right: CharSeg[] } {
-  const n = oldStr.length
-  const m = newStr.length
-  if (n > MAX_CHAR_DIFF_LEN || m > MAX_CHAR_DIFF_LEN) {
-    return {
-      left: [{ text: oldStr, type: 'eq' }],
-      right: [{ text: newStr, type: 'eq' }],
-    }
-  }
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = oldStr[i] === newStr[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
-    }
-  }
-  const lmarks: Array<'eq' | 'del'> = []
-  const rmarks: Array<'eq' | 'add'> = []
-  let i = 0
-  let j = 0
-  while (i < n && j < m) {
-    if (oldStr[i] === newStr[j]) {
-      lmarks.push('eq'); rmarks.push('eq'); i++; j++
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      lmarks.push('del'); i++
-    } else {
-      rmarks.push('add'); j++
-    }
-  }
-  while (i < n) { lmarks.push('del'); i++ }
-  while (j < m) { rmarks.push('add'); j++ }
-
-  const merge = (marks: Array<'eq' | 'del' | 'add'>, src: string): CharSeg[] => {
-    const segs: CharSeg[] = []
-    let k = 0
-    while (k < marks.length) {
-      const t = marks[k]
-      let end = k + 1
-      while (end < marks.length && marks[end] === t) end++
-      segs.push({ text: src.slice(k, end), type: t })
-      k = end
-    }
-    return segs
-  }
-  return { left: merge(lmarks, oldStr), right: merge(rmarks, newStr) }
-}
+// 字符级差异着色已移除：差异仅用行级底色表达，文字改为按代码关键字着色（见 tokenizeLine）。
 
 // 逐行渲染模型：左/右文本、行号(old/new)、底色、字符级分段
 const rowModel = computed(() => {
@@ -187,20 +136,11 @@ const rowModel = computed(() => {
       // 原新增行（含新增空行）：保持 add
       type = 'add'
     }
-    let leftSegs: CharSeg[] = []
-    let rightSegs: CharSeg[] = []
-    if (type === 'mod' && r.oldIdx !== null) {
-      const seg = charDiffSegs(oldL[r.oldIdx] ?? '', newText)
-      leftSegs = seg.left
-      rightSegs = seg.right
-    } else if (type === 'del' && r.oldIdx !== null) {
-      leftSegs = [{ text: oldText, type: 'del' }]
-    } else if (type === 'add') {
-      rightSegs = [{ text: newText, type: 'add' }]
-    } else {
-      if (r.oldIdx !== null) leftSegs = [{ text: oldText, type: 'eq' }]
-      if (r.newIdx !== null) rightSegs = [{ text: newText, type: 'eq' }]
-    }
+    // 语法高亮：按关键字着色（IDEA 风格），不再做字符级差异着色
+    let leftSegs: Token[] = []
+    let rightSegs: Token[] = []
+    if (r.oldIdx !== null) leftSegs = tokenizeLine(oldText, lang.value)
+    if (r.newIdx !== null) rightSegs = tokenizeLine(newText, lang.value)
     // eq 行无底色；del/add/mod 行按差异类型上底色（与差异面板一致：删红·加绿·改黄）
     const leftCls = type === 'eq' ? '' : 'hl-' + type
     const rightCls = type === 'eq' ? '' : 'hl-' + type
@@ -822,7 +762,7 @@ onMounted(() => {
                 ><span
                     v-for="(seg, si) in row.leftSegs"
                     :key="si"
-                    :class="seg.type !== 'eq' ? 'hl-ch hl-' + seg.type : ''"
+                    :class="'tok-' + seg.type"
                   >{{ seg.text }}</span></div>
               </div>
             </div>
@@ -953,7 +893,7 @@ onMounted(() => {
                 ><span
                     v-for="(seg, si) in row.rightSegs"
                     :key="si"
-                    :class="seg.type !== 'eq' ? 'hl-ch hl-' + seg.type : ''"
+                    :class="'tok-' + seg.type"
                   >{{ seg.text }}</span></div>
               </div>
             </div>
@@ -1235,7 +1175,7 @@ onMounted(() => {
   white-space: pre-wrap;
 }
 
-/* 差异着色层：铺在 textarea 之下，承载彩色文字渲染（行级底色 + 字符级着色），
+/* 差异着色层：铺在 textarea 之下，承载彩色文字渲染（行级底色 + 语法高亮），
    textarea 文字透明，由本层显示实际可见文本，随滚动 translate */
 .diff-overlay {
   position: absolute;
@@ -1278,18 +1218,15 @@ onMounted(() => {
   background-color: var(--bg-tertiary);
 }
 
-/* 字符级着色：行内具体被改动的字符用文字颜色标出 */
-.hl-ch.hl-del {
-  color: var(--color-del);
-}
-
-.hl-ch.hl-add {
-  color: var(--color-add);
-}
-
-/* 字符级差异仅用字色标出（红/绿），零背景——红/绿字直接浮在行底色上。
-   ⚠️ 勿给字符级加背景/挖空：曾用 --bg-secondary 挖空父行底，反在灰底上出现一块
-   "文字背景色"矩形（浅色下 #f8fafc 与行底 #e2e8f0 差一档、边界清晰），古哥明确要求去掉 */
+/* 语法高亮 token 颜色（IDEA 风格，随主题切换 var(--syntax-*)） */
+.tok-keyword  { color: var(--syntax-keyword); }
+.tok-string   { color: var(--syntax-string); }
+.tok-comment  { color: var(--syntax-comment); font-style: italic; }
+.tok-number   { color: var(--syntax-number); }
+.tok-function { color: var(--syntax-function); }
+.tok-type     { color: var(--syntax-type); }
+.tok-constant { color: var(--syntax-constant); }
+.tok-plain    { color: var(--text-primary); }
 
 
 /* 图例 */

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FileDiff } from '../types'
+import type { FileDiff, DiffLine, DiffSegment } from '../types'
+import { fileLang, tokenizeLine } from '../syntaxHighlight'
 import {
   FileQuestion, CheckCircle2, GitCompare, History, Pencil, FileArchive, FileX,
 } from 'lucide-vue-next'
@@ -324,6 +325,31 @@ const fileName = () => {
   const parts = props.filePath.replace(/\\/g, '/').split('/')
   return parts[parts.length - 1] || props.filePath
 }
+
+// ---- 语法高亮（IDEA 风格，按关键字着色）----
+const lang = computed(() => fileLang(props.filePath))
+
+function segText(segs: DiffSegment[], fallback: string): string {
+  return segs && segs.length ? segs.map((s) => s.text).join('') : fallback
+}
+
+// 左栏（旧版本）展示文本：add 行左侧为空占位；modified 取 old_segments 拼接（=整行原文）
+function leftDisplay(line: DiffLine): string {
+  if (line.line_type === 'add') return ''
+  if (line.line_type === 'modified') return segText(line.old_segments, line.content)
+  return line.content
+}
+
+// 右栏（新版本）展示文本：delete 行右侧为空占位；modified 取 new_segments 拼接
+function rightDisplay(line: DiffLine): string {
+  if (line.line_type === 'delete') return ''
+  if (line.line_type === 'modified') return segText(line.new_segments, line.content)
+  return line.content
+}
+
+function lineTokens(text: string) {
+  return tokenizeLine(text, lang.value)
+}
 </script>
 
 <template>
@@ -402,14 +428,13 @@ const fileName = () => {
               >
                 <span class="line-num">{{ line.old_line ?? '' }}</span>
                 <span class="line-content">
-                  <template v-if="line.line_type === 'modified'">
+                  <template v-if="leftDisplay(line) !== ''">
                     <span
-                      v-for="(seg, si) in line.old_segments"
-                      :key="si"
-                      :class="seg.changed ? 'seg-old-changed' : ''"
-                    >{{ seg.text }}</span>
+                      v-for="(tk, ti) in lineTokens(leftDisplay(line))"
+                      :key="ti"
+                      :class="'tok-' + tk.type"
+                    >{{ tk.text }}</span>
                   </template>
-                  <template v-else>{{ line.line_type === 'add' ? '' : line.content }}</template>
                 </span>
               </div>
               <div :style="{ height: bottomPad + 'px' }"></div>
@@ -460,14 +485,13 @@ const fileName = () => {
               >
                 <span class="line-num">{{ line.new_line ?? '' }}</span>
                 <span class="line-content">
-                  <template v-if="line.line_type === 'modified'">
+                  <template v-if="rightDisplay(line) !== ''">
                     <span
-                      v-for="(seg, si) in line.new_segments"
-                      :key="si"
-                      :class="seg.changed ? 'seg-new-changed' : ''"
-                    >{{ seg.text }}</span>
+                      v-for="(tk, ti) in lineTokens(rightDisplay(line))"
+                      :key="ti"
+                      :class="'tok-' + tk.type"
+                    >{{ tk.text }}</span>
                   </template>
-                  <template v-else>{{ line.line_type === 'delete' ? '' : line.content }}</template>
                 </span>
               </div>
               <div :style="{ height: bottomPad + 'px' }"></div>
@@ -758,21 +782,13 @@ const fileName = () => {
   color: var(--text-primary);
 }
 
-/* 行级只铺底色；文字着色限定在内容区，行号列保持中性 */
+/* 行级只铺底色；文字着色交给语法高亮（.tok-*），行号列保持中性 */
 .line-add {
   background-color: var(--bg-add);
 }
 
-.line-add .line-content {
-  color: var(--color-add);
-}
-
 .line-del {
   background-color: var(--bg-del);
-}
-
-.line-del .line-content {
-  color: var(--color-del);
 }
 
 .line-modified {
@@ -780,13 +796,15 @@ const fileName = () => {
   color: var(--text-primary);
 }
 
-.seg-old-changed {
-  color: var(--color-del);
-}
-
-.seg-new-changed {
-  color: var(--color-add);
-}
+/* 语法高亮 token 颜色（IDEA 风格，随主题切换 var(--syntax-*)） */
+.tok-keyword  { color: var(--syntax-keyword); }
+.tok-string   { color: var(--syntax-string); }
+.tok-comment  { color: var(--syntax-comment); font-style: italic; }
+.tok-number   { color: var(--syntax-number); }
+.tok-function { color: var(--syntax-function); }
+.tok-type     { color: var(--syntax-type); }
+.tok-constant { color: var(--syntax-constant); }
+.tok-plain    { color: var(--text-primary); }
 
 .line-context:hover {
   background-color: var(--bg-hover);
