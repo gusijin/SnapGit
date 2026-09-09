@@ -169,14 +169,6 @@ onMounted(() => {
     </div>
 
     <div v-else class="log-list">
-      <!-- 表头 -->
-      <div class="log-header">
-        <span class="col-id">ID</span>
-        <span class="col-msg">{{ t('logView.colMessage') }}</span>
-        <span class="col-author">{{ t('logView.colAuthor') }}</span>
-        <span class="col-date">{{ t('logView.colDate') }}</span>
-      </div>
-
       <div class="log-items" ref="logItemsRef" @scroll="onLogScroll">
         <div 
           v-for="commit in filteredCommits" 
@@ -376,23 +368,6 @@ onMounted(() => {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-
-.log-header {
-  display: grid;
-  grid-template-columns: 110px 1fr 200px 180px;
-  gap: 12px;
-  padding: 6px 12px;
-  background-color: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  align-items: center;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-  user-select: none;
 }
 
 .log-items {
