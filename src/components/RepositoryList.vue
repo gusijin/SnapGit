@@ -195,19 +195,20 @@ function handleConfigProject() {
 
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
-  if (!target.closest('.context-menu') && !target.closest('.project-item')) {
+  // 点击落在右键菜单内部时不关闭（菜单项自身会关闭）；点击软件任何其它地方（含其它仓库项、空白、其它面板）都关闭
+  if (!target.closest('.context-menu')) {
     closeContextMenu()
   }
 }
 
 onMounted(() => {
+  // 仅监听左键 click：软件任意位置左键点击即隐藏右键菜单。
+  // 不监听 contextmenu——否则右键打开菜单的同一事件会冒泡到 document 把刚打开的菜单关掉。
   document.addEventListener('click', handleClickOutside)
-  document.addEventListener('contextmenu', handleClickOutside)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  document.removeEventListener('contextmenu', handleClickOutside)
 })
 </script>
 
