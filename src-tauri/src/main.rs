@@ -194,6 +194,13 @@ struct FileDiff {
     /// 超大文本文件：行数超过 MAX_DIFF_LINES，跳过 O(m*n) 的 LCS 计算（否则会卡死/OOM），
     /// 前端降级为「仅展示可编辑、无差异高亮」并提示用户
     is_oversized: bool,
+    /// 文件「实际」行尾符：工作区模式 = 工作区文件本身；提交模式 = 当前提交版本。
+    /// 取值 "CRLF" / "LF" / None（无换行符）。
+    eol_actual: Option<String>,
+    /// 文件「期望」行尾符：工作区模式 = git 按 core.autocrlf / core.eol / .gitattributes 期望的形态；
+    /// 提交模式 = 父提交版本。`eol_actual != eol_expected` 即「内容字符一致、但 git 认为有差异」的根因
+    ///（行尾规范化：如 autocrlf=true 期望 CRLF，而文件实际是 LF）。
+    eol_expected: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -2150,25 +2157,70 @@ fn is_binary_bytes(bytes: &[u8]) -> bool {
     bytes[..end].contains(&0)
 }
 
+/// 根据原始字节检测文件主要换行符类型。
+/// 若包含 CRLF 则判为 "CRLF"；否则若包含 LF 则判为 "LF"；无换行符返回 None。
+/// 返回值直接采用 git 语义（CRLF / LF），前端无需再次映射。
+fn detect_eol(bytes: &[u8]) -> Option<String> {
+    if bytes.windows(2).any(|w| w == b"\r\n") {
+        Some("CRLF".to_string())
+    } else if bytes.contains(&b'\n') {
+        Some("LF".to_string())
+    } else {
+        None
+    }
+}
+
+/// 推断 git 期望该文件在工作区「应该」使用的行尾符（即 checkout 后的形态）。
+///
+/// git 在 diff 时会先把工作区与索引做行尾规范化再比较，所以「内容字符一致、但版本显示有差异」
+/// 的常见根因就是：工作区实际 EOL 与 git 期望 EOL 不一致（最典型是 `core.autocrlf=true`
+/// 在 Windows 上期望 CRLF，而文件实际是 LF）。
+///
+/// 依据（与 git 同优先级）：core.autocrlf / core.eol（libgit2 已合并 local+global+system 配置）。
+///   - autocrlf=true  → CRLF（与 OS 无关，git 规定 checkout 转 CRLF）
+///   - autocrlf=input → LF
+///   - autocrlf=false/未设 + core.eol=crlf|lf|native → 用 core.eol（native 跟 OS）
+///   - 其余           → None（git 不强制，按文件实际字节）
+///
+/// 注：仓库级 `.gitattributes` 的 `eol`/`text` 属性此处未覆盖（多数 Windows 项目依赖 autocrlf）；
+/// 若需精确到 .gitattributes 的 eol 规则，后续可调用 `repo.get_attr` 补充。
+fn git_expected_eol(repo: &Repository) -> Option<String> {
+    let cfg = repo.config().ok()?;
+    let autocrlf = cfg.get_string("core.autocrlf").ok();
+    let core_eol = cfg.get_string("core.eol").ok();
+    match autocrlf.as_deref() {
+        Some("true") => Some("CRLF".to_string()),
+        Some("input") => Some("LF".to_string()),
+        _ => match core_eol.as_deref() {
+            Some("crlf") => Some("CRLF".to_string()),
+            Some("lf") => Some("LF".to_string()),
+            Some("native") => Some(if cfg!(windows) { "CRLF" } else { "LF" }.to_string()),
+            _ => None,
+        },
+    }
+}
+
 /// 读取工作区文件内容（按行），并判定是否为二进制。
-/// 返回 (行内容, 是否二进制)；二进制时行内容为空。
+/// 返回 (行内容, 是否二进制, 行尾符类型)；二进制时行内容为空。
 /// 非 UTF-8 但不含 NUL（如 GBK 文本）按 lossy 转换，保证内容可见而不是整片空白。
-fn read_file_lines(path: &Path) -> (Vec<String>, bool) {
+fn read_file_lines(path: &Path) -> (Vec<String>, bool, Option<String>) {
     let bytes = match fs::read(path) {
         Ok(b) => b,
-        Err(_) => return (Vec::new(), false),
+        Err(_) => return (Vec::new(), false, None),
     };
+    let eol = detect_eol(&bytes);
     if is_binary_bytes(&bytes) {
-        return (Vec::new(), true);
+        return (Vec::new(), true, eol);
     }
     match String::from_utf8(bytes) {
-        Ok(content) => (content.lines().map(|l| l.to_string()).collect(), false),
+        Ok(content) => (content.lines().map(|l| l.to_string()).collect(), false, eol),
         Err(e) => (
             String::from_utf8_lossy(e.as_bytes())
                 .lines()
                 .map(|l| l.to_string())
                 .collect(),
             false,
+            eol,
         ),
     }
 }
@@ -2496,25 +2548,28 @@ fn file_content_from_tree(
     repo: &Repository,
     tree: &git2::Tree,
     file_path: &str,
-) -> (Vec<String>, bool) {
+) -> (Vec<String>, bool, Option<String>) {
     match tree.get_path(Path::new(file_path)) {
         Ok(entry) => repo
             .find_blob(entry.id())
             .map(|blob| {
+                let content = blob.content();
+                let eol = detect_eol(content);
                 // blob.is_binary() 用的是 git 自带启发式，与 is_binary_bytes 一致
                 if blob.is_binary() {
-                    return (Vec::new(), true);
+                    return (Vec::new(), true, eol);
                 }
                 (
-                    String::from_utf8_lossy(blob.content())
+                    String::from_utf8_lossy(content)
                         .lines()
                         .map(|l| l.to_string())
                         .collect(),
                     false,
+                    eol,
                 )
             })
-            .unwrap_or((Vec::new(), false)),
-        Err(_) => (Vec::new(), false),
+            .unwrap_or((Vec::new(), false, None)),
+        Err(_) => (Vec::new(), false, None),
     }
 }
 
@@ -2524,31 +2579,35 @@ async fn get_file_diff(repo_path: String, file_path: String, commit_id: Option<S
         let _guard = git_read_guard();
         let repo = open_repo(&repo_path)?;
 
-        let (old_content, new_content, is_binary) = if let Some(cid) = commit_id {
+        let (old_content, new_content, is_binary, eol_actual, eol_expected) = if let Some(cid) = commit_id {
             // 提交历史模式：显示该提交相对父提交的修改对比
             let oid = git2::Oid::from_str(&cid).map_err(|e| e.to_string())?;
             let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
             let commit_tree = commit.tree().map_err(|e| e.to_string())?;
-            let (new_content, new_bin) = file_content_from_tree(&repo, &commit_tree, &file_path);
+            let (new_content, new_bin, new_eol) = file_content_from_tree(&repo, &commit_tree, &file_path);
             // 父提交中的文件内容（无父提交=新增文件，旧内容为空）
-            let (old_content, old_bin) = if commit.parent_count() == 0 {
-                (Vec::new(), false)
+            let (old_content, old_bin, old_eol) = if commit.parent_count() == 0 {
+                (Vec::new(), false, None)
             } else {
                 let parent = commit.parent(0).map_err(|e| e.to_string())?;
                 let parent_tree = parent.tree().map_err(|e| e.to_string())?;
                 file_content_from_tree(&repo, &parent_tree, &file_path)
             };
-            (old_content, new_content, old_bin || new_bin)
+            // 提交模式：实际 = 当前提交版本，期望 = 父提交版本
+            (old_content, new_content, old_bin || new_bin, new_eol, old_eol)
         } else {
             // 工作区模式：工作区文件 vs HEAD
             let full_path = PathBuf::from(&repo_path).join(&file_path);
-            let (new_content, new_bin) = read_file_lines(&full_path);
-            let (old_content, old_bin) = {
+            let (new_content, new_bin, new_eol) = read_file_lines(&full_path);
+            let (old_content, old_bin, _old_eol) = {
                 let head = repo.head().map_err(|e| e.to_string())?;
                 let tree = head.peel_to_tree().map_err(|e| e.to_string())?;
                 file_content_from_tree(&repo, &tree, &file_path)
             };
-            (old_content, new_content, old_bin || new_bin)
+            // 工作区模式：实际 = 工作区文件 EOL；期望 = git 按 autocrlf/.gitattributes 期望的形态。
+            // 这正是「内容没变、但 git status 标 M」的根因（行尾规范化）。
+            let eol_expected = git_expected_eol(&repo);
+            (old_content, new_content, old_bin || new_bin, new_eol, eol_expected)
         };
 
         // 大文件 / 二进制 跳过 diff 运算：
@@ -2574,6 +2633,8 @@ async fn get_file_diff(repo_path: String, file_path: String, commit_id: Option<S
             lines,
             is_binary,
             is_oversized,
+            eol_actual,
+            eol_expected,
         })
     })
     .await

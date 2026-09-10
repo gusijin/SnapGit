@@ -61,6 +61,11 @@ export interface FileDiff {
   is_binary: boolean
   /** 超大文本文件：行数超过阈值，Rust 端跳过了 LCS 计算，前端降级为「仅展示可编辑、无差异高亮」 */
   is_oversized: boolean
+  /** 文件「实际」行尾符：工作区模式=工作区文件，提交模式=当前提交版本。取值 "CRLF" / "LF" / null */
+  eol_actual?: string | null
+  /** 文件「期望」行尾符：工作区模式=git 按 autocrlf/.gitattributes 期望的形态，提交模式=父版本。
+   *  `eol_actual !== eol_expected` 即「内容字符一致、但 git 认为有差异」的根因（行尾规范化）。 */
+  eol_expected?: string | null
 }
 
 export interface ConflictBlock {

@@ -326,6 +326,19 @@ const fileName = () => {
   return parts[parts.length - 1] || props.filePath
 }
 
+// 当文件「实际」行尾符与 git「期望」行尾符不一致时，在标题栏显示灰色提示。
+// 这正是「内容没变、但 git status 标 M」的根因：如 autocrlf=true 期望 CRLF，文件实际是 LF。
+const eolLabel = computed(() => {
+  const diff = props.diff
+  if (!diff) return ''
+  const actual = diff.eol_actual
+  const expected = diff.eol_expected
+  // 新文件（仓库里原本不存在，old_content 为空）没有「git 期望 vs 实际」的冲突，不显示行尾提示
+  if (!diff.old_content || diff.old_content.length === 0) return ''
+  if (!actual || !expected || actual === expected) return ''
+  return t('diffViewer.eolMismatch', { actual, expected })
+})
+
 // ---- 语法高亮（IDEA 风格，按关键字着色）----
 const lang = computed(() => fileLang(props.filePath))
 
@@ -359,6 +372,7 @@ function lineTokens(text: string) {
       <GitCompare :size="13" class="header-icon" />
       <span>{{ t('diffViewer.title') }}</span>
       <span v-if="filePath" class="file-title">{{ fileName() }}</span>
+      <span v-if="eolLabel" class="file-eol">{{ eolLabel }}</span>
     </div>
 
     <div v-if="loading" class="empty">
@@ -544,6 +558,20 @@ function lineTokens(text: string) {
   color: var(--accent-text);
   font-weight: 500;
   text-transform: none;
+  /* 空间不足时优先省略文件名，保证行尾标签完整可见 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-eol {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-transform: none;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .header-icon {

@@ -335,6 +335,7 @@ export default {
     newThisCommit: '新版本 · 该提交',
     newWorkingTree: '新版本 · 工作区',
     truncated: '文件较大，仅显示前 {n} 行差异（完整内容请双击文件在编辑器中查看）',
+    eolMismatch: '换行符不一致 · 实际 {actual} / 期望 {expected}',
   },
   repository: {
     emptyTitle: '欢迎使用 SnapGit',

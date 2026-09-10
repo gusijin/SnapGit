@@ -334,6 +334,7 @@ export default {
     newThisCommit: 'New · this commit',
     newWorkingTree: 'New · working tree',
     truncated: 'File is large, showing first {n} diff lines (double-click the file to view the full content in editor)',
+    eolMismatch: 'Line endings mismatch · actual {actual} / expected {expected}',
   },
   repository: {
     emptyTitle: 'Welcome to SnapGit',
