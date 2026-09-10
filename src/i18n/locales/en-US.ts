@@ -16,6 +16,12 @@ export default {
       download: 'Download Git',
       retry: 'I\'ve installed, re-detect',
     },
+    closeConfirm: {
+      title: 'Quit SnapGit',
+      question: 'Do you really want to quit now?',
+      hint: 'Please note that running Git operations may be interrupted.',
+      forceExit: 'Force Exit',
+    },
   },
   common: {
     confirm: 'Confirm',

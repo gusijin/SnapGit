@@ -17,6 +17,12 @@ export default {
       download: '下载 Git',
       retry: '我已安装，重新检测',
     },
+    closeConfirm: {
+      title: '关闭 SnapGit',
+      question: '你真的想现在关闭吗？',
+      hint: '请注意，当前运行的 Git 进程可能不会被中断。',
+      forceExit: 'Force Exit',
+    },
   },
   common: {
     confirm: '确定',

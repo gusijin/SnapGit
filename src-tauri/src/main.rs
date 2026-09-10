@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 #[cfg(windows)]
@@ -26,6 +27,36 @@ type Result<T> = std::result::Result<T, String>;
 // 又让 loadRepoData 的多个只读命令真正并行，不再因全局串行而排队（切换仓库卡顿的根因）。
 static GIT_LOCK: RwLock<()> = RwLock::new(());
 
+/// 正在执行中的 Git 操作计数：guard 获取时 +1，Drop 时 -1。
+/// 关闭主窗口时据此判断「是否有 Git 进程/操作仍在跑」，忙则弹确认框。
+static ACTIVE_GIT_OPS: AtomicUsize = AtomicUsize::new(0);
+
+/// 只读 guard：持有 GIT_LOCK 读锁并计入 ACTIVE_GIT_OPS。
+struct GitReadGuard(#[allow(dead_code)] std::sync::RwLockReadGuard<'static, ()>);
+impl Drop for GitReadGuard {
+    fn drop(&mut self) {
+        ACTIVE_GIT_OPS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+fn git_read_guard() -> GitReadGuard {
+    let g = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    ACTIVE_GIT_OPS.fetch_add(1, Ordering::SeqCst);
+    GitReadGuard(g)
+}
+
+/// 写 guard：持有 GIT_LOCK 写锁并计入 ACTIVE_GIT_OPS。
+struct GitWriteGuard(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()>);
+impl Drop for GitWriteGuard {
+    fn drop(&mut self) {
+        ACTIVE_GIT_OPS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+fn git_write_guard() -> GitWriteGuard {
+    let g = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    ACTIVE_GIT_OPS.fetch_add(1, Ordering::SeqCst);
+    GitWriteGuard(g)
+}
+
 // 文件状态缓存：自动刷新高频调用 get_file_status 时命中，避免每次都扫 .git。
 // TTL 短（800ms）以控制 stale；loadRepoData 等主动刷新走 cached=false 绕过，
 // 保证切库 / 写操作后即时准确。仅缓存 get_file_status（autoRefresh 高频路径）。
@@ -46,6 +77,12 @@ fn open_repo(repo_path: &str) -> Result<git2::Repository> {
         return Ok(repo);
     }
     git2::Repository::open(repo_path).map_err(|e| e.to_string())
+}
+
+/// 查询当前是否有 Git 操作正在执行（供关闭窗口前的确认弹窗使用）。
+#[command]
+fn is_git_busy() -> bool {
+    ACTIVE_GIT_OPS.load(Ordering::SeqCst) > 0
 }
 
 /// 归还仓库实例到缓存（调用方不再持有）。超过上限则整体清空，避免多仓库无限累积。
@@ -201,7 +238,7 @@ fn get_recent_file_path(app: &AppHandle) -> PathBuf {
 
 #[command]
 fn load_recent_repositories(app: AppHandle) -> Result<Vec<RepositoryInfo>> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let file_path = get_recent_file_path(&app);
     
     if !file_path.exists() {
@@ -217,7 +254,7 @@ fn load_recent_repositories(app: AppHandle) -> Result<Vec<RepositoryInfo>> {
 
 #[command]
 fn save_recent_repository(app: AppHandle, repo_info: RepositoryInfo) -> Result<()> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let file_path = get_recent_file_path(&app);
     
     let mut repos = if file_path.exists() {
@@ -244,7 +281,7 @@ fn save_recent_repository(app: AppHandle, repo_info: RepositoryInfo) -> Result<(
 
 #[command]
 fn remove_recent_repository(app: AppHandle, path: String) -> Result<()> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let file_path = get_recent_file_path(&app);
     
     if !file_path.exists() {
@@ -269,7 +306,7 @@ fn remove_recent_repository(app: AppHandle, path: String) -> Result<()> {
 
 #[command]
 fn open_repository(path: String) -> Result<RepositoryInfo> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let repo = Repository::open(&path).map_err(|e| {
         // 给"目录不是有效 Git 仓库"这种错误加特定前缀，
         // 前端 catch 时据此判断是否弹"是否初始化为新仓库"对话框
@@ -302,7 +339,7 @@ fn open_repository(path: String) -> Result<RepositoryInfo> {
 /// 然后再次调用 `open_repository` 完成加载。
 #[command]
 fn init_repository(repo_path: String) -> Result<RepositoryInfo> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
 
     let path_buf = PathBuf::from(&repo_path);
     if !path_buf.is_dir() {
@@ -338,7 +375,7 @@ fn init_repository(repo_path: String) -> Result<RepositoryInfo> {
 #[command]
 async fn get_commits(repo_path: String, limit: usize, skip: Option<usize>) -> Result<Vec<Commit>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         // 空仓库（unborn HEAD，例如刚 init 还没首次 commit）没有可遍历的历史。
@@ -394,7 +431,7 @@ fn remote_head_ahead(repo: &Repository, local_oid: git2::Oid) -> (usize, usize) 
 #[command]
 async fn get_branches(repo_path: String, full: Option<bool>) -> Result<Vec<Branch>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         // 空仓库（unborn HEAD）：HEAD 文件指向 `refs/heads/<name>` 但没有 commit，
@@ -477,7 +514,7 @@ async fn get_branches(repo_path: String, full: Option<bool>) -> Result<Vec<Branc
 #[command]
 async fn get_remotes(repo_path: String) -> Result<Vec<String>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let remotes = repo.remotes().map_err(|e| e.to_string())?;
         let mut result = Vec::new();
@@ -495,7 +532,7 @@ async fn get_remotes(repo_path: String) -> Result<Vec<String>> {
 #[command]
 async fn get_upstream(repo_path: String, branch_name: String) -> Result<Option<UpstreamInfo>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let branch = repo.find_branch(&branch_name, BranchType::Local)
             .map_err(|e| e.to_string())?;
@@ -596,7 +633,7 @@ fn map_status(x: char, y: char) -> Option<&'static str> {
 #[command]
 async fn get_file_status(repo_path: String, cached: Option<bool>) -> Result<Vec<FileStatus>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
 
         // C4: 自动刷新高频调用时命中缓存，避免每次都扫 .git
         let use_cache = cached.unwrap_or(true);
@@ -657,7 +694,7 @@ async fn get_file_status(repo_path: String, cached: Option<bool>) -> Result<Vec<
 #[command]
 async fn stage_file(repo_path: String, file_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         // 使用 git add -A 一次性处理新增、修改、删除等所有变更
         let output = git_command()
             .arg("-C")
@@ -685,7 +722,7 @@ async fn stage_file(repo_path: String, file_path: String) -> Result<()> {
 #[command]
 async fn discard_file(repo_path: String, file_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         // 先用 git ls-files 判断文件是否被追踪
         let ls_output = git_command()
             .arg("-C")
@@ -736,7 +773,7 @@ async fn discard_file(repo_path: String, file_path: String) -> Result<()> {
 #[command]
 async fn commit(repo_path: String, message: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         // 使用 git 命令行提交，自动处理签名、钩子等配置
         let output = git_command()
             .arg("-C")
@@ -772,7 +809,7 @@ async fn commit(repo_path: String, message: String) -> Result<String> {
 #[command]
 async fn push(repo_path: String, remote: String, local_branch: String, remote_branch: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         // 使用系统 git 命令行推送，自动复用 credential.helper / SSH agent 等认证配置
         let refspec = if remote_branch.is_empty() {
             local_branch.clone()
@@ -817,7 +854,7 @@ async fn push(repo_path: String, remote: String, local_branch: String, remote_br
 #[command]
 async fn get_remote_url(repo_path: String, remote_name: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let remote = repo.find_remote(&remote_name).map_err(|e| e.to_string())?;
         let url = remote.url().ok_or("无法获取远程 URL")?;
@@ -830,7 +867,7 @@ async fn get_remote_url(repo_path: String, remote_name: String) -> Result<String
 #[command]
 async fn get_repo_config(repo_path: String) -> Result<serde_json::Value> {
     let result = tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
 
         let mut map = serde_json::Map::new();
 
@@ -957,7 +994,7 @@ async fn get_repo_config(repo_path: String) -> Result<serde_json::Value> {
 #[command]
 async fn save_credentials(repo_path: String, remote_name: String, username: String, token: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let remote = repo.find_remote(&remote_name).map_err(|e| e.to_string())?;
         let url = remote.url().ok_or("无法获取远程 URL")?;
@@ -1006,7 +1043,7 @@ async fn checkout_branch(repo_path: String, branch_name: String, force: Option<b
     // 切换分支涉及大量阻塞 I/O（git checkout 外部进程），改为在 blocking 线程池执行，
     // 避免阻塞 Tauri async runtime worker 线程导致 Windows WebView2 消息泵饿死、应用闪退。
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let force_flag = force.unwrap_or(false);
 
         // Strategy 1: try direct checkout (for local branches, including those with "/" in name)
@@ -1088,7 +1125,7 @@ async fn checkout_branch(repo_path: String, branch_name: String, force: Option<b
 
 #[command]
 fn checkout_remote_branch(repo_path: String, remote_branch: String) -> Result<()> {
-    let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_write_guard();
     // remote_branch 形如 "origin/feature/login"，本地分支名取第一个 "/" 之后的部分
     let local_name = match remote_branch.split_once('/') {
         Some((_, name)) => name.to_string(),
@@ -1139,7 +1176,7 @@ fn checkout_remote_branch(repo_path: String, remote_branch: String) -> Result<()
 #[command]
 async fn pull_branch(repo_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         // 极简仓库（刚 init 还没有任何 remote）：直接短路返回特定错误前缀，
         // 前端识别后弹「创建远程」对话框引导用户添加 remote，避免暴露 git 原始报错。
@@ -1214,7 +1251,7 @@ async fn pull_branch(repo_path: String) -> Result<()> {
 #[command]
 async fn add_remote(repo_path: String, name: String, url: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         // 名称兜底：业务层必传，但多一层防御避免出现裸 `git remote add  <url>`（无名）
         let name = if name.trim().is_empty() { "origin".to_string() } else { name.trim().to_string() };
@@ -1287,7 +1324,7 @@ async fn clone_repository(
     let dir_clone = target_dir.clone();
     let branch_clone = branch.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let mut cmd = git_command();
         cmd.env("GIT_TERMINAL_PROMPT", "0");
         // 注意：先 "clone" 子命令本身，再跟 clone 专属选项
@@ -1339,7 +1376,7 @@ async fn clone_repository(
 #[command]
 async fn create_branch(repo_path: String, branch_name: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         let head = repo.head().map_err(|e| e.to_string())?;
@@ -1357,7 +1394,7 @@ async fn create_branch(repo_path: String, branch_name: String) -> Result<()> {
 #[command]
 async fn get_current_branch(repo_path: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         let head = repo.head().map_err(|e| e.to_string())?;
@@ -1370,7 +1407,7 @@ async fn get_current_branch(repo_path: String) -> Result<String> {
 #[command]
 async fn merge_branch(repo_path: String, branch_name: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         // 将指定分支合并到当前分支（git 常规语义，不切换分支）
         let output = git_command()
             .arg("-C")
@@ -1399,7 +1436,7 @@ async fn merge_branch(repo_path: String, branch_name: String) -> Result<()> {
 #[command]
 async fn rename_branch(repo_path: String, old_name: String, new_name: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let output = git_command()
             .arg("-C")
             .arg(&repo_path)
@@ -1436,7 +1473,7 @@ async fn delete_branch(
     delete_remote: bool,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         // 不允许删除当前检出的分支
@@ -1537,7 +1574,7 @@ async fn delete_remote_branch(
     delete_tracking: bool,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         // 1. 从远程删除分支
         let output = git_command()
@@ -1660,7 +1697,7 @@ async fn check_remote_branch_deletable(
     remote_branch: String,
 ) -> Result<RemoteDeleteCheck> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
 
         // 1. 协议快速检查：git:// 协议只读不可写。
         //    使用 libgit2 读取 remote url / pushurl（pushurl 优先，对应 `remote.<name>.pushurl`）。
@@ -1763,7 +1800,7 @@ async fn check_remote_branch_deletable(
 
 #[command]
 fn open_folder_dialog() -> Result<Option<String>> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let result = rfd::FileDialog::new().pick_folder();
 
     match result {
@@ -1774,7 +1811,7 @@ fn open_folder_dialog() -> Result<Option<String>> {
 
 #[command]
 fn open_file_dialog() -> Result<Option<String>> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     match rfd::FileDialog::new().pick_file() {
         Some(path) => Ok(Some(path.to_string_lossy().to_string())),
         None => Ok(None),
@@ -1783,7 +1820,7 @@ fn open_file_dialog() -> Result<Option<String>> {
 
 #[command]
 async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let key_path = key_path.trim().to_string();
     if key_path.is_empty() {
         // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
@@ -2003,7 +2040,7 @@ fn scan_directory(
 
 #[command]
 fn scan_projects() -> Result<Vec<ScannedProject>> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let mut projects = Vec::new();
     let scan_dirs = get_scan_directories();
     let mut visited = std::collections::HashSet::new();
@@ -2092,7 +2129,7 @@ fn build_file_tree(
 #[command]
 async fn get_file_tree(repo_path: String) -> Result<Vec<FileTreeNode>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let base = PathBuf::from(&repo_path);
         if !base.exists() {
             return Err("Repository path does not exist".to_string());
@@ -2484,7 +2521,7 @@ fn file_content_from_tree(
 #[command]
 async fn get_file_diff(repo_path: String, file_path: String, commit_id: Option<String>) -> Result<FileDiff> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let repo = open_repo(&repo_path)?;
 
         let (old_content, new_content, is_binary) = if let Some(cid) = commit_id {
@@ -2643,7 +2680,7 @@ fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
 #[command]
 async fn get_conflict_file(repo_path: String, file_path: String) -> Result<ConflictFile> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
 
         // ours = stage 2 (HEAD/current branch), theirs = stage 3 (incoming branch)
         let ours_content = read_stage_content(&repo_path, 2, &file_path).unwrap_or_default();
@@ -2672,7 +2709,7 @@ async fn get_conflict_file(repo_path: String, file_path: String) -> Result<Confl
 #[command]
 async fn read_working_file(repo_path: String, file_path: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
         let full_path = PathBuf::from(&repo_path).join(&file_path);
         fs::read_to_string(&full_path).map_err(|e| e.to_string())
     })
@@ -2683,7 +2720,7 @@ async fn read_working_file(repo_path: String, file_path: String) -> Result<Strin
 #[command]
 async fn write_file_content(repo_path: String, file_path: String, content: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
         let full_path = PathBuf::from(&repo_path).join(&file_path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -2715,7 +2752,7 @@ async fn stash_create(
     keep_index: bool,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         let mut cmd = git_command();
         cmd.arg("-C").arg(&repo_path).arg("stash").arg("push");
@@ -2749,7 +2786,7 @@ async fn stash_create(
 #[tauri::command]
 async fn stash_list(repo_path: String) -> Result<Vec<StashEntry>> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_read_guard();
 
         // 使用 git stash list 输出，格式：stash@{index}: On branch-name: message
         let output = git_command()
@@ -2838,7 +2875,7 @@ fn parse_stash_rest(rest: &str) -> (String, String) {
 #[tauri::command]
 async fn stash_apply(repo_path: String, stash_ref: String, keep_index: bool) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         let mut cmd = git_command();
         cmd.arg("-C").arg(&repo_path).arg("stash").arg("apply");
@@ -2866,7 +2903,7 @@ async fn stash_apply(repo_path: String, stash_ref: String, keep_index: bool) -> 
 #[tauri::command]
 async fn stash_drop(repo_path: String, stash_ref: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = GIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = git_write_guard();
 
         let output = git_command()
             .arg("-C")
@@ -3012,7 +3049,7 @@ fn close_edit_window(app: AppHandle, window: Window) -> Result<()> {
 
 #[command]
 fn get_commit_files(repo_path: String, commit_id: String) -> Result<Vec<FileStatus>> {
-    let _guard = GIT_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let _guard = git_read_guard();
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
     let oid = git2::Oid::from_str(&commit_id).map_err(|e| e.to_string())?;
@@ -3216,7 +3253,19 @@ fn main() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // 拦截主窗口关闭：统一交给前端决定——有 Git 操作在跑则弹确认框，
+            // 空闲则前端调 destroy() 直接退出。防止前端监听失效导致关不掉，
+            // 只拦 "main"，编辑窗口关闭不受影响。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            is_git_busy,
             open_repository,
             init_repository,
             get_commits,
