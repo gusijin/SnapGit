@@ -163,6 +163,10 @@ export async function setSshKeyPath(repoPath: string, keyPath: string): Promise<
   return await invoke('set_ssh_key_path', { repoPath, keyPath })
 }
 
+export async function setUserIdentity(repoPath: string, name: string, email: string): Promise<void> {
+  await invoke('set_user_identity', { repoPath, name, email })
+}
+
 export async function scanProjects(): Promise<ScannedProject[]> {
   return await invoke('scan_projects')
 }

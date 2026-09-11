@@ -2054,6 +2054,34 @@ async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String>
     }
 }
 
+// 保存仓库用户信息（user.name / user.email）。
+// 空字符串表示移除该配置（git config --unset），方便回退到 global/system 默认值。
+#[command]
+async fn set_user_identity(repo_path: String, name: String, email: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_read_guard();
+        let set_or_unset = |key: &str, value: &str| -> std::result::Result<(), String> {
+            let mut cmd = git_command();
+            cmd.arg("-C").arg(&repo_path).arg("config").arg("--local");
+            if value.trim().is_empty() {
+                cmd.arg("--unset").arg(key);
+            } else {
+                cmd.arg(key).arg(value.trim());
+            }
+            match cmd.status() {
+                Ok(s) if s.success() => Ok(()),
+                Ok(s) => Err(format!("git config {} 写入失败，退出码: {}", key, s)),
+                Err(e) => Err(format!("执行 git 失败: {}", e)),
+            }
+        };
+        set_or_unset("user.name", &name)?;
+        set_or_unset("user.email", &email)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("保存用户信息失败: {}", e))?
+}
+
 // 检测系统是否可用 git：优先 PATH，Windows 额外探测常见安装路径。
 // 返回 { available, version, path }，供前端判断是否需要引导用户安装 Git。
 #[command]
@@ -3563,6 +3591,7 @@ fn main() {
             open_folder_dialog,
             open_file_dialog,
             set_ssh_key_path,
+            set_user_identity,
             detect_git,
             load_recent_repositories,
             save_recent_repository,

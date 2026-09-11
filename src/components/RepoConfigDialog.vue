@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
-import { getRepoConfig, openFileDialog, setSshKeyPath } from '../api/git'
+import { getRepoConfig, openFileDialog, setSshKeyPath, setUserIdentity } from '../api/git'
 import type { RepoConfig, SshKeyInfo } from '../api/git'
 import {
   Dialog,
@@ -26,6 +26,17 @@ const loading = ref(true)
 const error = ref('')
 const cfg = ref<RepoConfig | null>(null)
 const showRaw = ref(false)
+
+// 当前选中的 tab
+type TabKey = 'basic' | 'remotes' | 'auth' | 'config'
+const activeTab = ref<TabKey>('basic')
+
+// 基本信息（user.name / user.email）编辑态
+const editName = ref('')
+const editEmail = ref('')
+const savingIdentity = ref(false)
+const identityMsg = ref('')
+const identityErr = ref(false)
 
 // SSH 私钥路径（id_rsa）编辑态
 const editSshKeyPath = ref('')
@@ -53,8 +64,12 @@ async function load() {
   try {
     cfg.value = await getRepoConfig(props.repoPath)
     editSshKeyPath.value = extractSshKeyPath(cfg.value?.core_ssh_command || null)
+    editName.value = cfg.value?.user_name || ''
+    editEmail.value = cfg.value?.user_email || ''
     sshKeyMsg.value = ''
     sshKeyErr.value = false
+    identityMsg.value = ''
+    identityErr.value = false
   } catch (e) {
     error.value = String(e)
   } finally {
@@ -67,6 +82,23 @@ function extractSshKeyPath(cmd: string | null): string {
   if (!cmd) return ''
   const m = cmd.match(/-i\s+"([^"]+)"|-i\s+'([^']+)'|-i\s+(\S+)/)
   return m ? (m[1] || m[2] || m[3] || '') : ''
+}
+
+// 保存基本信息（user.name / user.email）
+async function onSaveIdentity() {
+  savingIdentity.value = true
+  identityMsg.value = ''
+  identityErr.value = false
+  try {
+    await setUserIdentity(props.repoPath, editName.value, editEmail.value)
+    await load()
+    identityMsg.value = t('repoConfig.identitySaved')
+  } catch (e) {
+    identityMsg.value = String(e)
+    identityErr.value = true
+  } finally {
+    savingIdentity.value = false
+  }
 }
 
 async function onBrowseSshKey() {
@@ -102,6 +134,14 @@ const sshKeyPairs = computed(() => {
   }
   return result
 })
+
+// tab 定义（图标 + key），顺序即展示顺序
+const tabs = computed(() => [
+  { key: 'basic' as TabKey, label: t('repoConfig.tabBasic') },
+  { key: 'remotes' as TabKey, label: t('repoConfig.tabRemotes') },
+  { key: 'auth' as TabKey, label: t('repoConfig.tabAuth') },
+  { key: 'config' as TabKey, label: t('repoConfig.tabConfig') },
+])
 </script>
 
 <template>
@@ -116,140 +156,174 @@ const sshKeyPairs = computed(() => {
 
       <div v-if="loading" class="loading">{{ t('repoConfig.loading') }}</div>
       <div v-else-if="error" class="error-message">{{ error }}</div>
-      <div v-else-if="cfg" class="config-body">
+      <div v-else-if="cfg" class="config-layout">
 
-        <!-- 远程仓库 -->
-        <section class="cfg-section">
-          <h4 class="section-title">{{ t('repoConfig.remotes') }}</h4>
-          <div v-if="cfg.remotes.length === 0" class="empty-tip">
-            {{ t('repoConfig.noRemotes') }}
-          </div>
-          <div v-for="rm in cfg.remotes" :key="rm.name" class="remote-card">
-            <div class="remote-head">
-              <span class="remote-name">{{ rm.name }}</span>
-              <span class="remote-type-badge">{{
-                rm.fetch_url.startsWith('http') ? 'HTTPS' :
-                rm.fetch_url.startsWith('ssh') ? 'SSH' :
-                rm.fetch_url.startsWith('git@') ? 'SSH' : t('repoConfig.localType')
-              }}</span>
-            </div>
-            <div class="field-row">
-              <span class="field-label">Fetch URL</span>
-              <code class="field-value">{{ rm.fetch_url || '—' }}</code>
-            </div>
-            <div v-if="rm.push_url && rm.push_url !== rm.fetch_url" class="field-row">
-              <span class="field-label">Push URL</span>
-              <code class="field-value">{{ rm.push_url }}</code>
-            </div>
-          </div>
-        </section>
-
-        <!-- 基本信息 -->
-        <section class="cfg-section">
-          <h4 class="section-title">{{ t('repoConfig.basic') }}</h4>
-          <div class="field-stack">
-            <div class="field-row">
-              <span class="field-label">user.name</span>
-              <code class="field-value mono">{{ cfg.user_name || t('repoConfig.notConfigured') }}</code>
-            </div>
-            <div class="field-row">
-              <span class="field-label">user.email</span>
-              <code class="field-value mono">{{ cfg.user_email || t('repoConfig.notConfigured') }}</code>
-            </div>
-          </div>
-        </section>
-
-        <!-- 认证与 SSH -->
-        <section class="cfg-section">
-          <h4 class="section-title">{{ t('repoConfig.authSsh') }}</h4>
-
-          <div class="field-row">
-            <span class="field-label">credential.helper</span>
-            <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
-          </div>
-
-          <!-- SSH 私钥路径（id_rsa）可编辑 -->
-          <div class="ssh-key-edit">
-            <div class="field-label">{{ t('repoConfig.sshKeyPath') }}</div>
-            <div class="ssh-key-input-row">
-              <input
-                v-model="editSshKeyPath"
-                class="ssh-key-input"
-                :placeholder="t('repoConfig.sshKeyPlaceholder')"
-                spellcheck="false"
-                autocomplete="off"
-              />
-              <Button variant="outline" class="ssh-key-btn" @click="onBrowseSshKey" :disabled="savingSshKey">
-                {{ t('repoConfig.browse') }}
-              </Button>
-              <Button class="ssh-key-btn" @click="onSaveSshKey" :disabled="savingSshKey || !editSshKeyPath.trim()">
-                {{ t('repoConfig.save') }}
-              </Button>
-            </div>
-            <div class="ssh-key-hint">{{ t('repoConfig.sshKeyHint') }}</div>
-            <div v-if="sshKeyMsg" class="ssh-key-msg" :class="{ error: sshKeyErr }">{{ sshKeyMsg }}</div>
-          </div>
-
-          <div v-if="cfg.core_ssh_command || cfg.git_ssh_command_env || cfg.ssh_auth_sock_env" class="env-box">
-            <div v-if="cfg.core_ssh_command" class="field-row">
-              <span class="field-label">core.sshCommand</span>
-              <code class="field-value mono">{{ cfg.core_ssh_command }}</code>
-            </div>
-            <div v-if="cfg.git_ssh_command_env" class="field-row">
-              <span class="field-label">GIT_SSH_COMMAND (env)</span>
-              <code class="field-value mono">{{ cfg.git_ssh_command_env }}</code>
-            </div>
-            <div v-if="cfg.ssh_auth_sock_env" class="field-row">
-              <span class="field-label">SSH_AUTH_SOCK (env)</span>
-              <code class="field-value mono">{{ cfg.ssh_auth_sock_env }}</code>
-            </div>
-          </div>
-
-          <div class="ssh-grid">
-            <div v-for="pair in sshKeyPairs" :key="pair.private?.path" class="ssh-key-card">
-              <div class="ssh-name">
-                {{ pair.private ? pair.private.path.split(/[/\\]/).pop() : '' }}
-              </div>
-              <div class="ssh-status">
-                <span
-                  class="status-dot"
-                  :class="pair.private?.exists ? 'ok' : 'missing'"
-                />
-                {{ pair.private?.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
-              </div>
-              <div v-if="pair.public" class="ssh-status subtle">
-                {{ t('repoConfig.publicKey') }}
-                <span
-                  class="status-dot"
-                  :class="pair.public.exists ? 'ok' : 'missing'"
-                />
-                {{ pair.public.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
-              </div>
-              <div class="ssh-path" :title="pair.private?.path">
-                {{ pair.private?.path }}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 原始 config（可折叠） -->
-        <section class="cfg-section raw-section">
-          <button class="raw-toggle" @click="showRaw = !showRaw" type="button">
-            <ChevronRight :size="12" class="chevron" :class="{ open: showRaw }" />
-            {{ t('repoConfig.rawConfig', { n: Object.keys(cfg.local_config).length }) }}
+        <!-- 顶部 tab 栏 -->
+        <div class="tab-bar">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            class="tab-item"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
+            type="button"
+          >
+            <span class="tab-label">{{ tab.label }}</span>
           </button>
-          <div v-if="showRaw" class="raw-list">
-            <div v-for="(v, k) in cfg.local_config" :key="k" class="raw-row">
-              <code class="raw-key">{{ k }}</code>
-              <span class="raw-eq">=</span>
-              <code class="raw-val">{{ v }}</code>
-            </div>
-            <div v-if="Object.keys(cfg.local_config).length === 0" class="empty-tip">
-              {{ t('repoConfig.noRawItems') }}
-            </div>
-          </div>
-        </section>
+        </div>
 
+        <!-- 内容区 -->
+        <div class="tab-content">
+
+          <!-- 基本信息 -->
+          <section v-show="activeTab === 'basic'" class="cfg-section">
+            <div class="field-stack">
+              <div class="field-row edit-row">
+                <span class="field-label">user.name</span>
+                <input
+                  v-model="editName"
+                  class="field-input"
+                  :placeholder="t('repoConfig.notConfigured')"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="field-row edit-row">
+                <span class="field-label">user.email</span>
+                <input
+                  v-model="editEmail"
+                  class="field-input"
+                  :placeholder="t('repoConfig.notConfigured')"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="edit-actions">
+                <Button class="ssh-key-btn" @click="onSaveIdentity" :disabled="savingIdentity">
+                  {{ t('repoConfig.save') }}
+                </Button>
+                <span v-if="identityMsg" class="ssh-key-msg" :class="{ error: identityErr }">{{ identityMsg }}</span>
+              </div>
+              <div class="ssh-key-hint">{{ t('repoConfig.identityHint') }}</div>
+            </div>
+          </section>
+
+          <!-- 远程仓库 -->
+          <section v-show="activeTab === 'remotes'" class="cfg-section">
+            <div v-if="cfg.remotes.length === 0" class="empty-tip">
+              {{ t('repoConfig.noRemotes') }}
+            </div>
+            <div v-for="rm in cfg.remotes" :key="rm.name" class="remote-card">
+              <div class="remote-head">
+                <span class="remote-name">{{ rm.name }}</span>
+                <span class="remote-type-badge">{{
+                  rm.fetch_url.startsWith('http') ? 'HTTPS' :
+                  rm.fetch_url.startsWith('ssh') ? 'SSH' :
+                  rm.fetch_url.startsWith('git@') ? 'SSH' : t('repoConfig.localType')
+                }}</span>
+              </div>
+              <div class="field-row">
+                <span class="field-label">Fetch URL</span>
+                <code class="field-value">{{ rm.fetch_url || '—' }}</code>
+              </div>
+              <div v-if="rm.push_url && rm.push_url !== rm.fetch_url" class="field-row">
+                <span class="field-label">Push URL</span>
+                <code class="field-value">{{ rm.push_url }}</code>
+              </div>
+            </div>
+          </section>
+
+          <!-- 认证与 SSH -->
+          <section v-show="activeTab === 'auth'" class="cfg-section">
+
+            <div class="field-row">
+              <span class="field-label">credential.helper</span>
+              <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
+            </div>
+
+            <!-- SSH 私钥路径（id_rsa）可编辑 -->
+            <div class="ssh-key-edit">
+              <div class="field-label">{{ t('repoConfig.sshKeyPath') }}</div>
+              <div class="ssh-key-input-row">
+                <input
+                  v-model="editSshKeyPath"
+                  class="ssh-key-input"
+                  :placeholder="t('repoConfig.sshKeyPlaceholder')"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+                <Button variant="outline" class="ssh-key-btn" @click="onBrowseSshKey" :disabled="savingSshKey">
+                  {{ t('repoConfig.browse') }}
+                </Button>
+                <Button class="ssh-key-btn" @click="onSaveSshKey" :disabled="savingSshKey || !editSshKeyPath.trim()">
+                  {{ t('repoConfig.save') }}
+                </Button>
+              </div>
+              <div class="ssh-key-hint">{{ t('repoConfig.sshKeyHint') }}</div>
+              <div v-if="sshKeyMsg" class="ssh-key-msg" :class="{ error: sshKeyErr }">{{ sshKeyMsg }}</div>
+            </div>
+
+            <div v-if="cfg.core_ssh_command || cfg.git_ssh_command_env || cfg.ssh_auth_sock_env" class="env-box">
+              <div v-if="cfg.core_ssh_command" class="field-row">
+                <span class="field-label">core.sshCommand</span>
+                <code class="field-value mono">{{ cfg.core_ssh_command }}</code>
+              </div>
+              <div v-if="cfg.git_ssh_command_env" class="field-row">
+                <span class="field-label">GIT_SSH_COMMAND (env)</span>
+                <code class="field-value mono">{{ cfg.git_ssh_command_env }}</code>
+              </div>
+              <div v-if="cfg.ssh_auth_sock_env" class="field-row">
+                <span class="field-label">SSH_AUTH_SOCK (env)</span>
+                <code class="field-value mono">{{ cfg.ssh_auth_sock_env }}</code>
+              </div>
+            </div>
+
+            <div class="ssh-grid">
+              <div v-for="pair in sshKeyPairs" :key="pair.private?.path" class="ssh-key-card">
+                <div class="ssh-name">
+                  {{ pair.private ? pair.private.path.split(/[/\\]/).pop() : '' }}
+                </div>
+                <div class="ssh-status">
+                  <span
+                    class="status-dot"
+                    :class="pair.private?.exists ? 'ok' : 'missing'"
+                  />
+                  {{ pair.private?.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
+                </div>
+                <div v-if="pair.public" class="ssh-status subtle">
+                  {{ t('repoConfig.publicKey') }}
+                  <span
+                    class="status-dot"
+                    :class="pair.public.exists ? 'ok' : 'missing'"
+                  />
+                  {{ pair.public.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
+                </div>
+                <div class="ssh-path" :title="pair.private?.path">
+                  {{ pair.private?.path }}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 本地完整 Git Config -->
+          <section v-show="activeTab === 'config'" class="cfg-section raw-section">
+            <button class="raw-toggle" @click="showRaw = !showRaw" type="button">
+              <ChevronRight :size="12" class="chevron" :class="{ open: showRaw }" />
+              {{ t('repoConfig.rawConfig', { n: Object.keys(cfg.local_config).length }) }}
+            </button>
+            <div v-if="showRaw" class="raw-list">
+              <div v-for="(v, k) in cfg.local_config" :key="k" class="raw-row">
+                <code class="raw-key">{{ k }}</code>
+                <span class="raw-eq">=</span>
+                <code class="raw-val">{{ v }}</code>
+              </div>
+              <div v-if="Object.keys(cfg.local_config).length === 0" class="empty-tip">
+                {{ t('repoConfig.noRawItems') }}
+              </div>
+            </div>
+          </section>
+
+        </div>
       </div>
 
       <div class="dialog-footer">
@@ -266,7 +340,8 @@ export default { name: 'RepoConfigDialog' }
 
 <style scoped>
 .repo-config-dialog {
-  max-width: 620px;
+  /* 覆盖 ui/dialog 的 max-w-lg(512px)：左栏 128 + gap 16 + 右侧内容，总宽给足 900px */
+  max-width: 900px;
   max-height: 85vh;
   overflow-y: auto;
 }
@@ -287,28 +362,52 @@ export default { name: 'RepoConfigDialog' }
   color: var(--danger-color);
 }
 
-.config-body {
+/* tab 布局：顶部横排 tab + 下方内容 */
+.config-layout {
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding-top: 4px;
+}
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 6px;
+}
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.tab-item:hover {
+  background: var(--bg-tertiary);
+}
+.tab-item.active {
+  background: var(--brand-bg);
+  color: var(--brand-primary);
+  font-weight: 600;
+}
+.tab-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .cfg-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.section-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .empty-tip {
@@ -369,57 +468,33 @@ export default { name: 'RepoConfigDialog' }
 .field-stack {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-/* SSH 私钥路径编辑 */
-.ssh-key-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-}
-.ssh-key-edit .field-label {
-  min-width: 0;
-}
-.ssh-key-input-row {
-  display: flex;
-  gap: 6px;
+/* 基本信息编辑行 */
+.edit-row {
   align-items: center;
 }
-.ssh-key-input {
+.field-input {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
   font-size: 12px;
-  font-family: Consolas, Monaco, monospace;
   color: var(--text-primary);
   background: var(--bg-primary);
   border: 1px solid var(--border-medium);
   border-radius: 6px;
   outline: none;
 }
-.ssh-key-input:focus {
+.field-input:focus {
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 2px var(--brand-bg);
 }
-.ssh-key-btn {
-  flex-shrink: 0;
-}
-.ssh-key-hint {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.5;
-}
-.ssh-key-msg {
-  font-size: 11.5px;
-  color: var(--success-color, #22c55e);
-}
-.ssh-key-msg.error {
-  color: var(--danger-color, #ef4444);
+.edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 /* SSH 私钥路径编辑 */
