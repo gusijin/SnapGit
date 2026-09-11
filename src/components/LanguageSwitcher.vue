@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Languages } from 'lucide-vue-next'
 import { availableLocales, setLocale } from '../i18n'
@@ -6,15 +7,27 @@ import { availableLocales, setLocale } from '../i18n'
 const { locale } = useI18n()
 
 const open = defineModel<boolean>('open', { default: false })
+const rootRef = ref<HTMLElement | null>(null)
 
 function select(code: string) {
   setLocale(code)
   open.value = false
 }
+
+// 点击弹窗（按钮 + 浮层）之外的任意区域即关闭。
+// 用 mousedown 而非 click：更早触发且不依赖 stopPropagation，避免与内部 @click.stop 竞态。
+function onDocMouseDown(e: MouseEvent) {
+  if (open.value && rootRef.value && !rootRef.value.contains(e.target as Node)) {
+    open.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('mousedown', onDocMouseDown))
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
 </script>
 
 <template>
-  <div class="lang-toggle" @click.stop="open = !open">
+  <div ref="rootRef" class="lang-toggle" @click.stop="open = !open">
     <Languages :size="15" />
     <!-- 纯文本下拉（复用菜单栏样式风格），保持轻量无需额外依赖 -->
     <div v-if="open" class="lang-popover" @click.stop>
