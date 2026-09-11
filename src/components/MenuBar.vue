@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../stores/theme'
@@ -32,10 +32,13 @@ import {
   Check,
 } from 'lucide-vue-next'
 
+// 父组件传入的面板显隐状态，仅用于「视图 → 子模块」的勾选态显示
+const props = defineProps<{ submoduleVisible?: boolean }>()
+
 const emit = defineEmits([
   'open-repo', 'clone-repo', 'commit', 'push', 'pull',
   'branch', 'checkout-branch', 'merge', 'refresh',
-  'repo-config', 'quit', 'about', 'toggle-theme'
+  'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules'
 ])
 
 const { theme, toggleTheme } = useTheme()
@@ -59,7 +62,14 @@ interface SubMenuLocale {
   code: string
   label: string
 }
-type SubMenuEntry = SubMenuItem | SubMenuSeparator | SubMenuLabel | SubMenuLocale
+// 勾选式菜单项（如「视图 → 子模块」）
+interface SubMenuCheck {
+  type: 'check'
+  labelKey: string
+  action: string
+  checked?: boolean
+}
+type SubMenuEntry = SubMenuItem | SubMenuSeparator | SubMenuLabel | SubMenuLocale | SubMenuCheck
 
 interface MenuEntry {
   nameKey: string
@@ -68,7 +78,7 @@ interface MenuEntry {
 
 const languageList = availableLocales()
 
-const menuItems: MenuEntry[] = [
+const menuItems = computed<MenuEntry[]>(() => [
   {
     nameKey: 'menu.file',
     submenu: [
@@ -107,6 +117,12 @@ const menuItems: MenuEntry[] = [
   {
     nameKey: 'menu.view',
     submenu: [
+      {
+        type: 'check',
+        labelKey: 'menu.submodules',
+        action: 'toggle-submodules',
+        checked: props.submoduleVisible !== false
+      },
       { type: 'separator' },
       { labelKey: 'menu.toggleTheme', action: 'toggle-theme', icon: Palette }
     ]
@@ -117,7 +133,7 @@ const menuItems: MenuEntry[] = [
       { labelKey: 'menu.aboutSnapGit', action: 'about', icon: Info }
     ]
   }
-]
+])
 
 const activeMenu = ref<string | null>(null)
 const showAbout = ref(false)
@@ -238,6 +254,16 @@ async function handleAction(action: string | undefined) {
             <Check v-if="locale === (item as any).code" :size="16" class="item-icon" />
             <span v-else class="item-icon-placeholder" />
             <span class="item-label">{{ (item as any).label }}</span>
+          </div>
+          <div
+            v-else-if="(item as any).type === 'check'"
+            class="submenu-item"
+            :class="{ active: (item as any).checked }"
+            @click.stop="handleAction((item as any).action)"
+          >
+            <Check v-if="(item as any).checked" :size="16" class="item-icon" />
+            <span v-else class="item-icon-placeholder" />
+            <span class="item-label">{{ t((item as any).labelKey) }}</span>
           </div>
           <div
             v-else

@@ -3757,6 +3757,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let show_wt_item = MenuItem::with_id(app, "show-working-tree", "工作区", true, None::<&str>)?;
     let show_log_item = MenuItem::with_id(app, "show-log", "提交日志", true, None::<&str>)?;
+    let toggle_submodules_item = CheckMenuItem::with_id(app, "toggle-submodules", "子模块", true, true, None::<&str>)?;
     let toggle_theme_item = CheckMenuItem::with_id(app, "toggle-theme", "深色主题", true, true, None::<&str>)?;
 
     // 仓库配置（打开仓库配置对话框）
@@ -3816,6 +3817,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "视图",
         true,
         &[
+            &toggle_submodules_item,
             &PredefinedMenuItem::separator(app)?,
             &toggle_theme_item,
         ],

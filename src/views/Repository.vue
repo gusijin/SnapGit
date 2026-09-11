@@ -1268,6 +1268,8 @@ const configRepoPath = ref('')
 const showCheckoutBranch = ref(false)
 const branchPanelRef = ref<InstanceType<typeof BranchPanel> | null>(null)
 const submodulePanelRef = ref<InstanceType<typeof SubmodulePanel> | null>(null)
+// 子模块面板显隐（视图菜单可切换）
+const showSubmodulePanel = ref(true)
 
 // 「不是 Git 仓库 → 询问是否初始化为新仓库」对话框状态
 // 用户在菜单栏/工具栏打开普通文件夹时触发，确认后调 init_repository 初始化
@@ -1699,6 +1701,9 @@ function handleMenuAction(payload: any) {
     case 'show-log':
       mainView.value = 'log'
       break
+    case 'toggle-submodules':
+      showSubmodulePanel.value = !showSubmodulePanel.value
+      break
     case 'repo-config':
       configRepoPath.value = repoPath.value
       showRepoConfig.value = true
@@ -1833,6 +1838,8 @@ onBeforeUnmount(() => {
       @checkout-branch="handleMenuAction('checkout-branch')"
       @merge="handleMenuAction('merge')"
       @repo-config="handleMenuAction('repo-config')"
+      :submodule-visible="showSubmodulePanel"
+      @toggle-submodules="handleMenuAction('toggle-submodules')"
     />
 
     <!-- 工具栏 -->
@@ -1911,7 +1918,7 @@ onBeforeUnmount(() => {
         />
 
         <SubmodulePanel
-          v-if="repoPath"
+          v-if="repoPath && showSubmodulePanel"
           ref="submodulePanelRef"
           :repo-path="repoPath"
           @changed="onSubmoduleChanged"

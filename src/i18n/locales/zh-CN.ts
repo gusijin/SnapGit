@@ -75,6 +75,7 @@ export default {
     newBranch: '新建分支',
     checkoutBranch: '切换分支',
     toggleTheme: '切换主题',
+    submodules: '子模块',
     aboutSnapGit: '关于 SnapGit',
   },
   about: {

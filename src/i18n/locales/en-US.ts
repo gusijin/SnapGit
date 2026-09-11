@@ -74,6 +74,7 @@ export default {
     newBranch: 'New Branch',
     checkoutBranch: 'Switch Branch',
     toggleTheme: 'Toggle Theme',
+    submodules: 'Submodules',
     aboutSnapGit: 'About SnapGit',
   },
   about: {
