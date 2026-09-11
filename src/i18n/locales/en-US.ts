@@ -66,6 +66,7 @@ export default {
     cloneRepo: 'Clone Repository',
     quit: 'Quit',
     config: 'Settings',
+    language: 'Language',
     commit: 'Commit',
     push: 'Push',
     pull: 'Pull',
@@ -194,6 +195,7 @@ export default {
   repoConfig: {
     title: 'Repository Settings',
     loading: 'Loading...',
+    noRepo: 'No repository open, cannot read configuration',
     remotes: 'Remotes',
     noRemotes: 'No remotes',
     localType: 'Local',

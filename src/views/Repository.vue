@@ -1802,7 +1802,7 @@ onBeforeUnmount(() => {
       @branch="handleMenuAction('new-branch')"
       @checkout-branch="handleMenuAction('checkout-branch')"
       @merge="handleMenuAction('merge')"
-      @repo-config="showRepoConfig = true"
+      @repo-config="handleMenuAction('repo-config')"
     />
 
     <!-- 工具栏 -->

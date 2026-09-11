@@ -67,6 +67,7 @@ export default {
     cloneRepo: '克隆仓库',
     quit: '退出',
     config: '配置',
+    language: '语言',
     commit: '提交',
     push: '推送',
     pull: '拉取',
@@ -195,6 +196,7 @@ export default {
   repoConfig: {
     title: '仓库配置',
     loading: '读取中...',
+    noRepo: '未打开仓库，无法读取配置',
     remotes: '远程仓库',
     noRemotes: '暂无远程仓库',
     localType: '本地',

@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../stores/theme'
+import { availableLocales, setLocale } from '../i18n'
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import {
   Info,
   Sun,
   Moon,
+  Check,
 } from 'lucide-vue-next'
 
 const emit = defineEmits([
@@ -38,22 +40,33 @@ const emit = defineEmits([
 
 const { theme, toggleTheme } = useTheme()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 interface SubMenuItem {
   labelKey: string
   action: string
-  icon: Component
+  icon?: Component
 }
 interface SubMenuSeparator {
   type: 'separator'
 }
-type SubMenuEntry = SubMenuItem | SubMenuSeparator
+interface SubMenuLabel {
+  type: 'label'
+  labelKey: string
+}
+interface SubMenuLocale {
+  type: 'locale'
+  code: string
+  label: string
+}
+type SubMenuEntry = SubMenuItem | SubMenuSeparator | SubMenuLabel | SubMenuLocale
 
 interface MenuEntry {
   nameKey: string
   submenu: SubMenuEntry[]
 }
+
+const languageList = availableLocales()
 
 const menuItems: MenuEntry[] = [
   {
@@ -68,7 +81,10 @@ const menuItems: MenuEntry[] = [
   {
     nameKey: 'menu.edit',
     submenu: [
-      { labelKey: 'menu.config', action: 'repo-config', icon: Settings }
+      { labelKey: 'menu.config', action: 'repo-config', icon: Settings },
+      { type: 'separator' },
+      { type: 'label', labelKey: 'menu.language' },
+      ...languageList.map((l) => ({ type: 'locale' as const, code: l.code, label: l.label }))
     ]
   },
   {
@@ -209,7 +225,20 @@ async function handleAction(action: string | undefined) {
       <span class="menu-label">{{ t(menu.nameKey) }}</span>
       <div v-if="activeMenu === menu.nameKey" class="submenu" @click.stop>
         <template v-for="(item, idx) in menu.submenu" :key="idx">
-          <div v-if="'type' in item && item.type === 'separator'" class="separator"></div>
+          <div v-if="(item as any).type === 'separator'" class="separator"></div>
+          <div v-else-if="(item as any).type === 'label'" class="submenu-label">
+            {{ t((item as any).labelKey) }}
+          </div>
+          <div
+            v-else-if="(item as any).type === 'locale'"
+            class="submenu-item"
+            :class="{ active: locale === (item as any).code }"
+            @click.stop="setLocale((item as any).code); closeMenu()"
+          >
+            <Check v-if="locale === (item as any).code" :size="16" class="item-icon" />
+            <span v-else class="item-icon-placeholder" />
+            <span class="item-label">{{ (item as any).label }}</span>
+          </div>
           <div
             v-else
             class="submenu-item"
@@ -372,6 +401,32 @@ async function handleAction(action: string | undefined) {
   height: 1px;
   background-color: var(--border-light);
   margin: 5px 12px;
+}
+
+/* 子菜单分组标题（如「语言」） */
+.submenu-label {
+  padding: 5px 12px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* 当前选中语言项：高亮 + 左侧图标占位保持对齐 */
+.submenu-item.active {
+  color: var(--brand-primary);
+  font-weight: 500;
+}
+
+.submenu-item.active .item-icon {
+  color: var(--brand-primary);
+}
+
+.item-icon-placeholder {
+  display: inline-block;
+  width: 16px;
+  flex-shrink: 0;
 }
 
 /* 右侧动作区（语言切换 + 主题切换） */

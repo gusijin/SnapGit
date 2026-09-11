@@ -34,17 +34,22 @@ const sshKeyMsg = ref('')
 const sshKeyErr = ref(false)
 
 onMounted(async () => {
-  if (!props.open || !props.repoPath) return
+  if (!props.open) return
   await load()
 })
 
 watch(() => props.open, async (v) => {
-  if (v && props.repoPath) await load()
+  if (v) await load()
 })
 
 async function load() {
   loading.value = true
   error.value = ''
+  if (!props.repoPath) {
+    error.value = t('repoConfig.noRepo')
+    loading.value = false
+    return
+  }
   try {
     cfg.value = await getRepoConfig(props.repoPath)
     editSshKeyPath.value = extractSshKeyPath(cfg.value?.core_ssh_command || null)
