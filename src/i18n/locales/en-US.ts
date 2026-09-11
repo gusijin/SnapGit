@@ -93,6 +93,7 @@ export default {
     pushing: 'Pushing…',
     pushed: 'Pushed',
     detachedHead: 'Detached HEAD',
+    loadingBranch: 'Loading branch…',
     currentBranch: 'Current branch',
     noRepo: 'No repository open',
     pullHint: 'Pull latest commits from remote',

@@ -22,6 +22,8 @@ import {
 
 interface Props {
   currentBranch: string
+  /** 分支列表是否已加载完成：用于区分「加载中」与「真的游离 HEAD」 */
+  branchListReady?: boolean
   repositoryPath: string
   /** 推送反馈状态：done = 推送成功，按钮短暂显示"已推送"并隐藏 Tooltip */
   pushState?: 'idle' | 'done'
@@ -44,6 +46,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  branchListReady: false,
   pushState: 'idle',
   pulling: false,
   pushing: false,
@@ -94,7 +97,11 @@ const statusOpen = ref(false)
 const copied = ref(false)
 const statusWrap = ref<HTMLElement | null>(null)
 
-const displayBranch = computed(() => props.currentBranch || t('toolbar.detachedHead'))
+const displayBranch = computed(() => {
+  // 分支列表尚未加载、且无乐观分支名时，显示加载占位，避免误报「游离 HEAD」
+  if (!props.branchListReady && !props.currentBranch) return t('toolbar.loadingBranch')
+  return props.currentBranch || t('toolbar.detachedHead')
+})
 const currentBranchData = computed(() => props.branches.find(b => b.is_current) || null)
 const ahead = computed(() => currentBranchData.value?.ahead ?? 0)
 const behind = computed(() => currentBranchData.value?.behind ?? 0)
@@ -233,7 +240,7 @@ onBeforeUnmount(() => {
           <TooltipTrigger as-child>
             <span class="branch-chip" role="status">
               <GitBranch :size="13" class="branch-chip-icon" />
-              <span class="branch-chip-name">{{ currentBranch || t('toolbar.detachedHead') }}</span>
+              <span class="branch-chip-name">{{ displayBranch }}</span>
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom">{{ t('toolbar.currentBranch') }}</TooltipContent>

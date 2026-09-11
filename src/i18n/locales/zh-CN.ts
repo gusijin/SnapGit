@@ -94,6 +94,7 @@ export default {
     pushing: '推送中…',
     pushed: '已推送',
     detachedHead: '游离 HEAD',
+    loadingBranch: '分支加载中…',
     currentBranch: '当前分支',
     noRepo: '未打开仓库',
     pullHint: '从远程拉取最新提交',

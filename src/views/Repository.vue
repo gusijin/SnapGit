@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  getCommits, getBranches, getFileStatus, stageFile, discardFile, commitChanges,
+  getCommits, getCurrentBranch, getBranches, getFileStatus, stageFile, discardFile, commitChanges,
   checkoutBranch, pullBranch, openRepository, initRepository, saveRecentRepository, openFolderDialog,
   scanProjects, getFileTree, getFileDiff, getCommitFiles,
   createBranch, mergeBranch, renameBranch, checkoutRemoteBranch,
@@ -60,6 +60,8 @@ const commits = ref<Commit[]>([])
 const loadingMoreCommits = ref(false)
 const noMoreCommits = ref(false)
 const branches = ref<Branch[]>([])
+// 分支列表是否已加载完成：用于区分「加载中」与「真的游离 HEAD」，避免首屏误报
+const branchListReady = ref(false)
 const fileStatuses = ref<FileStatus[]>([])
 const stashes = ref<StashEntry[]>([])
 
@@ -493,29 +495,46 @@ async function loadRepoData() {
   selectedFileDiff.value = null
   commitFiles.value = []
   currentBranch.value = ''
+  branchListReady.value = false
   noMoreCommits.value = false
   loadingMoreCommits.value = false
   fileStatuses.value = []
   try {
-    const [commitsData, branchesData, statuses, stashesData] = await Promise.all([
-      getCommits(repoPath.value, 50),
-      getBranches(repoPath.value, false),
-      getFileStatus(repoPath.value, false),
-      stashList(repoPath.value).catch(() => []),
-    ])
-    commits.value = commitsData
-    noMoreCommits.value = false
-    loadingMoreCommits.value = false
-    branches.value = branchesData
-    fileStatuses.value = statuses
-    stashes.value = stashesData
-    currentBranch.value = branchesData.find(b => b.is_current)?.name || ''
-    // C2: 后台补算全部分支的 ahead/behind（不阻塞切库首屏），稍后填充分支面板徽章
-    getBranches(repoPath.value, true)
-      .then((full) => { branches.value = full })
+    // 乐观：先快速拿到当前分支名（几十 ms，仅一次轻量 HEAD 读取），
+    // 让首屏立刻显示真实分支名，而不是干等最慢的 git status 全量扫描。
+    getCurrentBranch(repoPath.value)
+      .then((name) => { currentBranch.value = name })
       .catch(() => {})
-    // 工作区状态弹窗：补齐上游跟踪分支与远程地址
-    await loadUpstreamInfo()
+
+    // 分支列表：一回来就落地并标记「列表已加载」，同时以列表为准校准当前分支
+    getBranches(repoPath.value, false)
+      .then((data) => {
+        branches.value = data
+        branchListReady.value = true
+        currentBranch.value = data.find(b => b.is_current)?.name || ''
+        // C2: 后台补算全部分支的 ahead/behind（不阻塞首屏），稍后填充分支面板徽章
+        getBranches(repoPath.value, true)
+          .then((full) => { branches.value = full })
+          .catch(() => {})
+        // 工作区状态弹窗：补齐上游跟踪分支与远程地址（此时 currentBranch 已校准）
+        loadUpstreamInfo()
+      })
+      .catch(() => { branchListReady.value = true })
+
+    // 其余请求各自独立落地，互不阻塞——分支名不再被 git status / 提交历史拖慢
+    getCommits(repoPath.value, 50)
+      .then((data) => {
+        commits.value = data
+        noMoreCommits.value = false
+        loadingMoreCommits.value = false
+      })
+      .catch(() => {})
+    getFileStatus(repoPath.value, false)
+      .then((data) => { fileStatuses.value = data })
+      .catch(() => {})
+    stashList(repoPath.value)
+      .then((data) => { stashes.value = data })
+      .catch(() => { stashes.value = [] })
   } catch (e) {
     console.error('Load repo error:', e)
   }
@@ -1673,6 +1692,7 @@ onBeforeUnmount(() => {
     <!-- 工具栏 -->
     <ToolBar
       :current-branch="currentBranch"
+      :branch-list-ready="branchListReady"
       :repository-path="repoPath"
       :branches="branches"
       :upstream="upstreamBranch"

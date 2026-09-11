@@ -1405,7 +1405,12 @@ async fn get_current_branch(repo_path: String) -> Result<String> {
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
         let head = repo.head().map_err(|e| e.to_string())?;
-        Ok(head.shorthand().unwrap_or("detached").to_string())
+        // 游离 HEAD：HEAD 直接指向 commit，无分支名（symbolic_target 为 None），
+        // 返回空串供前端显示「游离 HEAD」
+        if head.symbolic_target().is_none() {
+            return Ok(String::new());
+        }
+        Ok(head.shorthand().unwrap_or("").to_string())
     })
     .await
     .map_err(|e| format!("获取当前分支失败: {}", e))?
