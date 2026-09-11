@@ -539,7 +539,7 @@ function lineTokens(text: string) {
 .panel-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   padding: 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);

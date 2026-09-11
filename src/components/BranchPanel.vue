@@ -3,7 +3,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Branch, StashEntry } from '../types'
 import { getUpstream, checkRemoteBranchDeletable } from '../api/git'
-import { GitBranchPlus, ArrowUpFromLine, ArrowDownToLine, GitMerge, Pencil, Download, Archive, Sparkles, Trash2, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { GitBranch, GitBranchPlus, ArrowUpFromLine, ArrowDownToLine, GitMerge, Pencil, Download, Archive, Sparkles, Trash2, ChevronDown, ChevronRight } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -317,7 +317,10 @@ defineExpose({ openCreateDialog })
 <template>
   <div class="branch-panel">
     <div class="panel-header">
-      <span>{{ t('branchPanel.title') }}</span>
+      <span class="header-left">
+        <GitBranch :size="13" class="header-icon" />
+        <span>{{ t('branchPanel.title') }}</span>
+      </span>
     </div>
     <div class="panel-content" @contextmenu.prevent.stop="void 0">
       <div v-if="localBranches.length > 0" class="group">
@@ -711,6 +714,7 @@ defineExpose({ openCreateDialog })
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
   padding: 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
@@ -718,6 +722,18 @@ defineExpose({ openCreateDialog })
   color: var(--text-secondary);
   font-weight: 600;
   text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.header-icon {
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 

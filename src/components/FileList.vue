@@ -5,7 +5,7 @@ import type { FileStatus } from '../types'
 // 文件类型图标映射统一从共享工具引入（与仓库面板文件树共用一套，保证风格一致）
 import { getFileIcon } from '../utils/fileIcons'
 import {
-  CheckCircle2, Check, Plus, Trash2, RefreshCw,
+  CheckCircle2, Check, Plus, Trash2, RefreshCw, Files,
 } from 'lucide-vue-next'
 
 interface Props {
@@ -216,6 +216,7 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
     @keydown.meta.a.prevent="selectAllFiles"
   >
     <div class="panel-header">
+      <Files :size="13" class="header-icon" />
       <span v-if="viewMode === 'working-tree'">{{ t('fileList.changedFiles') }}</span>
       <span v-else>{{ t('fileList.commitFiles') }}</span>
       <span class="count" v-if="files.length > 0">{{ files.length }}</span>
@@ -315,6 +316,11 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
   color: var(--text-secondary);
   font-weight: 600;
   text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.header-icon {
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 

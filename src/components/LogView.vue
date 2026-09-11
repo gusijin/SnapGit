@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ArrowLeft, X, GitCommitVertical } from 'lucide-vue-next'
+import { Search, X, GitCommitVertical, History } from 'lucide-vue-next'
 import type { Commit } from '../types'
 
 interface Props {
@@ -108,10 +108,6 @@ function handleSelect(id: string) {
   emit('select-commit', id)
 }
 
-function handleExit() {
-  emit('exit-log')
-}
-
 // ===== 滚动分页：滚动到底自动加载更早的提交 =====
 const logItemsRef = ref<HTMLElement | null>(null)
 
@@ -144,9 +140,7 @@ onMounted(() => {
 <template>
   <div class="log-viewer">
     <div class="panel-header">
-      <button class="exit-btn" @click="handleExit" :title="t('logView.backToWorkspace')">
-        <ArrowLeft :size="14" />
-      </button>
+      <History :size="13" class="header-icon" />
       <span>{{ t('logView.logTitle') }}</span>
       <span class="count">{{ filteredCommits.length }}</span>
       <div class="search-box">
@@ -242,25 +236,9 @@ onMounted(() => {
   user-select: none;
 }
 
-.exit-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+.header-icon {
+  color: var(--accent-text);
   flex-shrink: 0;
-}
-
-.exit-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-bright);
 }
 
 .count {

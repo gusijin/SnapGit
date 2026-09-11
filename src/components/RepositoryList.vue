@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderOpen, Loader2, Trash2, ChevronRight, ChevronDown, Settings } from 'lucide-vue-next'
+import { Folder, FolderOpen, FolderGit2, Loader2, Trash2, ChevronRight, ChevronDown, Settings } from 'lucide-vue-next'
 import type { ScannedProject, FileTreeNode, FileStatus } from '../types'
 // 文件类型图标映射与变更文件面板 FileList 共用同一套，保证风格统一
 import { getFileIcon } from '../utils/fileIcons'
@@ -216,6 +216,7 @@ onUnmounted(() => {
   <!-- @contextmenu.prevent：空白区域右键不弹出任何菜单（仅仓库列表项可右键） -->
   <div class="repository-list" @contextmenu.prevent>
     <div class="list-header">
+      <FolderGit2 :size="13" class="header-icon" />
       <span class="header-title">{{ t('repositoryList.title') }}</span>
       <span class="count-badge" v-if="projects.length > 0">{{ projects.length }}</span>
     </div>
@@ -383,6 +384,11 @@ onUnmounted(() => {
   flex: 1;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.header-icon {
+  color: var(--accent-text);
+  flex-shrink: 0;
 }
 
 .count-badge {
