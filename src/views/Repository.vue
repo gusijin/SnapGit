@@ -41,7 +41,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, GitMerge } from 'lucide-vue-next'
+import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, GitMerge, XCircle } from 'lucide-vue-next'
 
 const { toggleTheme } = useTheme()
 const { t } = useI18n()
@@ -675,7 +675,7 @@ async function handleOpenFile(file: FileStatus) {
     await openEditWindow(repoPath.value, file.path, mode, filesList, currentIndex >= 0 ? currentIndex : undefined)
   } catch (e) {
     console.error('Open edit window error:', e)
-    alert(t('repository.openEditFailed', { error: (typeof e === 'string' ? e : (e as any)?.toString?.() || String(e)) }))
+    showToast(t('repository.openEditFailed', { error: (typeof e === 'string' ? e : (e as any)?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -779,12 +779,12 @@ async function handleDiscardFiles(paths: string[]) {
     const failed = results.filter(r => r.status === 'rejected')
     if (failed.length > 0) {
       const msgs = failed.map(r => (r as PromiseRejectedResult).reason).join('\n')
-      alert(t('repository.discardFailed', { error: msgs }))
+      showToast(t('repository.discardFailed', { error: msgs }), 'error')
     }
     await loadRepoData()
   } catch (e) {
     console.error('Discard error:', e)
-    alert(t('repository.discardFailed', { error: String(e) }))
+    showToast(t('repository.discardFailed', { error: String(e) }), 'error')
   }
 }
 
@@ -801,7 +801,7 @@ function requestCommitFiles(paths: string[]) {
 
 function handleCommitFromToolbar() {
   if (!repoPath.value) {
-    alert(t('repository.noRepoOpen'))
+    showToast(t('repository.noRepoOpen'), 'error')
     return
   }
   // 收集所有有变更的文件
@@ -838,7 +838,7 @@ async function handleCommit() {
     selectedFileDiff.value = null
   } catch (e: any) {
     console.error('Commit error:', e)
-    alert(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   } finally {
     isCommitting.value = false
   }
@@ -865,7 +865,7 @@ async function handleCommitAndPush() {
     selectedFileDiff.value = null
   } catch (e: any) {
     console.error('Commit error:', e)
-    alert(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
     return
   } finally {
     isCommitting.value = false
@@ -962,7 +962,7 @@ async function handleCheckoutForce(branchName: string) {
     showToast(t('repository.checkoutForceSuccess', { branch: branchName }), 'success')
   } catch (e: any) {
     console.error('Force checkout error:', e)
-    alert(t('repository.checkoutForceFailed', { error: e?.toString() || String(e) }))
+    showToast(t('repository.checkoutForceFailed', { error: e?.toString() || String(e) }), 'error')
   } finally {
     isCheckingOut.value = false
   }
@@ -985,7 +985,7 @@ async function handleCheckoutFastForward(branchName: string) {
     showToast(t('repository.checkoutSuccess', { branch: branchName }), 'success')
   } catch (e: any) {
     console.error('Checkout with merge error:', e)
-    alert(t('repository.ffMergeFailed', { error: e?.toString() || String(e) }))
+    showToast(t('repository.ffMergeFailed', { error: e?.toString() || String(e) }), 'error')
   } finally {
     isCheckingOut.value = false
   }
@@ -1014,7 +1014,7 @@ async function handleCheckoutRemote(remoteBranchName: string) {
 
 async function handlePull() {
   if (!repoPath.value) {
-    alert(t('repository.noRepoOpen'))
+    showToast(t('repository.noRepoOpen'), 'error')
     return
   }
   if (isPulling.value) return
@@ -1144,7 +1144,7 @@ const isStashing = ref(false)
 
 function handleStash() {
   if (!repoPath.value) {
-    alert(t('repository.noRepoOpen'))
+    showToast(t('repository.noRepoOpen'), 'error')
     return
   }
   stashMessage.value = ''
@@ -1202,13 +1202,23 @@ async function handleStashDrop(stashRef: string) {
   }
 }
 
-// Toast 提示
+// Toast 提示（仅用于成功等轻量反馈）
 const toastMessage = ref('')
 const toastType = ref<'success' | 'error'>('success')
 const toastVisible = ref(false)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
+// 错误提示对话框：操作异常时弹出持久窗口，需用户点击「关闭」才消失（不自动消失、不是一行文字）
+const errorDialogVisible = ref(false)
+const errorMessage = ref('')
+
 function showToast(message: string, type: 'success' | 'error' = 'success') {
+  if (type === 'error') {
+    // 异常改为持久弹窗，避免一行文字一闪而过、用户来不及看
+    errorMessage.value = message
+    errorDialogVisible.value = true
+    return
+  }
   toastMessage.value = message
   toastType.value = type
   toastVisible.value = true
@@ -1259,7 +1269,7 @@ const isPushing = ref(false)
 
 function handlePush() {
   if (!repoPath.value) {
-    alert(t('repository.noRepoOpen'))
+    showToast(t('repository.noRepoOpen'), 'error')
     return
   }
   pushDialogBranch.value = ''
@@ -1282,7 +1292,7 @@ async function handleCreateBranch(branchName: string) {
     showToast(t('repository.branchCreateSuccess', { branch: branchName }), 'success')
   } catch (e: any) {
     console.error('Create branch error:', e)
-    alert(t('repository.branchCreateFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.branchCreateFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -1295,7 +1305,7 @@ async function handleMergeBranch(branchName: string) {
     showToast(t('repository.branchMergeSuccess', { branch: branchName, current: currentBranch.value }), 'success')
   } catch (e: any) {
     console.error('Merge branch error:', e)
-    alert(t('repository.branchMergeFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.branchMergeFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -1308,7 +1318,7 @@ async function handleRenameBranch(payload: { oldName: string; newName: string })
     showToast(t('repository.branchRenameSuccess', { old: payload.oldName, new: payload.newName }), 'success')
   } catch (e: any) {
     console.error('Rename branch error:', e)
-    alert(t('repository.branchRenameFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.branchRenameFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -1324,7 +1334,7 @@ async function handleDeleteBranch(payload: { name: string; deleteTracking: boole
     showToast(t('repository.branchDeleteSuccess', { detail: parts.join(' · ') }), 'success')
   } catch (e: any) {
     console.error('Delete branch error:', e)
-    alert(t('repository.branchDeleteFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.branchDeleteFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -1340,7 +1350,7 @@ async function handleDeleteRemoteBranch(payload: { remote: string; remoteBranch:
     showToast(t('repository.branchDeleteSuccess', { detail }), 'success')
   } catch (e: any) {
     console.error('Delete remote branch error:', e)
-    alert(t('repository.branchDeleteFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }))
+    showToast(t('repository.branchDeleteFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
   }
 }
 
@@ -2284,7 +2294,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Toast 提示 -->
+    <!-- Toast 提示（成功等轻量反馈） -->
     <Teleport to="body">
       <Transition name="toast">
         <div v-if="toastVisible" class="toast" :class="toastType">
@@ -2293,6 +2303,24 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- 错误提示对话框：持久弹窗，需用户点击「关闭」才消失（不会自动消失） -->
+    <Dialog v-model:open="errorDialogVisible">
+      <DialogContent class="max-w-[440px] gap-3 p-5">
+        <DialogHeader class="gap-2 p-0">
+          <div class="flex items-center gap-2">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-del)]/30 bg-[var(--color-del)]/10 text-[var(--color-del)]">
+              <XCircle class="h-4 w-4" />
+            </div>
+            <DialogTitle class="text-[15px] leading-snug">{{ t('repository.errorTitle') }}</DialogTitle>
+          </div>
+        </DialogHeader>
+        <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--text-muted)]">{{ errorMessage }}</p>
+        <DialogFooter class="gap-2">
+          <Button variant="outline" @click="errorDialogVisible = false">{{ t('repository.errorClose') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 

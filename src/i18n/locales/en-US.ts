@@ -440,6 +440,8 @@ export default {
     conflictContinueRebase: 'Continue Rebase',
     conflictResolveRemaining: '{n} conflicting files remain unresolved, resolve them all first',
     pullAborted: 'Pull aborted',
+    errorTitle: 'Operation Failed',
+    errorClose: 'Close',
     // "Create Remote" dialog: name is the remote alias, url is the repository URL (https/ssh/git)
     addRemoteTitle: 'Add Remote',
     addRemoteDesc: 'Add a remote repository to fetch and push changes.',

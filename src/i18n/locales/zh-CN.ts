@@ -440,6 +440,8 @@ export default {
     conflictContinueRebase: '继续变基',
     conflictResolveRemaining: '仍有 {n} 个冲突文件未解决，请先全部解决',
     pullAborted: '已中止本次拉取',
+    errorTitle: '操作失败',
+    errorClose: '关闭',
     // 「创建远程」对话框：name 为远端简称，url 为远程仓库 URL（https/ssh/git 都可）
     addRemoteTitle: '添加远程仓库',
     addRemoteDesc: '添加一个远程仓库以便拉取与推送代码。',
