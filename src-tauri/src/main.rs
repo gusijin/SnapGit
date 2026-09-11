@@ -232,6 +232,30 @@ struct RepositoryInfo {
     current_branch: String,
 }
 
+#[derive(Debug, serde::Serialize, Clone)]
+struct SubmoduleInfo {
+    /// 子模块在父仓库中的相对路径
+    path: String,
+    /// 展示名（取 path 最后一段）
+    name: String,
+    /// 远程地址（来自 .gitmodules）
+    url: String,
+    /// 跟踪分支（来自 .gitmodules，可空）
+    branch: Option<String>,
+    /// 当前已检出的提交完整 SHA；未初始化为 None
+    head_commit: Option<String>,
+    /// 当前已检出的提交短 SHA（前 7 位），用于界面展示；未初始化为 None
+    head_commit_short: Option<String>,
+    /// 父仓库记录的 gitlink 提交 SHA（来自索引）；未记录为 None
+    recorded_commit: Option<String>,
+    /// 是否已初始化（工作区已克隆内容）
+    initialized: bool,
+    /// 指针是否改变：已初始化且当前 HEAD ≠ 记录值
+    modified: bool,
+    /// 子模块工作树是否有未提交改动
+    dirty: bool,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct RecentRepositories {
     repos: Vec<RepositoryInfo>,
@@ -3217,6 +3241,315 @@ async fn stash_drop(repo_path: String, stash_ref: String) -> Result<()> {
     .map_err(|e| format!("删除储藏失败: {}", e))?
 }
 
+// ===== 子模块（submodule）管理 =====
+// 参考主流 Git GUI（SourceTree / GitKraken / SmartGit 等）的能力：
+// 列出子模块及其状态、添加、更新（init / --remote）、同步、移除、在子模块内打开。
+
+/// 运行一个已配置好的 git 命令；成功返回 Ok(())，失败把 stderr+stdout 作为错误信息。
+fn run_git(cmd: &mut std::process::Command) -> Result<()> {
+    let output = cmd
+        .output()
+        .map_err(|e| format!("无法执行 git 命令: {}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let msg = format!("{}{}", stderr, stdout);
+        Err(if msg.trim().is_empty() {
+            "git 命令执行失败".to_string()
+        } else {
+            msg.trim().to_string()
+        })
+    }
+}
+
+#[command]
+async fn list_submodules(repo_path: String) -> Result<Vec<SubmoduleInfo>> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_read_guard();
+        list_submodules_inner(&repo_path)
+    })
+    .await
+    .map_err(|e| format!("列出子模块失败: {}", e))?
+}
+
+fn list_submodules_inner(repo_path: &str) -> Result<Vec<SubmoduleInfo>> {
+    use std::collections::HashMap;
+
+    // 1) 读取 .gitmodules：解析 submodule.<name>.(path|url|branch)
+    let mut by_name: HashMap<String, (String, String, Option<String>)> = HashMap::new();
+    if let Ok(out) = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .args(["config", "-f", ".gitmodules", "-l"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("submodule.") {
+                    if let Some((key, val)) = rest.split_once('=') {
+                        let key = key.trim();
+                        let val = val.trim().to_string();
+                        let (name, field) = if let Some(n) = key.strip_suffix(".path") {
+                            (n.to_string(), 0)
+                        } else if let Some(n) = key.strip_suffix(".url") {
+                            (n.to_string(), 1)
+                        } else if let Some(n) = key.strip_suffix(".branch") {
+                            (n.to_string(), 2)
+                        } else {
+                            continue;
+                        };
+                        let entry = by_name.entry(name).or_insert((String::new(), String::new(), None));
+                        match field {
+                            0 => entry.0 = val,
+                            1 => entry.1 = val,
+                            2 => entry.2 = Some(val),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if by_name.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 2) git submodule status：前缀状态 + 当前已检出的短 SHA
+    let mut status_map: HashMap<String, (char, Option<String>)> = HashMap::new();
+    if let Ok(out) = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .args(["submodule", "status"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let line = line.trim_end();
+                if line.is_empty() {
+                    continue;
+                }
+                let mut chars = line.chars();
+                let prefix = chars.next().unwrap_or(' ');
+                let rest = chars.as_str().trim();
+                let (p, sha) = if let Some(idx) = rest.find(" (") {
+                    (
+                        rest[..idx].to_string(),
+                        Some(rest[idx + 2..].trim_end_matches(')').to_string()),
+                    )
+                } else {
+                    (rest.to_string(), None)
+                };
+                status_map.insert(p, (prefix, sha));
+            }
+        }
+    }
+
+    let mut result: Vec<SubmoduleInfo> = Vec::new();
+    for (_name, (path, url, branch)) in by_name {
+        if path.is_empty() {
+            continue;
+        }
+        let (prefix, _) = status_map.get(&path).cloned().unwrap_or(('-', None));
+        let initialized = prefix != '-';
+
+        // 父仓库记录的 gitlink 提交（来自索引）
+        let recorded = {
+            if let Ok(o) = git_command()
+                .arg("-C")
+                .arg(repo_path)
+                .args(["ls-files", "-s", "--"])
+                .arg(&path)
+                .output()
+            {
+                if o.status.success() {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        // 已初始化时取子模块真实 HEAD（全量 SHA）
+        let head_commit = if initialized {
+            if let Ok(o) = git_command()
+                .arg("-C")
+                .arg(repo_path)
+                .args(["-C", &path, "rev-parse", "HEAD"])
+                .output()
+            {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let head_commit_short = head_commit.as_ref().map(|s| s.chars().take(7).collect());
+
+        // 指针改变：已初始化且当前 HEAD 与记录值不一致
+        let modified = initialized
+            && recorded.is_some()
+            && head_commit.as_deref() != recorded.as_deref();
+
+        // 工作树有改动
+        let dirty = if initialized {
+            if let Ok(o) = git_command()
+                .arg("-C")
+                .arg(repo_path)
+                .args(["-C", &path, "status", "--porcelain"])
+                .output()
+            {
+                o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let display_name = path.split('/').last().unwrap_or(&path).to_string();
+        result.push(SubmoduleInfo {
+            path,
+            name: display_name,
+            url,
+            branch,
+            head_commit,
+            head_commit_short,
+            recorded_commit: recorded,
+            initialized,
+            modified,
+            dirty,
+        });
+    }
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+
+#[command]
+async fn add_submodule(repo_path: String, url: String, path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let mut cmd = git_command();
+        cmd.arg("-C").arg(&repo_path).args(["submodule", "add"]);
+        if path.trim().is_empty() {
+            cmd.arg(&url);
+        } else {
+            cmd.arg(&url).arg("--").arg(&path);
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        run_git(&mut cmd)
+    })
+    .await
+    .map_err(|e| format!("添加子模块失败: {}", e))?
+}
+
+#[command]
+async fn update_submodules(repo_path: String, recursive: bool, remote: bool) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let mut cmd = git_command();
+        cmd.arg("-C").arg(&repo_path).args(["submodule", "update", "--init"]);
+        if recursive {
+            cmd.arg("--recursive");
+        }
+        if remote {
+            cmd.arg("--remote");
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        run_git(&mut cmd)
+    })
+    .await
+    .map_err(|e| format!("更新子模块失败: {}", e))?
+}
+
+#[command]
+async fn update_submodule(repo_path: String, path: String, remote: bool) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let mut cmd = git_command();
+        cmd.arg("-C").arg(&repo_path).args(["submodule", "update", "--init"]);
+        if remote {
+            cmd.arg("--remote");
+        }
+        cmd.arg("--").arg(&path);
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        run_git(&mut cmd)
+    })
+    .await
+    .map_err(|e| format!("更新子模块失败: {}", e))?
+}
+
+#[command]
+async fn sync_submodules(repo_path: String, recursive: bool, path: Option<String>) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let mut cmd = git_command();
+        cmd.arg("-C").arg(&repo_path).args(["submodule", "sync"]);
+        if recursive {
+            cmd.arg("--recursive");
+        }
+        if let Some(p) = path {
+            if !p.trim().is_empty() {
+                cmd.arg("--").arg(&p);
+            }
+        }
+        run_git(&mut cmd)
+    })
+    .await
+    .map_err(|e| format!("同步子模块失败: {}", e))?
+}
+
+#[command]
+async fn remove_submodule(repo_path: String, path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        // 1) 反初始化（已初始化才需要；失败不阻断，后续 git rm 仍可完成移除）
+        if let Ok(o) = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["submodule", "deinit", "-f", "--"])
+            .arg(&path)
+            .output()
+        {
+            let _ = o;
+        }
+        // 2) 从索引与工作区移除（同时更新 .gitmodules）
+        let mut rm = git_command();
+        rm.arg("-C").arg(&repo_path).args(["rm", "-f", "--"]).arg(&path);
+        run_git(&mut rm)?;
+        // 3) 清理 .git/modules 下的数据
+        let modules_dir = std::path::Path::new(&repo_path)
+            .join(".git")
+            .join("modules")
+            .join(&path);
+        if modules_dir.exists() {
+            let _ = std::fs::remove_dir_all(&modules_dir);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("移除子模块失败: {}", e))?
+}
+
 // 在独立的新窗口中打开文件编辑/冲突解决器（不再用当前窗口的 Dialog 弹窗）。
 // 传参方式：
 // 1. URL hash 标记为 #/editor，让前端 main.ts 知道该挂载 EditorWindow。
@@ -3610,6 +3943,12 @@ fn main() {
             stash_list,
             stash_apply,
             stash_drop,
+            list_submodules,
+            add_submodule,
+            update_submodules,
+            update_submodule,
+            sync_submodules,
+            remove_submodule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

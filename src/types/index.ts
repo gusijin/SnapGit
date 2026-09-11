@@ -95,3 +95,26 @@ export interface StashEntry {
   date: string
   stash_ref: string
 }
+
+export interface SubmoduleInfo {
+  /** 子模块在父仓库中的相对路径 */
+  path: string
+  /** 展示名（path 最后一段） */
+  name: string
+  /** 远程地址（来自 .gitmodules） */
+  url: string
+  /** 跟踪分支（可空） */
+  branch?: string | null
+  /** 当前已检出的提交完整 SHA；未初始化为 null */
+  head_commit?: string | null
+  /** 当前已检出的提交短 SHA（前 7 位）；未初始化为 null */
+  head_commit_short?: string | null
+  /** 父仓库记录的 gitlink 提交 SHA；未记录为 null */
+  recorded_commit?: string | null
+  /** 是否已初始化 */
+  initialized: boolean
+  /** 指针是否改变：当前 HEAD ≠ 记录值 */
+  modified: boolean
+  /** 子模块工作树是否有未提交改动 */
+  dirty: boolean
+}

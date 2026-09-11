@@ -22,6 +22,7 @@ import TitleBar from '../components/TitleBar.vue'
 import ToolBar from '../components/ToolBar.vue'
 import RepositoryList from '../components/RepositoryList.vue'
 import BranchPanel from '../components/BranchPanel.vue'
+import SubmodulePanel from '../components/SubmodulePanel.vue'
 import FileList from '../components/FileList.vue'
 import DiffViewer from '../components/DiffViewer.vue'
 import LogView from '../components/LogView.vue'
@@ -360,6 +361,34 @@ async function openScannedProject(project: ScannedProject) {
   } finally {
     // 切换完成（成功或失败）恢复项目图标
     stopSwitchIndicator()
+  }
+}
+
+/**
+ * 在子模块面板里点「打开」：把当前仓库切换到子模块目录（复用切库流程）。
+ * 子模块本身也是独立 Git 仓库，打开后它的嵌套子模块也会在面板里列出。
+ */
+async function openSubmodule(absPath: string) {
+  startSwitchIndicator(absPath)
+  try {
+    stopFileWatcher()
+    const info = await openRepository(absPath)
+    await applyRepoInfo(absPath, info)
+  } catch (e) {
+    console.error('Open submodule error:', e)
+  } finally {
+    stopSwitchIndicator()
+  }
+}
+
+// 子模块增删/更新后，父仓库工作树会变化（.gitmodules / gitlink），刷新变更文件列表
+async function onSubmoduleChanged() {
+  if (!repoPath.value) return
+  try {
+    const statuses = await getFileStatus(repoPath.value, false)
+    fileStatuses.value = statuses
+  } catch {
+    // 忽略：子模块列表面板自己也会刷新
   }
 }
 
@@ -1238,6 +1267,7 @@ const showRepoConfig = ref(false)
 const configRepoPath = ref('')
 const showCheckoutBranch = ref(false)
 const branchPanelRef = ref<InstanceType<typeof BranchPanel> | null>(null)
+const submodulePanelRef = ref<InstanceType<typeof SubmodulePanel> | null>(null)
 
 // 「不是 Git 仓库 → 询问是否初始化为新仓库」对话框状态
 // 用户在菜单栏/工具栏打开普通文件夹时触发，确认后调 init_repository 初始化
@@ -1878,6 +1908,15 @@ onBeforeUnmount(() => {
           @checkout-remote="handleCheckoutRemote"
           @stash-apply="handleStashApply"
           @stash-drop="handleStashDrop"
+        />
+
+        <SubmodulePanel
+          v-if="repoPath"
+          ref="submodulePanelRef"
+          :repo-path="repoPath"
+          @changed="onSubmoduleChanged"
+          @open-submodule="openSubmodule"
+          @added="onSubmoduleChanged"
         />
       </aside>
 

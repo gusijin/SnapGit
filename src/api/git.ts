@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Commit, Branch, FileStatus, RepositoryInfo, ScannedProject, FileTreeNode, FileDiff, ConflictFile, StashEntry } from '../types'
+import type { Commit, Branch, FileStatus, RepositoryInfo, ScannedProject, FileTreeNode, FileDiff, ConflictFile, StashEntry, SubmoduleInfo } from '../types'
 
 export async function openRepository(path: string): Promise<RepositoryInfo> {
   return await invoke('open_repository', { path })
@@ -272,6 +272,38 @@ export async function stashApply(repoPath: string, stashRef: string, keepIndex: 
 
 export async function stashDrop(repoPath: string, stashRef: string): Promise<void> {
   await invoke('stash_drop', { repoPath, stashRef })
+}
+
+// ===== 子模块（submodule）管理 =====
+
+/** 列出父仓库中的所有子模块及其状态（已初始化 / 指针改变 / 工作树改动）。 */
+export async function listSubmodules(repoPath: string): Promise<SubmoduleInfo[]> {
+  return await invoke<SubmoduleInfo[]>('list_submodules', { repoPath })
+}
+
+/** 添加子模块：git submodule add <url> [path]。path 为空时由 git 决定目录名。 */
+export async function addSubmodule(repoPath: string, url: string, path: string): Promise<void> {
+  await invoke('add_submodule', { repoPath, url, path })
+}
+
+/** 更新全部子模块：git submodule update --init [--recursive] [--remote]。 */
+export async function updateSubmodules(repoPath: string, recursive = false, remote = false): Promise<void> {
+  await invoke('update_submodules', { repoPath, recursive, remote })
+}
+
+/** 更新单个子模块：git submodule update --init [--remote] <path>。 */
+export async function updateSubmodule(repoPath: string, path: string, remote = false): Promise<void> {
+  await invoke('update_submodule', { repoPath, path, remote })
+}
+
+/** 同步子模块：git submodule sync [--recursive] [<path>]。path 为空表示全部。 */
+export async function syncSubmodules(repoPath: string, recursive = false, path?: string): Promise<void> {
+  await invoke('sync_submodules', { repoPath, recursive, path: path ?? null })
+}
+
+/** 移除子模块：deinit + git rm，并清理 .git/modules 数据。 */
+export async function removeSubmodule(repoPath: string, path: string): Promise<void> {
+  await invoke('remove_submodule', { repoPath, path })
 }
 
 // ===== 克隆仓库 =====
