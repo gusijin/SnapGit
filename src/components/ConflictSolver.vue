@@ -8,7 +8,7 @@ import {
   Combine, Rows3,
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
-import { writeFileContent } from '../api/git'
+import { writeFileContent, stageFile } from '../api/git'
 
 interface Props {
   conflictFile: ConflictFile
@@ -249,6 +249,8 @@ async function handleSave() {
   isSaving.value = true
   try {
     await writeFileContent(props.repoPath, props.conflictFile.path, workingContent.value)
+    // 解决冲突 = 写回内容后 git add 标记冲突已解决，刷新后该文件不再列为冲突
+    await stageFile(props.repoPath, props.conflictFile.path)
     emit('save')
   } catch (e) {
     console.error('Save conflict file error:', e)

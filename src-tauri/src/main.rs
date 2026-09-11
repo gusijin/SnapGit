@@ -1244,11 +1244,208 @@ async fn pull_branch(repo_path: String) -> Result<()> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let msg = format!("{}{}", stderr, stdout);
+            // 分叉（diverging）：--ff-only 拒绝快进。返回结构化前缀，前端据此弹「选择拉取方式」对话框，
+            // 而非直接吐 git 原始的 hint 文本。
+            if msg.contains("Not possible to fast-forward") || msg.contains("Diverging") {
+                return Err("PULL_DIVERGED: 本地分支与远程分支已分叉，无法快进合并，请选择合并或变基策略".to_string());
+            }
             Err(if msg.trim().is_empty() { "拉取失败".to_string() } else { msg })
         }
     })
     .await
     .map_err(|e| format!("拉取失败: {}", e))?
+}
+
+/// 分支分叉时按指定策略拉取：merge（`--no-ff` 生成合并提交）或 rebase（变基到远程之上）。
+/// 由前端「选择拉取方式」对话框触发。冲突时返回 `PULL_CONFLICT:` 前缀，供前端引导解决。
+#[command]
+async fn pull_with_strategy(repo_path: String, strategy: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+
+        // 先 fetch 远程最新代码（与 pull_branch 一致）
+        let fetch_output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("fetch")
+            .arg("--all")
+            .arg("--no-progress")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
+        if !fetch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+            let stdout = String::from_utf8_lossy(&fetch_output.stdout);
+            let mut msg = format!("{}{}", stderr, stdout);
+            if msg.trim().is_empty() {
+                msg = "获取远程代码失败".to_string();
+            }
+            return Err(msg);
+        }
+
+        // 按策略拉取：merge 生成合并提交（不改写历史），rebase 改写本地历史接到远程之后
+        let mut cmd = git_command();
+        cmd.arg("-C")
+            .arg(&repo_path)
+            .arg("pull")
+            .arg("--no-progress");
+        match strategy.as_str() {
+            "rebase" => {
+                cmd.arg("--rebase");
+            }
+            _ => {
+                cmd.arg("--no-ff");
+            }
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        let output = cmd
+            .output()
+            .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = format!("{}{}", stderr, stdout);
+            // 冲突：git 留下冲突标记并中止，返回结构化前缀引导前端解决
+            if msg.contains("CONFLICT") || msg.to_lowercase().contains("conflict") {
+                return Err(format!(
+                    "PULL_CONFLICT: 拉取产生冲突，请解决冲突文件后重试。\n\n{}",
+                    msg
+                ));
+            }
+            Err(if msg.trim().is_empty() {
+                "拉取失败".to_string()
+            } else {
+                msg
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("拉取失败: {}", e))?
+}
+
+/// 完成合并：冲突已全部解决并暂存后，提交合并结果（使用 git 自动生成的默认合并信息）。
+#[command]
+async fn finish_merge(repo_path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("commit")
+            .arg("--no-edit")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|e| format!("无法执行 git commit 命令: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = format!("{}{}", stderr, stdout);
+            Err(if msg.trim().is_empty() {
+                "完成合并失败".to_string()
+            } else {
+                msg
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("完成合并失败: {}", e))?
+}
+
+/// 继续变基：冲突已解决并暂存后，继续 rebase 流程。
+/// 设置 `GIT_EDITOR=true` 跳过交互式编辑器，使用默认提交信息。
+#[command]
+async fn continue_rebase(repo_path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("rebase")
+            .arg("--continue")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true")
+            .output()
+            .map_err(|e| format!("无法执行 git rebase 命令: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = format!("{}{}", stderr, stdout);
+            Err(if msg.trim().is_empty() {
+                "继续变基失败".to_string()
+            } else {
+                msg
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("继续变基失败: {}", e))?
+}
+
+/// 中止合并：回退到拉取前的状态（`git merge --abort`）。
+#[command]
+async fn abort_merge(repo_path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("merge")
+            .arg("--abort")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|e| format!("无法执行 git merge --abort 命令: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = format!("{}{}", stderr, stdout);
+            Err(if msg.trim().is_empty() {
+                "中止合并失败".to_string()
+            } else {
+                msg
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("中止合并失败: {}", e))?
+}
+
+/// 中止变基：回退到拉取前的状态（`git rebase --abort`）。
+#[command]
+async fn abort_rebase(repo_path: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("rebase")
+            .arg("--abort")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|e| format!("无法执行 git rebase --abort 命令: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = format!("{}{}", stderr, stdout);
+            Err(if msg.trim().is_empty() {
+                "中止变基失败".to_string()
+            } else {
+                msg
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("中止变基失败: {}", e))?
 }
 
 /// 添加远程仓库（`git remote add <name> <url>`）。
@@ -3349,6 +3546,11 @@ fn main() {
             checkout_branch,
             checkout_remote_branch,
             pull_branch,
+            pull_with_strategy,
+            finish_merge,
+            continue_rebase,
+            abort_merge,
+            abort_rebase,
             clone_repository,
             add_remote,
             create_branch,

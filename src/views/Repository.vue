@@ -3,11 +3,12 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   getCommits, getCurrentBranch, getBranches, getFileStatus, stageFile, discardFile, commitChanges,
-  checkoutBranch, pullBranch, openRepository, initRepository, saveRecentRepository, openFolderDialog,
+  checkoutBranch, pullBranch, pullWithStrategy, openRepository, initRepository, saveRecentRepository, openFolderDialog,
   scanProjects, getFileTree, getFileDiff, getCommitFiles,
   createBranch, mergeBranch, renameBranch, checkoutRemoteBranch,
   getUpstream, getRemotes, getRemoteUrl, pushChanges, deleteBranch, deleteRemoteBranch,
   stashCreate, stashList, stashApply, stashDrop, openEditWindow,
+  finishMerge, continueRebase, abortMerge, abortRebase,
 } from '../api/git'
 import type { Commit, Branch, FileStatus, ScannedProject, FileTreeNode, FileDiff, StashEntry } from '../types'
 import { useTheme } from '../stores/theme'
@@ -40,7 +41,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle } from 'lucide-vue-next'
+import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, GitMerge } from 'lucide-vue-next'
 
 const { toggleTheme } = useTheme()
 const { t } = useI18n()
@@ -1030,9 +1031,105 @@ async function handlePull() {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
     if (msg.startsWith('NO_REMOTE:')) {
       showNoRemoteDialog.value = true
+    } else if (msg.startsWith('PULL_DIVERGED:')) {
+      // 分支分叉：弹「选择拉取方式」对话框，让用户决定 merge 还是 rebase
+      showPullDivergedDialog.value = true
+    } else if (msg.startsWith('PULL_CONFLICT:')) {
+      // 选择策略后产生冲突：提示用户解决冲突后再试
+      showToast(t('repository.pullConflictDesc'), 'error')
     } else {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
+  } finally {
+    isPulling.value = false
+  }
+}
+
+// 分支分叉时，按用户选择的策略（merge / rebase）拉取
+async function handlePullStrategy(strategy: 'merge' | 'rebase') {
+  if (!repoPath.value || isPulling.value) return
+  isPulling.value = true
+  showPullDivergedDialog.value = false
+  try {
+    await pullWithStrategy(repoPath.value, strategy)
+    await loadRepoData()
+    lastPullTime.value = Date.now()
+    showToast(t('repository.pullSuccess'), 'success')
+  } catch (e: any) {
+    console.error('Pull strategy error:', e)
+    const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
+    if (msg.startsWith('PULL_CONFLICT:')) {
+      // 拉取产生冲突：记录本次策略，刷新冲突文件列表并打开「冲突解决」面板
+      pendingPullStrategy.value = strategy
+      await refreshConflictList()
+      showConflictDialog.value = true
+    } else {
+      showToast(t('repository.pullFailed', { error: msg }), 'error')
+    }
+  } finally {
+    isPulling.value = false
+  }
+}
+
+// 重新拉取工作区状态，刷新冲突文件列表（冲突解决后用来确认还有没有遗留冲突）
+async function refreshConflictList() {
+  if (!repoPath.value) return
+  try {
+    fileStatuses.value = await getFileStatus(repoPath.value, false)
+  } catch (e) {
+    console.error('刷新冲突列表失败:', e)
+  }
+}
+
+// 在独立编辑窗口中打开单个冲突文件，进入 ConflictSolver 解决
+function openConflictFile(path: string) {
+  if (!repoPath.value) return
+  openEditWindow(repoPath.value, path, 'conflict')
+}
+
+// 冲突全部解决后：merge 提交合并结果 / rebase 继续变基
+async function finishPullResolve() {
+  if (!repoPath.value) return
+  // 先刷新，确保没有遗留未解决的冲突文件
+  await refreshConflictList()
+  if (conflictFiles.value.length > 0) {
+    showToast(t('repository.conflictResolveRemaining', { n: conflictFiles.value.length }), 'error')
+    return
+  }
+  isPulling.value = true
+  try {
+    if (pendingPullStrategy.value === 'rebase') {
+      await continueRebase(repoPath.value)
+    } else {
+      await finishMerge(repoPath.value)
+    }
+    await loadRepoData()
+    showConflictDialog.value = false
+    showToast(t('repository.pullSuccess'), 'success')
+  } catch (e: any) {
+    const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
+    showToast(t('repository.pullFailed', { error: msg }), 'error')
+  } finally {
+    isPulling.value = false
+  }
+}
+
+// 中止本次拉取产生的合并/变基，回退到拉取前状态
+async function abortPullResolve() {
+  if (!repoPath.value) return
+  isPulling.value = true
+  try {
+    if (pendingPullStrategy.value === 'rebase') {
+      await abortRebase(repoPath.value)
+    } else {
+      await abortMerge(repoPath.value)
+    }
+    await loadRepoData()
+    showConflictDialog.value = false
+    showToast(t('repository.pullAborted'), 'success')
+  } catch (e: any) {
+    const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
+    showToast(t('repository.pullFailed', { error: msg }), 'error')
   } finally {
     isPulling.value = false
   }
@@ -1141,6 +1238,15 @@ const initing = ref(false)
 // 「拉取无远程」对话框：拉取按钮在刚 init 的空仓库上点击时弹出。
 // 「创建远程」按钮会进一步打开 AddRemoteDialog 引导用户添加 origin。
 const showNoRemoteDialog = ref(false)
+// 分支分叉（--ff-only 失败）时弹出的「选择拉取方式」对话框
+const showPullDivergedDialog = ref(false)
+// 拉取产生冲突时弹出的「冲突解决」面板：列出冲突文件，引导用户完成合并/变基或中止
+const showConflictDialog = ref(false)
+const pendingPullStrategy = ref<'merge' | 'rebase'>('merge')
+// 当前仓库所有冲突文件（status === 'conflict' 或 'unmerged'）
+const conflictFiles = computed(() =>
+  fileStatuses.value.filter(f => f.status === 'conflict' || f.status === 'unmerged')
+)
 const showAddRemoteDialog = ref(false)
 
 // 推送成功反馈：工具栏推送按钮短暂显示"已推送"并隐藏 Tooltip
@@ -1983,6 +2089,92 @@ onBeforeUnmount(() => {
           </Button>
           <Button @click="openAddRemoteDialog">
             {{ t('repository.pullNoRemoteCreate') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 分支分叉 → "选择拉取方式"对话框 -->
+    <Dialog v-model:open="showPullDivergedDialog">
+      <DialogContent class="max-w-[460px] gap-3 p-5">
+        <DialogHeader class="gap-1 p-0">
+          <DialogTitle class="text-[15px] leading-snug">
+            {{ t('repository.pullDivergedTitle') }}
+          </DialogTitle>
+          <p class="init-repo-desc">{{ t('repository.pullDivergedDesc') }}</p>
+        </DialogHeader>
+        <div class="mt-1 flex flex-col gap-2">
+          <button
+            type="button"
+            class="flex w-full flex-col items-start gap-1 rounded-lg border border-[var(--border-medium)] bg-[var(--bg-secondary)] px-3 py-2.5 text-left transition-colors hover:border-[var(--brand-primary)] hover:bg-[var(--bg-hover)]"
+            @click="handlePullStrategy('merge')"
+          >
+            <span class="text-[13px] font-medium text-[var(--text-bright)]">{{ t('repository.pullMerge') }}</span>
+            <span class="text-[12px] leading-snug text-[var(--text-tertiary)]">{{ t('repository.pullMergeHint') }}</span>
+          </button>
+          <button
+            type="button"
+            class="flex w-full flex-col items-start gap-1 rounded-lg border border-[var(--border-medium)] bg-[var(--bg-secondary)] px-3 py-2.5 text-left transition-colors hover:border-[var(--brand-primary)] hover:bg-[var(--bg-hover)]"
+            @click="handlePullStrategy('rebase')"
+          >
+            <span class="text-[13px] font-medium text-[var(--text-bright)]">{{ t('repository.pullRebase') }}</span>
+            <span class="text-[12px] leading-snug text-[var(--text-tertiary)]">{{ t('repository.pullRebaseHint') }}</span>
+          </button>
+        </div>
+        <DialogFooter class="gap-2">
+          <Button variant="outline" @click="showPullDivergedDialog = false">
+            {{ t('repository.pullDivergedCancel') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 拉取冲突 → "冲突解决"面板 -->
+    <Dialog v-model:open="showConflictDialog">
+      <DialogContent class="max-w-[480px] gap-3 p-5">
+        <DialogHeader class="gap-1 p-0">
+          <DialogTitle class="text-[15px] leading-snug">
+            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictRebaseTitle') : t('repository.conflictMergeTitle') }}
+          </DialogTitle>
+          <p class="init-repo-desc">{{ t('repository.conflictDesc') }}</p>
+        </DialogHeader>
+
+        <div class="mt-1 flex flex-col gap-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[12px] text-[var(--text-tertiary)]">
+              {{ t('repository.conflictFileCount', { n: conflictFiles.length }) }}
+            </span>
+            <Button variant="outline" size="sm" @click="refreshConflictList">
+              {{ t('repository.conflictRefresh') }}
+            </Button>
+          </div>
+          <div class="max-h-[240px] overflow-y-auto rounded-lg border border-[var(--border-medium)]">
+            <button
+              v-for="f in conflictFiles"
+              :key="f.path"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--bg-hover)]"
+              @click="openConflictFile(f.path)"
+            >
+              <GitMerge class="h-3.5 w-3.5 shrink-0 text-[var(--danger-color)]" />
+              <span class="truncate text-[13px] text-[var(--text-bright)]">{{ f.path }}</span>
+              <span class="ml-auto text-[11px] text-[var(--text-tertiary)]">{{ t('repository.conflictSolve') }}</span>
+            </button>
+            <p
+              v-if="conflictFiles.length === 0"
+              class="px-3 py-3 text-center text-[12px] text-[var(--text-tertiary)]"
+            >
+              {{ t('repository.conflictNone') }}
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter class="gap-2">
+          <Button variant="outline" :disabled="isPulling" @click="abortPullResolve">
+            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictAbortRebase') : t('repository.conflictAbortMerge') }}
+          </Button>
+          <Button :disabled="isPulling" @click="finishPullResolve">
+            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictContinueRebase') : t('repository.conflictFinishMerge') }}
           </Button>
         </DialogFooter>
       </DialogContent>

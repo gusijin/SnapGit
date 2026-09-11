@@ -90,6 +90,10 @@ export async function pullBranch(repoPath: string): Promise<void> {
   await invoke('pull_branch', { repoPath })
 }
 
+export async function pullWithStrategy(repoPath: string, strategy: 'merge' | 'rebase'): Promise<void> {
+  await invoke('pull_with_strategy', { repoPath, strategy })
+}
+
 export async function createBranch(repoPath: string, branchName: string): Promise<void> {
   await invoke('create_branch', { repoPath, branchName })
 }
@@ -185,6 +189,26 @@ export async function readWorkingFile(repoPath: string, filePath: string): Promi
 
 export async function writeFileContent(repoPath: string, filePath: string, content: string): Promise<void> {
   await invoke('write_file_content', { repoPath, filePath, content })
+}
+
+// 完成合并：冲突全部解决并暂存后，提交合并结果（使用 git 生成的默认合并信息）。
+export async function finishMerge(repoPath: string): Promise<void> {
+  await invoke('finish_merge', { repoPath })
+}
+
+// 继续变基：冲突解决并暂存后，继续 rebase 流程（非交互）。
+export async function continueRebase(repoPath: string): Promise<void> {
+  await invoke('continue_rebase', { repoPath })
+}
+
+// 中止合并：回退到拉取前状态（git merge --abort）。
+export async function abortMerge(repoPath: string): Promise<void> {
+  await invoke('abort_merge', { repoPath })
+}
+
+// 中止变基：回退到拉取前状态（git rebase --abort）。
+export async function abortRebase(repoPath: string): Promise<void> {
+  await invoke('abort_rebase', { repoPath })
 }
 
 // 在独立新窗口中打开文件编辑/冲突解决器。
