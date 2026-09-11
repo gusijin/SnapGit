@@ -29,7 +29,10 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const collapsed = ref(false)
+// 默认折叠：无子模块时不占左栏空间，加载完发现非空再自动展开
+const collapsed = ref(true)
+// 用户手动折叠/展开过就不再自动改，尊重用户选择
+const userToggled = ref(false)
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -53,7 +56,22 @@ async function loadList() {
   }
 }
 
-watch(() => props.repoPath, () => { loadList() }, { immediate: true })
+watch(() => props.repoPath, () => {
+  // 切库先回到默认折叠态，等列表回来再决定是否展开
+  userToggled.value = false
+  collapsed.value = true
+  loadList()
+}, { immediate: true })
+
+// 无子模块 → 折叠；有子模块 → 自动展开（用户手动操作过则不动）
+watch(() => submodules.value.length, (n) => {
+  if (!userToggled.value) collapsed.value = n === 0
+})
+
+function toggleCollapsed() {
+  userToggled.value = true
+  collapsed.value = !collapsed.value
+}
 
 // 暴露给父组件在切库 / 文件操作后主动刷新
 defineExpose({ refresh: loadList })
@@ -172,12 +190,12 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
 <template>
   <section class="submodule-panel" :class="{ collapsed }">
     <!-- 组头 -->
-    <header class="sm-header" @click="collapsed = !collapsed">
+    <header class="sm-header" @click="toggleCollapsed">
       <button class="sm-collapse" :title="collapsed ? t('submodule.expand') : t('submodule.collapse')">
-        <ChevronDown v-if="!collapsed" :size="15" />
-        <ChevronRight v-else :size="15" />
+        <ChevronDown v-if="!collapsed" :size="12" />
+        <ChevronRight v-else :size="12" />
       </button>
-      <Package :size="15" class="sm-icon" />
+      <Package :size="13" class="sm-icon" />
       <span class="sm-title">{{ t('submodule.title') }}</span>
       <span v-if="submodules.length" class="sm-count">{{ submodules.length }}</span>
       <span class="sm-spacer" />
@@ -187,7 +205,7 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
           <Tooltip>
             <TooltipTrigger as-child>
               <button class="sm-btn" :disabled="busy" :title="t('submodule.add')" @click="showAdd = true">
-                <Plus :size="15" />
+                <Plus :size="13" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">{{ t('submodule.add') }}</TooltipContent>
@@ -195,7 +213,7 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
           <Tooltip>
             <TooltipTrigger as-child>
               <button class="sm-btn" :disabled="busy" :title="t('submodule.updateAll')" @click="onUpdateAll">
-                <RefreshCw :size="15" />
+                <RefreshCw :size="13" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">{{ t('submodule.updateAll') }}</TooltipContent>
@@ -203,7 +221,7 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
               <Tooltip>
                 <TooltipTrigger as-child>
                   <button class="sm-btn" :disabled="busy" :title="t('submodule.syncAll')" @click="onSyncAll">
-                    <Repeat :size="15" />
+                    <Repeat :size="13" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{{ t('submodule.syncAll') }}</TooltipContent>
@@ -310,15 +328,21 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
   flex: 0 0 auto;
   max-height: 40%;
   overflow: hidden;
-  border-top: 1px solid var(--border-light, #e2e8f0);
-  background: var(--bg-secondary, #f8fafc);
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
 }
 .submodule-panel.collapsed { max-height: none; }
 .sm-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
+  padding: 6px 10px;
+  background-color: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
@@ -329,19 +353,21 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
   justify-content: center;
   background: none;
   border: none;
-  color: var(--text-muted, #64748b);
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
 }
-.sm-icon { color: var(--accent-primary, #3b82f6); }
-.sm-title { font-size: 13px; font-weight: 600; color: var(--text-strong, #0f172a); }
+/* 与其它面板标题栏图标统一：:size="13" + .header-icon 配色 */
+.sm-icon { color: var(--accent-text); flex-shrink: 0; }
+.sm-title { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
 .sm-count {
-  font-size: 11px;
-  color: var(--text-muted, #64748b);
-  background: var(--bg-tertiary, #e2e8f0);
-  border-radius: 10px;
-  padding: 0 7px;
-  line-height: 18px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 1px 6px;
+  flex-shrink: 0;
 }
 .sm-spacer { flex: 1 1 auto; }
 .sm-actions { display: flex; gap: 2px; }
@@ -349,15 +375,15 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
   border: none;
   background: none;
-  color: var(--text-muted, #64748b);
+  color: var(--text-secondary);
   cursor: pointer;
 }
-.sm-btn:hover:not(:disabled) { background: var(--bg-tertiary, #e2e8f0); color: var(--text-strong, #0f172a); }
+.sm-btn:hover:not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); }
 .sm-btn:disabled { opacity: 0.45; cursor: default; }
 
 .sm-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 0 6px; }
