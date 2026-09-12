@@ -17,7 +17,7 @@ use tauri::menu::{
     CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
 };
 #[allow(unused_imports)]
-use tauri::{AppHandle, Emitter, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
+use tauri::{AppHandle, Emitter, Listener, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -3748,8 +3748,14 @@ fn get_commit_files(repo_path: String, commit_id: String) -> Result<Vec<FileStat
 
 // ===== 原生菜单栏（仅 macOS 使用，Windows/Linux 使用前端 Vue 组件 MenuBar.vue） =====
 
+// macOS 原生菜单的语言项状态：供菜单事件与前端 locale-changed 事件同步勾选态。
 #[cfg(target_os = "macos")]
-fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+struct LangMenuState {
+    items: Vec<CheckMenuItem<tauri::Wry>>,
+}
+
+#[cfg(target_os = "macos")]
+fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<CheckMenuItem<R>>)> {
     // 菜单项（触发前端事件）
     let open_repo_item = MenuItem::with_id(app, "open-repo", "打开仓库", true, None::<&str>)?;
     let clone_repo_item = MenuItem::with_id(app, "clone-repo", "克隆仓库", true, None::<&str>)?;
@@ -3768,6 +3774,13 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     // 仓库配置（打开仓库配置对话框）
     let repo_config_item = MenuItem::with_id(app, "repo-config", "配置", true, None::<&str>)?;
 
+    // 语言切换（与 Windows 前端 MenuBar.vue 的「编辑 → 语言」对齐）。
+    // 注意：语言项必须与 src/i18n/locales/index.ts 的 LocaleRegistry 保持一致。
+    let lang_items: Vec<CheckMenuItem<R>> = vec![
+        CheckMenuItem::with_id(app, "set-locale-zh-CN", "简体中文", true, false, None::<&str>)?,
+        CheckMenuItem::with_id(app, "set-locale-en-US", "English", true, false, None::<&str>)?,
+    ];
+
     // 文件菜单
     let file_menu = Submenu::with_items(
         app,
@@ -3781,13 +3794,16 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         ],
     )?;
 
-    // 编辑菜单
+    // 编辑菜单（对齐 Windows：配置 + 语言切换）
     let edit_menu = Submenu::with_items(
         app,
         "编辑",
         true,
         &[
             &repo_config_item,
+            &PredefinedMenuItem::separator(app)?,
+            &lang_items[0],
+            &lang_items[1],
         ],
     )?;
 
@@ -3845,7 +3861,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &[&file_menu, &edit_menu, &repo_menu, &branch_menu, &view_menu, &help_menu],
     )?;
 
-    Ok(menu)
+    Ok((menu, lang_items))
 }
 
 // 将菜单事件转发给前端窗口（仅 macOS 使用）
@@ -3890,13 +3906,45 @@ fn main() {
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏
             #[cfg(target_os = "macos")]
             {
-                // 构建原生菜单栏
-                let menu = build_menu(&app.handle())?;
+                // 构建原生菜单栏（含语言切换项，用于同步勾选态）
+                let (menu, lang_items) = build_menu(&app.handle())?;
                 app.set_menu(menu)?;
+
+                // 语言项引用：菜单事件与前端 locale-changed 事件共用，各自持有一份克隆
+                let lang_for_menu = lang_items.clone();
+                let lang_for_state = lang_items;
+                // 管理状态，供 locale-changed 监听回写勾选态
+                app.manage(LangMenuState { items: lang_for_state });
+
                 let app_handle = app.handle().clone();
                 app.on_menu_event(move |app, event| {
+                    let id = event.id().0.clone();
+                    if id.starts_with("set-locale-") {
+                        // 更新原生菜单勾选态，使当前语言保持勾选
+                        for it in &lang_for_menu {
+                            let _ = it.set_checked(it.id().0 == id);
+                        }
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.emit("menu-action", serde_json::json!({ "action": id }));
+                        }
+                        return;
+                    }
                     if let Some(win) = app.get_webview_window("main") {
-                        on_menu_event(&app_handle, &win, event.id().as_ref());
+                        on_menu_event(&app_handle, &win, &id);
+                    }
+                });
+
+                // 前端切换语言（含启动时初始同步）后回传，保持原生菜单勾选态一致
+                let app_handle2 = app.handle().clone();
+                app.listen("locale-changed", move |event| {
+                    let payload: serde_json::Value =
+                        serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
+                    if let Some(code) = payload.get("locale").and_then(|v| v.as_str()) {
+                        let target = format!("set-locale-{}", code);
+                        let state = app_handle2.state::<LangMenuState>();
+                        for it in &state.items {
+                            let _ = it.set_checked(it.id().0 == target);
+                        }
                     }
                 });
             }

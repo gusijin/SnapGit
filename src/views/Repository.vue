@@ -12,6 +12,7 @@ import {
 } from '../api/git'
 import type { Commit, Branch, FileStatus, ScannedProject, FileTreeNode, FileDiff, StashEntry } from '../types'
 import { useTheme } from '../stores/theme'
+import { setLocale } from '../i18n'
 import {
   useLayout, flushLayout,
   LEFT_PANEL_MIN, LEFT_PANEL_MAX,
@@ -45,7 +46,7 @@ import { Label } from '@/components/ui/label'
 import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, GitMerge, XCircle } from 'lucide-vue-next'
 
 const { toggleTheme } = useTheme()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const LAST_REPO_KEY = 'snapgit-last-repo'
 const FIRST_LAUNCH_KEY = 'snapgit-first-launch'
 const SCANNED_PROJECTS_KEY = 'snapgit-scanned-projects'
@@ -1692,6 +1693,18 @@ function handleMenuAction(payload: any) {
     ? payload
     : (payload?.payload?.action ?? payload?.action ??
        payload?.payload?.id ?? payload?.id ?? '')
+
+  // macOS 原生菜单「编辑 → 语言」发出的 set-locale-<code>
+  if (action.startsWith('set-locale-')) {
+    const code = action.slice('set-locale-'.length)
+    setLocale(code)
+    // 回传后端，保持原生菜单勾选态一致（仅 macOS 原生菜单消费，其余平台忽略）
+    import('@tauri-apps/api/event').then(({ emit }) =>
+      emit('locale-changed', { locale: code })
+    )
+    return
+  }
+
   switch (action) {
     case 'open-repo':
       handleOpenRepo()
@@ -1774,6 +1787,10 @@ watch(repoPath, (path) => {
 
 onMounted(() => {
   setupMenuListener()
+  // 通知后端当前语言（含启动时恢复的语言偏好），同步 macOS 原生菜单勾选态
+  import('@tauri-apps/api/event').then(({ emit }) =>
+    emit('locale-changed', { locale: locale.value })
+  )
   window.addEventListener('focus', onWindowFocus)
 
   // 优先：加载保存的扫描结果。缓存键存在即视为「有缓存」，绝不触发扫盘。
