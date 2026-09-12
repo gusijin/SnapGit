@@ -2,6 +2,8 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRemotes, getUpstream, pushChanges, saveCredentials, getRemoteUrl } from '../api/git'
+import { startGitHubDeviceAuth, isGitHubClientIdConfigured, type GitHubAuthStatus } from '../githubAuth'
+import { open } from '@tauri-apps/plugin-shell'
 import type { Branch } from '../types'
 import {
   Dialog,
@@ -29,6 +31,8 @@ interface Props {
   currentBranch: string
   /** 预选推送的本地分支（默认取 currentBranch） */
   initialBranch?: string
+  /** 打开即进入认证模式（用于提交并推送时认证失败，直接展示授权入口） */
+  initialAuthMode?: boolean
 }
 
 const props = defineProps<Props>()
@@ -50,6 +54,12 @@ const token = ref('')
 const remoteUrl = ref('')
 const isSavingAuth = ref(false)
 
+// GitHub 设备授权流（Device Flow）：点按钮 → 跳浏览器授权 → 自动拿 token
+const githubConfigured = isGitHubClientIdConfigured()
+const ghActive = ref(false)
+const ghStatus = ref<GitHubAuthStatus | null>(null)
+const ghAbort = ref<AbortController | null>(null)
+
 const localBranches = computed(() => props.branches.filter(b => !b.is_remote))
 
 const selectedBranch = computed(() =>
@@ -58,6 +68,15 @@ const selectedBranch = computed(() =>
 
 async function init() {
   localBranch.value = props.initialBranch || props.currentBranch
+  // 认证失败后直接打开对话框时，预置认证模式并预取远程 URL 用于展示
+  if (props.initialAuthMode) {
+    authMode.value = true
+    if (remote.value) {
+      try {
+        remoteUrl.value = await getRemoteUrl(props.repoPath, remote.value)
+      } catch {}
+    }
+  }
   loading.value = true
   try {
     const [remoteList, upstream] = await Promise.all([
@@ -162,13 +181,60 @@ async function handleSaveAuthAndPush() {
   }
 }
 
-// 控制 Dialog 关闭：推送/保存凭证进行中禁止关闭
+// GitHub 设备授权流：启动 → 轮询 → 成功后存凭证并重试推送
+function startGithubAuth() {
+  if (!githubConfigured) {
+    error.value = t('push.githubAuthNotConfigured')
+    return
+  }
+  if (ghActive.value) return
+  ghActive.value = true
+  ghStatus.value = null
+  error.value = ''
+  const controller = new AbortController()
+  ghAbort.value = controller
+  startGitHubDeviceAuth((s) => {
+    ghStatus.value = s
+    if (s.type === 'authorized') {
+      // GitHub 约定 OAuth/PAT 用户名为 x-access-token，存好凭证后直接重试推送
+      saveCredentials(props.repoPath, remote.value, 'x-access-token', s.token)
+        .then(() => {
+          ghActive.value = false
+          authMode.value = false
+          return handlePush()
+        })
+        .catch((e) => {
+          ghActive.value = false
+          error.value = t('push.saveAuthError', { error: String(e) })
+        })
+    }
+  }, controller.signal)
+}
+
+function cancelGithubAuth() {
+  ghAbort.value?.abort()
+  ghAbort.value = null
+  ghActive.value = false
+}
+
+async function openGhPage() {
+  if (ghStatus.value?.type === 'waiting') {
+    try {
+      await open(ghStatus.value.verificationUri)
+    } catch {}
+  }
+}
+
+// 控制 Dialog 关闭：推送/保存凭证/授权进行中禁止关闭
 function onOpenChange(open: boolean) {
-  if (!open) emit('close')
+  if (!open) {
+    cancelGithubAuth()
+    emit('close')
+  }
 }
 
 function guardClose(e: Event) {
-  if (isPushing.value || isSavingAuth.value) e.preventDefault()
+  if (isPushing.value || isSavingAuth.value || ghActive.value) e.preventDefault()
 }
 
 init()
@@ -231,6 +297,29 @@ init()
           <CardContent class="auth-card-body">
             <div class="auth-title">{{ t('push.authTitle') }}</div>
             <div v-if="remoteUrl" class="auth-url">{{ remoteUrl }}</div>
+
+            <!-- GitHub 设备授权流（推荐，对应 SmartGit「跳转 GitHub 授权」） -->
+            <div class="gh-auth">
+              <Button class="gh-auth-btn" @click="startGithubAuth" :disabled="ghActive || !githubConfigured">
+                {{ ghActive ? t('push.githubAuthAuthorizing') : t('push.githubAuthBtn') }}
+              </Button>
+              <div v-if="!githubConfigured" class="gh-warn">{{ t('push.githubAuthNotConfigured') }}</div>
+
+              <div v-if="ghStatus && ghStatus.type === 'waiting'" class="gh-waiting">
+                <div class="gh-code-label">{{ t('push.githubAuthCodeLabel') }}</div>
+                <div class="gh-code">{{ ghStatus.userCode }}</div>
+                <div class="gh-waiting-hint">{{ t('push.githubAuthWaiting') }}</div>
+                <Button variant="link" class="gh-open" @click="openGhPage">{{ t('push.githubAuthOpenPage') }}</Button>
+              </div>
+              <div v-else-if="ghStatus && ghStatus.type === 'authorized'" class="gh-ok">{{ t('push.githubAuthSuccess') }}</div>
+              <div v-else-if="ghStatus && ghStatus.type === 'denied'" class="gh-err">{{ t('push.githubAuthDenied') }}</div>
+              <div v-else-if="ghStatus && ghStatus.type === 'expired'" class="gh-err">{{ t('push.githubAuthExpired') }}</div>
+              <div v-else-if="ghStatus && ghStatus.type === 'error'" class="gh-err">{{ t('push.githubAuthError', { error: ghStatus.message }) }}</div>
+            </div>
+
+            <div class="auth-divider"><span>{{ t('push.orUseToken') }}</span></div>
+
+            <!-- 手动 token（兜底） -->
             <div class="grid gap-1.5">
               <Label for="username">{{ t('push.username') }}</Label>
               <Input id="username" v-model="username" :placeholder="t('push.usernamePlaceholder')" @keydown.enter="handleSaveAuthAndPush" />
@@ -305,6 +394,88 @@ init()
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* GitHub 设备授权流面板 */
+.gh-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gh-auth-btn {
+  width: 100%;
+}
+
+.gh-warn {
+  font-size: 11px;
+  color: var(--danger-color);
+  line-height: 1.5;
+}
+
+.gh-waiting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px dashed var(--border-medium);
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+}
+
+.gh-code-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gh-code {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--brand-primary);
+  font-family: Consolas, Monaco, monospace;
+  user-select: all;
+}
+
+.gh-waiting-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.gh-open {
+  align-self: flex-start;
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+
+.gh-ok {
+  font-size: 12px;
+  color: var(--color-add);
+}
+
+.gh-err {
+  font-size: 12px;
+  color: var(--danger-color);
+  word-break: break-word;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: var(--border-light);
 }
 
 .auth-url {

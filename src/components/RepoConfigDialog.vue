@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import { getRepoConfig, openFileDialog, setSshKeyPath, setUserIdentity } from '../api/git'
 import type { RepoConfig, SshKeyInfo } from '../api/git'
+import { getGitHubClientId, setGitHubClientId, isGitHubClientIdConfigured } from '../githubAuth'
 import {
   Dialog,
   DialogContent,
@@ -44,6 +45,14 @@ const savingSshKey = ref(false)
 const sshKeyMsg = ref('')
 const sshKeyErr = ref(false)
 
+// GitHub OAuth App Client ID（应用级，用于「跳转 GitHub 授权」推送）
+const githubOAuthAppsUrl = 'https://github.com/settings/developers'
+const editGitHubClientId = ref('')
+const savingClientId = ref(false)
+const clientIdMsg = ref('')
+const clientIdErr = ref(false)
+const githubClientIdConfigured = ref(false)
+
 onMounted(async () => {
   if (!props.open) return
   await load()
@@ -70,6 +79,12 @@ async function load() {
     sshKeyErr.value = false
     identityMsg.value = ''
     identityErr.value = false
+    // GitHub OAuth Client ID（应用级，回填已保存值；未配置则不显示占位常量）
+    const id = getGitHubClientId()
+    githubClientIdConfigured.value = isGitHubClientIdConfigured()
+    editGitHubClientId.value = githubClientIdConfigured.value ? id : ''
+    clientIdMsg.value = ''
+    clientIdErr.value = false
   } catch (e) {
     error.value = String(e)
   } finally {
@@ -120,6 +135,28 @@ async function onSaveSshKey() {
     sshKeyErr.value = true
   } finally {
     savingSshKey.value = false
+  }
+}
+
+// 保存 GitHub OAuth App 的 Client ID（应用级、持久化到 localStorage）
+async function onSaveGitHubClientId() {
+  savingClientId.value = true
+  clientIdMsg.value = ''
+  clientIdErr.value = false
+  try {
+    setGitHubClientId(editGitHubClientId.value)
+    githubClientIdConfigured.value = isGitHubClientIdConfigured()
+    if (!githubClientIdConfigured.value) {
+      editGitHubClientId.value = ''
+      clientIdMsg.value = t('repoConfig.githubClientIdCleared')
+    } else {
+      clientIdMsg.value = t('repoConfig.githubClientIdSaved')
+    }
+  } catch (e) {
+    clientIdMsg.value = String(e)
+    clientIdErr.value = true
+  } finally {
+    savingClientId.value = false
   }
 }
 
@@ -239,6 +276,33 @@ const tabs = computed(() => [
             <div class="field-row">
               <span class="field-label">credential.helper</span>
               <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
+            </div>
+
+            <!-- GitHub OAuth（应用级，用于「跳转 GitHub 授权」推送） -->
+            <div class="github-oauth-edit">
+              <div class="field-label">{{ t('repoConfig.githubClientId') }}</div>
+              <div class="ssh-key-input-row">
+                <input
+                  v-model="editGitHubClientId"
+                  class="ssh-key-input"
+                  :placeholder="t('repoConfig.githubClientIdPlaceholder')"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+                <Button class="ssh-key-btn" @click="onSaveGitHubClientId" :disabled="savingClientId">
+                  {{ t('repoConfig.save') }}
+                </Button>
+              </div>
+              <div class="ssh-key-hint">
+                {{ t('repoConfig.githubClientIdHint') }}
+                <a :href="githubOAuthAppsUrl" target="_blank" rel="noopener" class="inline-link">{{ t('repoConfig.githubClientIdLink') }}</a>
+              </div>
+              <div
+                v-if="githubClientIdConfigured"
+                class="client-id-status ok"
+              >{{ t('repoConfig.githubClientIdConfigured') }}</div>
+              <div v-else class="client-id-status warn">{{ t('repoConfig.githubClientIdNotConfigured') }}</div>
+              <div v-if="clientIdMsg" class="ssh-key-msg" :class="{ error: clientIdErr }">{{ clientIdMsg }}</div>
             </div>
 
             <!-- SSH 私钥路径（id_rsa）可编辑 -->
@@ -506,6 +570,39 @@ export default { name: 'RepoConfigDialog' }
   border: 1px solid var(--border-medium);
   border-radius: 8px;
   background: var(--bg-tertiary);
+}
+
+/* GitHub OAuth Client ID 编辑块 */
+.github-oauth-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+.github-oauth-edit .field-label {
+  min-width: 0;
+}
+.inline-link {
+  color: var(--brand-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--brand-primary);
+  cursor: pointer;
+}
+.inline-link:hover {
+  opacity: 0.8;
+}
+.client-id-status {
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.client-id-status.ok {
+  color: var(--success-color, #22c55e);
+}
+.client-id-status.warn {
+  color: #d97706;
 }
 .ssh-key-edit .field-label {
   min-width: 0;

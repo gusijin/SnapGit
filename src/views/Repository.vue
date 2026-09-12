@@ -934,7 +934,7 @@ async function handleCommitAndPush() {
     console.error('Push error:', e)
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
     if (/authentication|access denied|认证失败|terminal prompts disabled/i.test(msg)) {
-      // 认证失败：让用户在推送对话框里配置凭证
+      // 认证失败：让用户在推送对话框里配置凭证（直接进入认证模式，展示 GitHub 授权入口）
       pushDialogBranch.value = committedBranch
       showPushDialog.value = true
       showToast(t('repository.pushNeedsAuth'), 'error')
@@ -2293,6 +2293,7 @@ onBeforeUnmount(() => {
         :branches="branches"
         :current-branch="currentBranch"
         :initial-branch="pushDialogBranch || undefined"
+        :initial-auth-mode="true"
         @close="showPushDialog = false"
         @pushed="handlePushed"
         @pushing="(v: boolean) => { isPushing = v }"
