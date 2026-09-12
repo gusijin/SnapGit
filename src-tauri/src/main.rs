@@ -17,7 +17,7 @@ use tauri::menu::{
     CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
 };
 #[allow(unused_imports)]
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
+use tauri::{AppHandle, Emitter, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -99,6 +99,9 @@ fn return_repo(repo_path: &str, repo: git2::Repository) {
 /// spawn 控制台子进程 git.exe 时被分配一个控制台窗口并闪烁。
 /// 输出/错误仍可被父进程正常捕获，行为等价于后台运行。
 fn git_command() -> std::process::Command {
+    // creation_flags 仅在 Windows 编译；非 Windows 上 cmd 不会被可变借用，
+    // 用 cfg_attr 只在非 Windows 允许 unused_mut，避免 Windows 编译时缺 mut。
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = std::process::Command::new("git");
     #[cfg(windows)]
     cmd.creation_flags(0x08000000);
@@ -3604,7 +3607,7 @@ async fn open_edit_window(
         .min_inner_size(700.0, 500.0)
         .resizable(true)
         // Windows/Linux: 关闭系统标题栏，由前端 TitleBar.vue 自绘（跟随主题切换）。
-        // macOS: 保留系统标题栏（系统自动跟随 macOS 外观），让 traffic lights 显示正常。
+        // macOS 分支见下，改用 TitleBarStyle::Overlay 让内容撑满、交通灯浮层覆盖（无空白行）。
         .decorations(false)
         .initialization_script(&script);
 
@@ -3618,6 +3621,12 @@ async fn open_edit_window(
         .inner_size(1200.0, 800.0)
         .min_inner_size(700.0, 500.0)
         .resizable(true)
+        // macOS: Transparent 标题栏样式（原生透明标题栏，本身可拖拽），
+        // 用窗口背景色 (= 应用头部色 #e2e8f0) 染成与应用头部一致，视觉无缝；
+        // 不使用 Overlay 以免 fullsize 内容视图截走顶部事件、导致无法拖拽窗口。
+        .title_bar_style(TitleBarStyle::Transparent)
+        .hidden_title(true)
+        .background_color(tauri::window::Color::from((226, 232, 240, 255)))
         .initialization_script(&script);
 
         builder
@@ -3753,10 +3762,6 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let new_branch_item = MenuItem::with_id(app, "new-branch", "新建分支", true, None::<&str>)?;
     let checkout_branch_item = MenuItem::with_id(app, "checkout-branch", "切换分支", true, None::<&str>)?;
-    let merge_item = MenuItem::with_id(app, "merge", "合并分支", true, None::<&str>)?;
-
-    let show_wt_item = MenuItem::with_id(app, "show-working-tree", "工作区", true, None::<&str>)?;
-    let show_log_item = MenuItem::with_id(app, "show-log", "提交日志", true, None::<&str>)?;
     let toggle_submodules_item = CheckMenuItem::with_id(app, "toggle-submodules", "子模块", true, true, None::<&str>)?;
     let toggle_theme_item = CheckMenuItem::with_id(app, "toggle-theme", "深色主题", true, true, None::<&str>)?;
 
@@ -3856,6 +3861,31 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // 主窗口：macOS 保留系统标题栏（红黄绿交通灯），其余平台无边框 +
+            // 前端自定义标题栏（TitleBar.vue）。conf.json 不再定义此窗口，避免
+            // decorations:false 误把 macOS 交通灯也关掉（与编辑窗口保持一致的平台区分）。
+            // macOS 用 Transparent 标题栏样式：原生透明标题栏，本身可拖拽（无需前端拖拽区），
+            // 用窗口背景色 (= 应用头部色 #e2e8f0) 把原生标题栏染成与应用头部一致，视觉无缝。
+            // 不使用 Overlay：Overlay 的 fullsize 内容视图会把顶部事件截走、且 hidden_title 后
+            // 不响应拖拽，导致窗口无法拖动。
+            #[cfg(target_os = "macos")]
+            let _main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("SnapGit")
+                .inner_size(1200.0, 800.0)
+                .resizable(true)
+                .title_bar_style(TitleBarStyle::Transparent)
+                .hidden_title(true)
+                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
+                .build()?;
+
+            #[cfg(not(target_os = "macos"))]
+            let _main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("SnapGit")
+                .inner_size(1200.0, 800.0)
+                .resizable(true)
+                .decorations(false)
+                .build()?;
+
             // macOS: 使用系统原生菜单栏（显示在屏幕顶部）
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏
             #[cfg(target_os = "macos")]

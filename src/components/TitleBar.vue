@@ -62,11 +62,11 @@ async function closeWindow() {
 </script>
 
 <template>
-  <!-- macOS 保留系统标题栏（traffic lights），不显示自定义标题栏 -->
-  <div v-if="isMacOS" class="titlebar-spacer-mac" data-tauri-drag-region></div>
+  <!-- macOS：使用原生透明标题栏（Transparent 样式），交通灯由系统渲染、
+       且标题栏本身可拖拽，无需前端占位元素；应用内容直接排在原生标题栏下方。 -->
 
   <!-- Windows / Linux：自定义标题栏，跟随主题（颜色全部用 CSS 变量） -->
-  <div v-else class="titlebar">
+  <div v-if="!isMacOS" class="titlebar">
     <!-- 左侧：app 图标 + 应用名（可拖拽） -->
     <div class="titlebar-left" data-tauri-drag-region>
       <Code2 :size="14" class="titlebar-logo" />
@@ -191,13 +191,5 @@ async function closeWindow() {
 
 .titlebar-btn-close:active {
   background-color: #b91c1c;
-}
-
-/* ============ macOS 占位（让 traffic lights 区域可拖拽） ============ */
-.titlebar-spacer-mac {
-  height: 28px;
-  background-color: transparent;
-  -webkit-app-region: drag;
-  flex-shrink: 0;
 }
 </style>

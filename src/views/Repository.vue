@@ -1291,6 +1291,30 @@ const conflictFiles = computed(() =>
 )
 const showAddRemoteDialog = ref(false)
 
+// 首次/无仓库时的欢迎弹窗：未找到任何仓库时弹出，引导用户打开或扫描仓库
+const showWelcomeDialog = ref(false)
+
+watch(
+  () => ({
+    hasRepo: !!repoPath.value,
+    hasProjects: scannedProjects.value.length > 0,
+    scanning: isScanning.value,
+  }),
+  ({ hasRepo, hasProjects, scanning }) => {
+    if (scanning) {
+      showWelcomeDialog.value = false
+      return
+    }
+    if (hasRepo || hasProjects) {
+      showWelcomeDialog.value = false
+      return
+    }
+    // 只有在没有任何仓库、没有扫描结果、且不在扫描中时展示欢迎弹窗
+    showWelcomeDialog.value = true
+  },
+  { immediate: true }
+)
+
 // 推送成功反馈：工具栏推送按钮短暂显示"已推送"并隐藏 Tooltip
 const pushState = ref<'idle' | 'done'>('idle')
 let pushStateTimer: ReturnType<typeof setTimeout> | null = null
@@ -2327,18 +2351,40 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <!-- 无仓库时的空状态 -->
-    <div v-if="!repoPath && scannedProjects.length === 0 && !isScanning" class="empty-state-overlay">
-      <div class="empty-state-content">
-        <FolderOpen :size="72" class="empty-icon" />
-        <h2>{{ t('repository.emptyTitle') }}</h2>
-        <p class="empty-sub">{{ t('repository.emptySubtitle') }}</p>
-        <div class="empty-actions">
-          <button class="btn btn-primary" @click="handleOpenRepo">{{ t('repository.openRepoBtn') }}</button>
-          <button class="btn btn-secondary" @click="autoScanProjects">{{ t('repository.rescanBtn') }}</button>
+    <!-- 无仓库时的欢迎弹窗 -->
+    <Dialog v-model:open="showWelcomeDialog">
+      <DialogContent
+        class="welcome-dialog-content max-w-[420px] gap-5 p-6"
+        @interact-outside.prevent
+        @escape-key-down.prevent
+      >
+        <DialogHeader class="items-center gap-3 p-0 text-center">
+          <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+            <FolderOpen :size="36" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <DialogTitle class="text-lg">{{ t('repository.emptyTitle') }}</DialogTitle>
+            <DialogDescription class="text-sm text-muted-foreground">
+              {{ t('repository.emptySubtitle') }}
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+        <div class="flex flex-col gap-2 pt-1">
+          <Button class="w-full gap-2" @click="handleOpenRepo">
+            <FolderOpen :size="16" />
+            {{ t('repository.openRepoBtn') }}
+          </Button>
+          <Button variant="outline" class="w-full gap-2" :disabled="isScanning" @click="autoScanProjects">
+            <svg v-if="isScanning" class="mr-1 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span v-else>🔄</span>
+            {{ t('repository.rescanBtn') }}
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
 
     <!-- Toast 提示（成功等轻量反馈） -->
     <Teleport to="body">
@@ -2495,33 +2541,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-/* 空状态遮罩 */
-.empty-state-overlay {
-  position: fixed;
-  inset: 68px 0 0 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 50;
-}
-
-.empty-state-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 40px;
-  pointer-events: auto;
-}
-
-/* 空状态图标：lucide 线性图标，颜色走主题变量（不再依赖 emoji 的 font-size） */
-.empty-icon {
-  color: var(--text-muted);
-  opacity: 0.35;
-  line-height: 1;
-}
-
 /* "是否初始化为新仓库"对话框：左侧绿色问号圆圈 + 右侧文本（仿 TortoiseHg 风格）。
    颜色走主题变量：深色主题用深绿 + 半透明白边；浅色主题用浅绿 + 深边。 */
 .init-repo-row {
@@ -2559,25 +2578,6 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);
-}
-
-.empty-state-content h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 16px 0 0 0;
-}
-
-.empty-sub {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.empty-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 16px;
 }
 
 /* Toast 提示 */
@@ -2810,5 +2810,10 @@ onBeforeUnmount(() => {
   height: 14px;
   accent-color: var(--brand-primary);
   cursor: pointer;
+}
+
+/* 欢迎弹窗：未找到仓库时弹出，隐藏默认关闭按钮（必须引导用户打开/扫描仓库） */
+.welcome-dialog-content :deep(> button:last-child) {
+  display: none;
 }
 </style>

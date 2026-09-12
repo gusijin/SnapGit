@@ -27,16 +27,7 @@
     }
   },
   "app": {
-    "windows": [
-      {
-        "title": "SnapGit",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false
-      }
-    ]
+    "windows": []
   },
   "plugins": {}
 }
