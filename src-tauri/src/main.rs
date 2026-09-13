@@ -2165,24 +2165,38 @@ fn get_scan_directories() -> Vec<PathBuf> {
         .unwrap_or_else(|_| ".".to_string());
     let home_path = PathBuf::from(&home);
 
-    // 用户主目录下的常见开发目录（剔除 Desktop / Downloads 等非代码根：
-    // 这类目录体量巨大且无仓库意义，深度递归扫描会严重拖慢首屏）
-    let sub_dirs = [
+    // 通用开发目录（Windows / macOS / Linux 共有或近似通用）。
+    // 注：剔除 Desktop / Downloads / Library 等体量巨大且无仓库意义的目录，
+    // 深度递归扫描会严重拖慢首屏。
+    let common = [
         "workspace", "code", "repos", "projects",
         "opensource", "sandbox", "dev", "github",
         "gitee", "source",
+    ];
+
+    // 平台专属目录：Windows 用反斜杠子路径；macOS / Linux 用其惯例开发目录。
+    // macOS 上很多开发者把仓库放在 ~/Developer（Xcode 默认）、~/git、~/src、
+    // ~/Documents、~/Projects、~/Code 等；原实现只列了 Windows 风格目录，
+    // 导致 macOS 上候选目录全不存在、扫描结果为空（"不会自动扫描到仓库"）。
+    #[cfg(target_os = "windows")]
+    let platform = [
         "Documents\\site", "Documents\\projects",
         "Documents\\code", "Documents\\workspace",
     ];
+    #[cfg(not(target_os = "windows"))]
+    let platform = [
+        "Developer", "git", "src", "Projects", "Code",
+        "Repos", "Workspace", "Documents",
+    ];
 
-    for sub in &sub_dirs {
+    for sub in common.iter().chain(platform.iter()) {
         let p = home_path.join(sub);
         if p.exists() {
             dirs.push(p);
         }
     }
 
-    // 当前项目目录的上级
+    // 当前项目目录的上级（打开过仓库后，同级目录也很可能还有仓库）
     if let Ok(current) = std::env::current_dir() {
         if let Some(parent) = current.parent() {
             dirs.push(parent.to_path_buf());
