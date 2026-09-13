@@ -64,6 +64,7 @@ export type GitHubAuthStatus =
   | { type: 'authorized'; token: string }
   | { type: 'denied' }
   | { type: 'expired' }
+  | { type: 'notconfigured' }
   | { type: 'error'; message: string }
 
 function sleep(ms: number): Promise<void> {

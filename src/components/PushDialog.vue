@@ -55,7 +55,6 @@ const remoteUrl = ref('')
 const isSavingAuth = ref(false)
 
 // GitHub 设备授权流（Device Flow）：点按钮 → 跳浏览器授权 → 自动拿 token
-const githubConfigured = isGitHubClientIdConfigured()
 const ghActive = ref(false)
 const ghStatus = ref<GitHubAuthStatus | null>(null)
 const ghAbort = ref<AbortController | null>(null)
@@ -183,11 +182,11 @@ async function handleSaveAuthAndPush() {
 
 // GitHub 设备授权流：启动 → 轮询 → 成功后存凭证并重试推送
 function startGithubAuth() {
-  if (!githubConfigured) {
-    error.value = t('push.githubAuthNotConfigured')
+  if (ghActive.value) return
+  if (!isGitHubClientIdConfigured()) {
+    ghStatus.value = { type: 'notconfigured' }
     return
   }
-  if (ghActive.value) return
   ghActive.value = true
   ghStatus.value = null
   error.value = ''
@@ -300,10 +299,10 @@ init()
 
             <!-- GitHub 设备授权流（推荐，对应 SmartGit「跳转 GitHub 授权」） -->
             <div class="gh-auth">
-              <Button class="gh-auth-btn" @click="startGithubAuth" :disabled="ghActive || !githubConfigured">
+              <Button class="gh-auth-btn" @click="startGithubAuth" :disabled="ghActive">
                 {{ ghActive ? t('push.githubAuthAuthorizing') : t('push.githubAuthBtn') }}
               </Button>
-              <div v-if="!githubConfigured" class="gh-warn">{{ t('push.githubAuthNotConfigured') }}</div>
+              <div v-if="ghStatus && ghStatus.type === 'notconfigured'" class="gh-warn">{{ t('push.githubAuthNotConfigured') }}<span class="gh-config-hint">（仓库设置 → 认证与 SSH）</span></div>
 
               <div v-if="ghStatus && ghStatus.type === 'waiting'" class="gh-waiting">
                 <div class="gh-code-label">{{ t('push.githubAuthCodeLabel') }}</div>
