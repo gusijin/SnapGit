@@ -18,7 +18,9 @@ import {
   Loader2,
   Copy,
   CircleAlert,
+  Github,
 } from 'lucide-vue-next'
+import GitHubLoginDialog from './GitHubLoginDialog.vue'
 
 interface Props {
   currentBranch: string
@@ -61,6 +63,9 @@ const emit = defineEmits([
   'open-repo', 'commit', 'push', 'pull', 'branch', 'refresh',
   'show-working-tree', 'stash', 'checkout-branch',
 ])
+
+// GitHub 设备授权登录对话框开关（常驻按钮触发，不依赖是否打开仓库）
+const ghLoginOpen = ref(false)
 
 const hasRepo = computed(() => !!props.repositoryPath)
 
@@ -382,6 +387,22 @@ onBeforeUnmount(() => {
           <TooltipContent side="bottom">{{ t(tool.hintKey) }}</TooltipContent>
         </Tooltip>
 
+        <!-- 常驻：GitHub 设备授权登录（全局，不依赖是否打开仓库） -->
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="h-8 w-8"
+              :aria-label="t('toolbar.githubLogin')"
+              @click="ghLoginOpen = true"
+            >
+              <Github />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{{ t('toolbar.githubLoginHint') }}</TooltipContent>
+        </Tooltip>
+
         <Separator orientation="vertical" class="mx-1 h-5" />
 
         <Tooltip>
@@ -401,6 +422,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </TooltipProvider>
+
+  <!-- GitHub 设备授权登录对话框（常驻按钮触发） -->
+  <GitHubLoginDialog :open="ghLoginOpen" @update:open="ghLoginOpen = $event" />
 </template>
 
 <style scoped>

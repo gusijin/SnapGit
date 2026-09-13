@@ -77,6 +77,14 @@ export async function saveCredentials(repoPath: string, remoteName: string, user
   await invoke('save_credentials', { repoPath, remoteName, username, token })
 }
 
+/**
+ * 全局「登录 GitHub」：将 OAuth 设备流拿到的 access_token 存入 git 凭证库（github.com）。
+ * 之后任意 github.com 的 HTTPS 远端 push/fetch 都会自动复用，无需每次授权。
+ */
+export async function saveGitHubToken(token: string): Promise<void> {
+  await invoke('save_github_token', { token })
+}
+
 export async function checkoutBranch(repoPath: string, branchName: string, force?: boolean): Promise<void> {
   await invoke('checkout_branch', { repoPath, branchName, force: force ?? false })
 }

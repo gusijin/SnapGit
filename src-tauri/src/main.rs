@@ -1072,6 +1072,59 @@ async fn save_credentials(repo_path: String, remote_name: String, username: Stri
     .map_err(|e| format!("保存凭证失败: {}", e))?
 }
 
+/// 全局「登录 GitHub」：把 OAuth 设备流拿到的 access_token 存入 git 凭证库（针对 https://github.com）。
+/// 这样任意 github.com 的 HTTPS 远端在 push/fetch 时都能自动复用，无需每次推送都重新授权。
+/// 仅在尚未配置任何 credential.helper 时启用 store（明文存于 ~/.git-credentials，
+/// 与 save_credentials 的本地配置一致），避免覆盖用户已有的凭证助手（如 osxkeychain / GCM）。
+#[command]
+async fn save_github_token(token: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        // 若未配置任何 credential.helper，则启用 store（与 save_credentials 的本地配置同源）
+        let has_helper = git_command()
+            .arg("config")
+            .arg("--global")
+            .arg("--get")
+            .arg("credential.helper")
+            .output()
+            .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+            .unwrap_or(false);
+        if !has_helper {
+            let _ = git_command()
+                .arg("--global")
+                .arg("config")
+                .arg("credential.helper")
+                .arg("store")
+                .output();
+        }
+
+        let mut child = git_command()
+            .arg("credential")
+            .arg("approve")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("无法执行 git credential: {}", e))?;
+
+        if let Some(stdin) = child.stdin.as_mut() {
+            use std::io::Write;
+            write!(stdin, "url=https://github.com\n").ok();
+            write!(stdin, "username=x-access-token\n").ok();
+            write!(stdin, "password={}\n", token).ok();
+        }
+
+        let output = child.wait_with_output().map_err(|e| format!("等待失败: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("保存 GitHub 凭证失败: {}", stderr));
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("保存 GitHub 凭证失败: {}", e))?
+}
+
 #[command]
 async fn checkout_branch(repo_path: String, branch_name: String, force: Option<bool>) -> Result<()> {
     // 切换分支涉及大量阻塞 I/O（git checkout 外部进程），改为在 blocking 线程池执行，
@@ -3997,6 +4050,7 @@ fn main() {
             push,
             get_remote_url,
             save_credentials,
+            save_github_token,
             get_repo_config,
             checkout_branch,
             checkout_remote_branch,
