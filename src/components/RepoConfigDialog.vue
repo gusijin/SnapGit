@@ -1,10 +1,25 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight } from 'lucide-vue-next'
+import {
+  ChevronRight,
+  User,
+  GitBranch,
+  Key,
+  FileText,
+  Github,
+  Network,
+  Link2,
+  Terminal,
+  Info,
+  Check,
+  AlertCircle,
+  RefreshCw,
+  CloudOff,
+} from 'lucide-vue-next'
 import { getRepoConfig, openFileDialog, setSshKeyPath, setUserIdentity } from '../api/git'
 import type { RepoConfig, SshKeyInfo } from '../api/git'
-import { getGitHubClientId, setGitHubClientId, isGitHubClientIdConfigured } from '../githubAuth'
+import { getGitHubClientId, setGitHubClientId, isGitHubClientIdConfigured, isGitHubRemoteUrl } from '../githubAuth'
 import {
   Dialog,
   DialogContent,
@@ -160,6 +175,13 @@ async function onSaveGitHubClientId() {
   }
 }
 
+// OAuth Client ID 是 GitHub 专属的应用级配置：当前仓库的远端里没有 github.com 时不展示该块
+const isGitHubRepo = computed(() =>
+  (cfg.value?.remotes ?? []).some(
+    rm => isGitHubRemoteUrl(rm.fetch_url) || isGitHubRemoteUrl(rm.push_url),
+  ),
+)
+
 // 把 ssh_keys 按"私钥 + 公钥"两两配对
 const sshKeyPairs = computed(() => {
   if (!cfg.value) return [] as { private?: SshKeyInfo; public?: SshKeyInfo }[]
@@ -174,10 +196,10 @@ const sshKeyPairs = computed(() => {
 
 // tab 定义（图标 + key），顺序即展示顺序
 const tabs = computed(() => [
-  { key: 'basic' as TabKey, label: t('repoConfig.tabBasic') },
-  { key: 'remotes' as TabKey, label: t('repoConfig.tabRemotes') },
-  { key: 'auth' as TabKey, label: t('repoConfig.tabAuth') },
-  { key: 'config' as TabKey, label: t('repoConfig.tabConfig') },
+  { key: 'basic' as TabKey, label: t('repoConfig.tabBasic'), icon: User },
+  { key: 'remotes' as TabKey, label: t('repoConfig.tabRemotes'), icon: GitBranch },
+  { key: 'auth' as TabKey, label: t('repoConfig.tabAuth'), icon: Key },
+  { key: 'config' as TabKey, label: t('repoConfig.tabConfig'), icon: FileText },
 ])
 </script>
 
@@ -191,11 +213,17 @@ const tabs = computed(() => [
         </DialogDescription>
       </DialogHeader>
 
-      <div v-if="loading" class="loading">{{ t('repoConfig.loading') }}</div>
-      <div v-else-if="error" class="error-message">{{ error }}</div>
+      <div v-if="loading" class="state-box">
+        <RefreshCw :size="20" class="spin" />
+        <span>{{ t('repoConfig.loading') }}</span>
+      </div>
+      <div v-else-if="error" class="state-box error">
+        <AlertCircle :size="20" />
+        <span>{{ error }}</span>
+      </div>
       <div v-else-if="cfg" class="config-layout">
 
-        <!-- 顶部 tab 栏 -->
+        <!-- 顶部 tab 栏（图标 + 文字） -->
         <div class="tab-bar">
           <button
             v-for="tab in tabs"
@@ -205,6 +233,7 @@ const tabs = computed(() => [
             @click="activeTab = tab.key"
             type="button"
           >
+            <component :is="tab.icon" :size="15" class="tab-icon" />
             <span class="tab-label">{{ tab.label }}</span>
           </button>
         </div>
@@ -214,9 +243,17 @@ const tabs = computed(() => [
 
           <!-- 基本信息 -->
           <section v-show="activeTab === 'basic'" class="cfg-section">
-            <div class="field-stack">
-              <div class="field-row edit-row">
-                <span class="field-label">user.name</span>
+            <div class="group-title">
+              <User :size="13" class="group-icon" />
+              <span>{{ t('repoConfig.sectionIdentity') }}</span>
+            </div>
+
+            <div class="card">
+              <div class="field-edit">
+                <label class="field-label">
+                  {{ t('repoConfig.identityName') }}
+                  <code class="field-key">user.name</code>
+                </label>
                 <input
                   v-model="editName"
                   class="field-input"
@@ -225,8 +262,11 @@ const tabs = computed(() => [
                   autocomplete="off"
                 />
               </div>
-              <div class="field-row edit-row">
-                <span class="field-label">user.email</span>
+              <div class="field-edit">
+                <label class="field-label">
+                  {{ t('repoConfig.identityEmail') }}
+                  <code class="field-key">user.email</code>
+                </label>
                 <input
                   v-model="editEmail"
                   class="field-input"
@@ -235,23 +275,38 @@ const tabs = computed(() => [
                   autocomplete="off"
                 />
               </div>
-              <div class="edit-actions">
-                <Button class="ssh-key-btn" @click="onSaveIdentity" :disabled="savingIdentity">
+              <div class="card-actions">
+                <Button class="action-btn" @click="onSaveIdentity" :disabled="savingIdentity">
                   {{ t('repoConfig.save') }}
                 </Button>
-                <span v-if="identityMsg" class="ssh-key-msg" :class="{ error: identityErr }">{{ identityMsg }}</span>
+                <span v-if="identityMsg" class="msg" :class="{ error: identityErr }">
+                  <Check v-if="!identityErr" :size="13" class="msg-icon" />
+                  {{ identityMsg }}
+                </span>
               </div>
-              <div class="ssh-key-hint">{{ t('repoConfig.identityHint') }}</div>
+            </div>
+
+            <div class="hint">
+              <Info :size="13" class="hint-icon" />
+              <span>{{ t('repoConfig.identityHint') }}</span>
             </div>
           </section>
 
           <!-- 远程仓库 -->
           <section v-show="activeTab === 'remotes'" class="cfg-section">
-            <div v-if="cfg.remotes.length === 0" class="empty-tip">
-              {{ t('repoConfig.noRemotes') }}
+            <div class="group-title">
+              <GitBranch :size="13" class="group-icon" />
+              <span>{{ t('repoConfig.sectionRemotes') }}</span>
             </div>
-            <div v-for="rm in cfg.remotes" :key="rm.name" class="remote-card">
+
+            <div v-if="cfg.remotes.length === 0" class="empty-state">
+              <CloudOff :size="30" class="empty-icon" />
+              <span>{{ t('repoConfig.noRemotes') }}</span>
+            </div>
+
+            <div v-for="rm in cfg.remotes" :key="rm.name" class="card remote-card">
               <div class="remote-head">
+                <Network :size="15" class="remote-icon" />
                 <span class="remote-name">{{ rm.name }}</span>
                 <span class="remote-type-badge">{{
                   rm.fetch_url.startsWith('http') ? 'HTTPS' :
@@ -259,28 +314,43 @@ const tabs = computed(() => [
                   rm.fetch_url.startsWith('git@') ? 'SSH' : t('repoConfig.localType')
                 }}</span>
               </div>
-              <div class="field-row">
-                <span class="field-label">Fetch URL</span>
-                <code class="field-value">{{ rm.fetch_url || '—' }}</code>
+              <div class="url-row">
+                <Link2 :size="13" class="url-icon" />
+                <span class="url-label">{{ t('repoConfig.fetchUrl') }}</span>
+                <code class="url-value">{{ rm.fetch_url || '—' }}</code>
               </div>
-              <div v-if="rm.push_url && rm.push_url !== rm.fetch_url" class="field-row">
-                <span class="field-label">Push URL</span>
-                <code class="field-value">{{ rm.push_url }}</code>
+              <div v-if="rm.push_url && rm.push_url !== rm.fetch_url" class="url-row">
+                <Link2 :size="13" class="url-icon" />
+                <span class="url-label">{{ t('repoConfig.pushUrl') }}</span>
+                <code class="url-value">{{ rm.push_url }}</code>
               </div>
             </div>
           </section>
 
           <!-- 认证与 SSH -->
           <section v-show="activeTab === 'auth'" class="cfg-section">
+            <div class="group-title">
+              <Key :size="13" class="group-icon" />
+              <span>{{ t('repoConfig.authMethodsTitle') }}</span>
+            </div>
 
-            <div class="field-row">
+            <!-- credential.helper -->
+            <div class="field-inline">
               <span class="field-label">credential.helper</span>
               <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
             </div>
 
-            <!-- GitHub OAuth（应用级，用于「跳转 GitHub 授权」推送） -->
-            <div class="github-oauth-edit">
-              <div class="field-label">{{ t('repoConfig.githubClientId') }}</div>
+            <!-- GitHub OAuth（应用级，用于「跳转 GitHub 授权」推送）；仅 github.com 远端才显示 -->
+            <div v-if="isGitHubRepo" class="card gh-oauth-card">
+              <div class="card-head">
+                <span class="card-head-title">
+                  <Github :size="14" class="head-icon" />
+                  {{ t('repoConfig.githubClientId') }}
+                </span>
+                <span class="status-badge" :class="githubClientIdConfigured ? 'ok' : 'warn'">
+                  {{ githubClientIdConfigured ? t('repoConfig.configuredBadge') : t('repoConfig.notConfiguredBadge') }}
+                </span>
+              </div>
               <div class="ssh-key-input-row">
                 <input
                   v-model="editGitHubClientId"
@@ -297,17 +367,25 @@ const tabs = computed(() => [
                 {{ t('repoConfig.githubClientIdHint') }}
                 <a :href="githubOAuthAppsUrl" target="_blank" rel="noopener" class="inline-link">{{ t('repoConfig.githubClientIdLink') }}</a>
               </div>
-              <div
-                v-if="githubClientIdConfigured"
-                class="client-id-status ok"
-              >{{ t('repoConfig.githubClientIdConfigured') }}</div>
-              <div v-else class="client-id-status warn">{{ t('repoConfig.githubClientIdNotConfigured') }}</div>
-              <div v-if="clientIdMsg" class="ssh-key-msg" :class="{ error: clientIdErr }">{{ clientIdMsg }}</div>
+              <div v-if="clientIdMsg" class="ssh-key-msg" :class="{ error: clientIdErr }">
+                <Check v-if="!clientIdErr" :size="13" class="msg-icon" />{{ clientIdMsg }}
+              </div>
+            </div>
+            <div v-else class="info-box">
+              <Info :size="15" class="info-icon" />
+              <span>{{ t('repoConfig.githubNotApplicable') }}</span>
             </div>
 
-            <!-- SSH 私钥路径（id_rsa）可编辑 -->
-            <div class="ssh-key-edit">
-              <div class="field-label">{{ t('repoConfig.sshKeyPath') }}</div>
+            <!-- 本地 SSH 密钥 -->
+            <div class="group-title sub">
+              <Key :size="13" class="group-icon" />
+              <span>{{ t('repoConfig.sshKeysTitle') }}</span>
+            </div>
+
+            <div class="card ssh-card">
+              <div class="card-head">
+                <span class="card-head-title">{{ t('repoConfig.sshKeyPath') }}</span>
+              </div>
               <div class="ssh-key-input-row">
                 <input
                   v-model="editSshKeyPath"
@@ -327,44 +405,43 @@ const tabs = computed(() => [
               <div v-if="sshKeyMsg" class="ssh-key-msg" :class="{ error: sshKeyErr }">{{ sshKeyMsg }}</div>
             </div>
 
-            <div v-if="cfg.core_ssh_command || cfg.git_ssh_command_env || cfg.ssh_auth_sock_env" class="env-box">
-              <div v-if="cfg.core_ssh_command" class="field-row">
+            <div v-if="cfg.core_ssh_command || cfg.git_ssh_command_env || cfg.ssh_auth_sock_env" class="card env-card">
+              <div class="card-head">
+                <span class="card-head-title">
+                  <Terminal :size="14" class="head-icon" />
+                  {{ t('repoConfig.envTitle') }}
+                </span>
+              </div>
+              <div v-if="cfg.core_ssh_command" class="field-inline">
                 <span class="field-label">core.sshCommand</span>
                 <code class="field-value mono">{{ cfg.core_ssh_command }}</code>
               </div>
-              <div v-if="cfg.git_ssh_command_env" class="field-row">
+              <div v-if="cfg.git_ssh_command_env" class="field-inline">
                 <span class="field-label">GIT_SSH_COMMAND (env)</span>
                 <code class="field-value mono">{{ cfg.git_ssh_command_env }}</code>
               </div>
-              <div v-if="cfg.ssh_auth_sock_env" class="field-row">
+              <div v-if="cfg.ssh_auth_sock_env" class="field-inline">
                 <span class="field-label">SSH_AUTH_SOCK (env)</span>
                 <code class="field-value mono">{{ cfg.ssh_auth_sock_env }}</code>
               </div>
             </div>
 
-            <div class="ssh-grid">
+            <div v-if="sshKeyPairs.length" class="ssh-grid">
               <div v-for="pair in sshKeyPairs" :key="pair.private?.path" class="ssh-key-card">
                 <div class="ssh-name">
+                  <Key :size="13" class="ssh-name-icon" />
                   {{ pair.private ? pair.private.path.split(/[/\\]/).pop() : '' }}
                 </div>
                 <div class="ssh-status">
-                  <span
-                    class="status-dot"
-                    :class="pair.private?.exists ? 'ok' : 'missing'"
-                  />
+                  <span class="status-dot" :class="pair.private?.exists ? 'ok' : 'missing'" />
                   {{ pair.private?.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
                 </div>
                 <div v-if="pair.public" class="ssh-status subtle">
                   {{ t('repoConfig.publicKey') }}
-                  <span
-                    class="status-dot"
-                    :class="pair.public.exists ? 'ok' : 'missing'"
-                  />
+                  <span class="status-dot" :class="pair.public.exists ? 'ok' : 'missing'" />
                   {{ pair.public.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
                 </div>
-                <div class="ssh-path" :title="pair.private?.path">
-                  {{ pair.private?.path }}
-                </div>
+                <div class="ssh-path" :title="pair.private?.path">{{ pair.private?.path }}</div>
               </div>
             </div>
           </section>
@@ -416,14 +493,24 @@ export default { name: 'RepoConfigDialog' }
   word-break: break-all;
 }
 
-.loading,
-.error-message {
-  font-size: 12.5px;
-  padding: 12px 0;
-  text-align: center;
+/* 加载 / 错误 状态 */
+.state-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
 }
-.error-message {
+.state-box.error {
   color: var(--danger-color);
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* tab 布局：顶部横排 tab + 下方内容 */
@@ -435,22 +522,30 @@ export default { name: 'RepoConfigDialog' }
 }
 .tab-bar {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border-light);
+  gap: 2px;
+  border-bottom: 1px solid var(--border-medium);
   padding-bottom: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
 }
 .tab-item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  padding: 6px 14px;
-  font-size: 12.5px;
-  border: none;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .tab-item:hover {
   background: var(--bg-tertiary);
@@ -459,6 +554,10 @@ export default { name: 'RepoConfigDialog' }
   background: var(--brand-bg);
   color: var(--brand-primary);
   font-weight: 600;
+  border-color: var(--brand-bg);
+}
+.tab-icon {
+  flex-shrink: 0;
 }
 .tab-content {
   flex: 1;
@@ -480,69 +579,79 @@ export default { name: 'RepoConfigDialog' }
   padding: 8px 0;
 }
 
-/* 远程 */
-.remote-card {
-  border: 1px solid var(--border-medium);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--bg-tertiary);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.remote-head {
+/* 分组标题（带 lucide 图标的轻量小标题，呼应面板标题规范） */
+.group-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-.remote-name {
+  gap: 6px;
+  font-size: 11px;
   font-weight: 600;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-.remote-type-badge {
-  font-size: 10.5px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  background: var(--brand-bg);
-  color: var(--brand-primary);
-  font-weight: 500;
-}
-
-.field-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 12.5px;
-}
-.field-label {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-tertiary);
+  padding-top: 2px;
+}
+.group-title.sub {
+  margin-top: 2px;
+}
+.group-icon {
+  color: var(--brand-primary);
   flex-shrink: 0;
-  min-width: 110px;
-}
-.field-value {
-  color: var(--text-primary);
-  word-break: break-all;
-}
-.field-value.mono {
-  font-family: Consolas, Monaco, monospace;
 }
 
-.field-stack {
+/* 通用卡片 */
+.card {
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+.card-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.head-icon {
+  color: var(--brand-primary);
 }
 
 /* 基本信息编辑行 */
-.edit-row {
+.field-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.field-label {
+  display: inline-flex;
   align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.field-key {
+  font-family: Consolas, Monaco, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 0 5px;
+  border-radius: 4px;
 }
 .field-input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 6px 9px;
   font-size: 12px;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -554,68 +663,140 @@ export default { name: 'RepoConfigDialog' }
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 2px var(--brand-bg);
 }
-.edit-actions {
+.card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 2px;
 }
-
-/* SSH 私钥路径编辑 */
-.ssh-key-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
+.action-btn {
+  flex-shrink: 0;
 }
 
-/* GitHub OAuth Client ID 编辑块 */
-.github-oauth-edit {
+/* 提示 / 消息 */
+.hint,
+.ssh-key-hint {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
 }
-.github-oauth-edit .field-label {
-  min-width: 0;
-}
-.inline-link {
+.hint-icon {
   color: var(--brand-primary);
-  text-decoration: none;
-  border-bottom: 1px solid var(--brand-primary);
-  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
-.inline-link:hover {
-  opacity: 0.8;
-}
-.client-id-status {
+.msg,
+.ssh-key-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11.5px;
+  color: var(--color-add, #22c55e);
+}
+.msg.error,
+.ssh-key-msg.error {
+  color: var(--danger-color, #ef4444);
+}
+.msg-icon {
+  flex-shrink: 0;
+}
+
+/* 行内字段（credential.helper / env 注入） */
+.field-inline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.field-inline .field-label {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.field-value {
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.field-value.mono {
+  font-family: Consolas, Monaco, monospace;
+}
+
+/* 远程卡片 */
+.remote-card {
+  gap: 8px;
+}
+.remote-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-icon {
+  color: var(--brand-primary);
+  flex-shrink: 0;
+}
+.remote-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.remote-type-badge {
+  font-size: 10.5px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--brand-bg);
+  color: var(--brand-primary);
   font-weight: 500;
 }
-.client-id-status.ok {
-  color: var(--success-color, #22c55e);
+.url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
 }
-.client-id-status.warn {
-  color: #d97706;
+.url-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
-.ssh-key-edit .field-label {
-  min-width: 0;
+.url-label {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  min-width: 56px;
 }
+.url-value {
+  color: var(--text-primary);
+  word-break: break-all;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 11.5px;
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 0;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+.empty-icon {
+  opacity: 0.5;
+}
+
+/* GitHub OAuth / SSH 私钥 输入框行 */
 .ssh-key-input-row {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
 }
 .ssh-key-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 6px 9px;
   font-size: 12px;
   font-family: Consolas, Monaco, monospace;
   color: var(--text-primary);
@@ -631,29 +812,53 @@ export default { name: 'RepoConfigDialog' }
 .ssh-key-btn {
   flex-shrink: 0;
 }
-.ssh-key-hint {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.5;
+.inline-link {
+  color: var(--brand-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--brand-primary);
+  cursor: pointer;
 }
-.ssh-key-msg {
-  font-size: 11.5px;
-  color: var(--success-color, #22c55e);
-}
-.ssh-key-msg.error {
-  color: var(--danger-color, #ef4444);
+.inline-link:hover {
+  opacity: 0.8;
 }
 
-.env-box {
+/* 状态徽章（标题右侧：已配置 / 未配置） */
+.status-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.status-badge.ok {
+  background: var(--bg-add);
+  color: var(--color-add);
+}
+.status-badge.warn {
+  background: var(--bg-mod);
+  color: var(--color-mod);
+}
+
+/* info 提示框（非 github 源时替代 OAuth 配置块） */
+.info-box {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--bg-tertiary);
   border: 1px dashed var(--border-medium);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.info-icon {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
+/* SSH 密钥网格 */
 .ssh-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -669,12 +874,19 @@ export default { name: 'RepoConfigDialog' }
   display: flex;
   flex-direction: column;
   gap: 3px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
 }
 .ssh-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
   font-size: 12.5px;
   color: var(--text-primary);
+}
+.ssh-name-icon {
+  color: var(--brand-primary);
+  flex-shrink: 0;
 }
 .ssh-status {
   display: flex;
@@ -694,8 +906,8 @@ export default { name: 'RepoConfigDialog' }
   flex-shrink: 0;
 }
 .status-dot.ok {
-  background: var(--success-color, #22c55e);
-  box-shadow: 0 0 0 2px var(--success-bg, #22c55e22);
+  background: var(--color-add, #22c55e);
+  box-shadow: 0 0 0 2px var(--bg-add, #22c55e22);
 }
 .status-dot.missing {
   background: var(--danger-color, #ef4444);
@@ -741,7 +953,7 @@ export default { name: 'RepoConfigDialog' }
   gap: 2px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   border: 1px dashed var(--border-medium);
   max-height: 220px;
   overflow-y: auto;
@@ -752,6 +964,7 @@ export default { name: 'RepoConfigDialog' }
   display: flex;
   gap: 4px;
   line-height: 1.5;
+  flex-wrap: wrap;
 }
 .raw-key {
   color: var(--brand-primary);
