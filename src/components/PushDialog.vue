@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRemotes, getUpstream, pushChanges, saveCredentials, getRemoteUrl } from '../api/git'
-import { startGitHubDeviceAuth, isGitHubClientIdConfigured, type GitHubAuthStatus } from '../githubAuth'
+import { startGitHubDeviceAuth, isGitHubClientIdConfigured, isGitHubRemoteUrl, type GitHubAuthStatus } from '../githubAuth'
 import { open } from '@tauri-apps/plugin-shell'
 import type { Branch } from '../types'
 import {
@@ -65,17 +65,28 @@ const selectedBranch = computed(() =>
   localBranches.value.find(b => b.name === localBranch.value) || null
 )
 
+/** 当前远端是不是 GitHub：只有 github.com 及其子域才给「GitHub 授权」入口 */
+const isGitHubRemote = computed(() => isGitHubRemoteUrl(remoteUrl.value))
+
+/** 拉取当前选中远端的 URL（用于展示 + 判定是否 GitHub） */
+async function loadRemoteUrl() {
+  if (!remote.value) return
+  try {
+    remoteUrl.value = await getRemoteUrl(props.repoPath, remote.value)
+  } catch {
+    remoteUrl.value = ''
+  }
+}
+
+// 切换远端后旧 URL 失效，清空以免误判成 GitHub
+watch(remote, () => {
+  remoteUrl.value = ''
+})
+
 async function init() {
   localBranch.value = props.initialBranch || props.currentBranch
-  // 认证失败后直接打开对话框时，预置认证模式并预取远程 URL 用于展示
-  if (props.initialAuthMode) {
-    authMode.value = true
-    if (remote.value) {
-      try {
-        remoteUrl.value = await getRemoteUrl(props.repoPath, remote.value)
-      } catch {}
-    }
-  }
+  // 认证失败后直接打开对话框时，预置认证模式（远程 URL 要等远端确定后再取）
+  if (props.initialAuthMode) authMode.value = true
   loading.value = true
   try {
     const [remoteList, upstream] = await Promise.all([
@@ -99,6 +110,8 @@ async function init() {
   } finally {
     loading.value = false
   }
+  // 远端已确定，取 URL 用于展示并判定是否 GitHub
+  if (authMode.value) await loadRemoteUrl()
 }
 
 async function onLocalBranchChange() {
@@ -150,9 +163,7 @@ async function handlePush() {
     const msg = String(e)
     error.value = msg
     if (isAuthError(msg)) {
-      try {
-        remoteUrl.value = await getRemoteUrl(props.repoPath, remote.value)
-      } catch {}
+      await loadRemoteUrl()
       authMode.value = true
     }
   } finally {
@@ -182,7 +193,8 @@ async function handleSaveAuthAndPush() {
 
 // GitHub 设备授权流：启动 → 轮询 → 成功后存凭证并重试推送
 function startGithubAuth() {
-  if (ghActive.value) return
+  // 非 GitHub 远端（GitLab / Gitee / 自建等）不给设备授权入口
+  if (ghActive.value || !isGitHubRemote.value) return
   if (!isGitHubClientIdConfigured()) {
     ghStatus.value = { type: 'notconfigured' }
     return
@@ -297,8 +309,8 @@ init()
             <div class="auth-title">{{ t('push.authTitle') }}</div>
             <div v-if="remoteUrl" class="auth-url">{{ remoteUrl }}</div>
 
-            <!-- GitHub 设备授权流（推荐，对应 SmartGit「跳转 GitHub 授权」） -->
-            <div class="gh-auth">
+            <!-- GitHub 设备授权流（推荐）：仅当远端是 github.com 时才显示 -->
+            <div v-if="isGitHubRemote" class="gh-auth">
               <Button class="gh-auth-btn" @click="startGithubAuth" :disabled="ghActive">
                 {{ ghActive ? t('push.githubAuthAuthorizing') : t('push.githubAuthBtn') }}
               </Button>
@@ -316,7 +328,7 @@ init()
               <div v-else-if="ghStatus && ghStatus.type === 'error'" class="gh-err">{{ t('push.githubAuthError', { error: ghStatus.message }) }}</div>
             </div>
 
-            <div class="auth-divider"><span>{{ t('push.orUseToken') }}</span></div>
+            <div v-if="isGitHubRemote" class="auth-divider"><span>{{ t('push.orUseToken') }}</span></div>
 
             <!-- 手动 token（兜底） -->
             <div class="grid gap-1.5">

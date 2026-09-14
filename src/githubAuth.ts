@@ -48,6 +48,35 @@ export function setGitHubClientId(id: string): void {
 export const isGitHubClientIdConfigured = (): boolean =>
   githubClientId !== '' && githubClientId !== DEFAULT_CLIENT_ID
 
+/**
+ * 从远端 URL 里提取主机名，兼容各种写法：
+ *   https://github.com/u/r.git | http://... | ssh://git@github.com/u/r.git | git@github.com:u/r.git
+ * 提取失败返回空串。
+ */
+function extractHost(url: string): string {
+  const s = (url || '').trim()
+  if (!s) return ''
+  // scp-like 语法必须优先处理，否则 host:path 会被 URL 解析成端口/协议
+  const scp = s.match(/^[a-z0-9._~+-]+@([^:/]+):/i)
+  if (scp) return scp[1].toLowerCase()
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`
+  try {
+    return new URL(withScheme).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 判断远端是否为 GitHub。仅认 github.com 及其子域（gist.github.com 等）。
+ * GitHub Enterprise 自建域名无法从 URL 推断，一律按非 GitHub 处理（不给设备授权入口）。
+ */
+export function isGitHubRemoteUrl(url: string): boolean {
+  const host = extractHost(url)
+  if (!host) return false
+  return host === 'github.com' || host.endsWith('.github.com')
+}
+
 const DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 
