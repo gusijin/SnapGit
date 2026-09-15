@@ -66,6 +66,9 @@ const branches = ref<Branch[]>([])
 // 分支列表是否已加载完成：用于区分「加载中」与「真的游离 HEAD」，避免首屏误报
 const branchListReady = ref(false)
 const fileStatuses = ref<FileStatus[]>([])
+// 变更文件扫描中：分阶段加载把 git status 推到分支/提交日志之后，
+// 期间文件列表面板显示「正在扫描变更文件…」而非误报「工作区干净」
+const fileStatusLoading = ref(false)
 const stashes = ref<StashEntry[]>([])
 
 // 工作区状态弹窗所需数据
@@ -96,6 +99,11 @@ let unwatchFs: (() => void) | null = null
 let fsRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let autoRefreshInFlight = false // 单飞标记：同一时刻只允许一次自动刷新在执行
 let autoRefreshPending = false // 刷新执行期间的新触发合并为一次补跑
+// 首屏就绪门闩：loadRepoData 的「分支+提交日志」关键路径完成前，抑制一切
+// 自动刷新（窗口 focus 兜底 / fs 事件防抖），并推迟子模块面板挂载
+//（list_submodules 会跑多个 git 子进程 + 逐子模块 status 扫描，很重），
+// 避免与首屏抢 IO。首屏完成后阶段 3 本来就会扫一次 getFileStatus，抑制期间的变化不会丢。
+const firstScreenReady = ref(false)
 let diffRequestSeq = 0 // 防止旧的 diff 异步请求覆盖新结果
 const diffLoading = ref(false) // 差异面板加载状态（大文件 diff 计算耗时）
 let diffLoadingTimer: ReturnType<typeof setTimeout> | null = null
@@ -528,6 +536,10 @@ async function loadRepoData() {
   if (!repoPath.value) return
   // 固定本次加载的目标路径：异步回调里用它做「期间是否已切库」校验，避免旧仓库数据覆盖新仓库
   const path = repoPath.value
+  // 关闸：首屏关键路径（分支+提交日志）完成前，抑制窗口 focus / fs 事件触发的
+  // 自动 git status 扫描、推迟子模块面板挂载，不与首屏抢 IO
+  //（阶段 3 本来就会扫一次全量，抑制期间的外部变化不会丢）
+  firstScreenReady.value = false
   // 切库统一：先清空旧仓库的所有面板数据，避免数据错位/残留。
   // （刚 init 的空仓库理论上不会崩，但作为防御性兜底，所有路径先清后拉）
   commits.value = []
@@ -541,9 +553,10 @@ async function loadRepoData() {
   noMoreCommits.value = false
   loadingMoreCommits.value = false
   fileStatuses.value = []
-  perfMark('loadRepoData 开始（发出各波次 git 请求）')
+  fileStatusLoading.value = true
+  perfMark('loadRepoData 开始（分阶段：分支/提交日志优先，变更文件最后）')
   try {
-    // ── 第一波（最轻、最优先）：当前分支名。仅一次轻量 HEAD 读取，乐观填充，
+    // ── 阶段 1（最轻、最优先）：当前分支名。仅一次轻量 HEAD 读取，乐观填充，
     //    不等任何重活，让工具栏/标题栏立刻显示真实分支名 ──
     getCurrentBranch(path)
       .then((name) => {
@@ -552,42 +565,57 @@ async function loadRepoData() {
       })
       .catch(() => {})
 
-    // ── 第二波（首屏最高优先级）：分支列表。先于重量级的 git status 与全量 ahead/behind 发出，
-    //    让分支面板尽快出现；回来即以列表校准当前分支 ──
-    getBranches(path, false)
+    // ── 阶段 2（首屏关键路径）：分支列表 + 提交日志。
+    //    两者并发发出（GIT_LOCK 读锁可共享，互不阻塞），但下方 await 屏障确保
+    //    它们都就绪后，才放行阶段 3 的重量级变更文件扫描——严格实现加载优先级：
+    //    分支 → 提交日志 → 变更文件 → 查看差异。
+    //    （旧实现只把重活丢进 requestIdleCallback，但等待 IPC 时主线程空闲，
+    //     idle 回调会立即触发，变更文件实际仍与分支/提交抢跑，故改为显式屏障。） ──
+    const branchesReady = getBranches(path, false)
       .then((data) => {
         if (repoPath.value !== path) return
         branches.value = data
         branchListReady.value = true
         currentBranch.value = data.find(b => b.is_current)?.name || currentBranch.value
-        perfMark(`★ 分支列表就绪（${data.length} 个分支，首屏关键路径完成）`)
+        perfMark(`★ 分支列表就绪（${data.length} 个分支）`)
       })
       .catch(() => { if (repoPath.value === path) branchListReady.value = true })
 
-    // ── 第三波：提交历史。首屏需要，但与分支错峰，不与第一批 IO 争抢 ──
-    getCommits(path, 50)
+    const commitsReady = getCommits(path, 50)
       .then((data) => {
         if (repoPath.value !== path) return
         commits.value = data
         noMoreCommits.value = false
         loadingMoreCommits.value = false
-        perfMark(`提交历史就绪（${data.length} 条）`)
+        perfMark(`★ 提交日志就绪（${data.length} 条）`)
       })
       .catch(() => {})
 
-    // ── 第四波（延后到首屏之后）：重量级 / 非首屏关键任务。
-    //    启动瞬间若一次性并发 5 个 git 操作，会争抢磁盘与 CPU，反而拖慢分支显示。
-    //    这里等首屏「分支 + 提交」先发出后，再跑最重的 git status 全量扫描、
-    //    全部分支 ahead/behind、stash 列表与上游跟踪信息。 ──
+    // 屏障：等分支 + 提交日志都回来，首屏关键路径完成，再放行变更文件等重活。
+    // 兜底：若 IPC 异常导致屏障长时间不返回，5 秒后强制开门，
+    // 避免 firstScreenReady 永久为 false 而彻底抑制自动刷新（宁可慢，不可卡死）。
+    await Promise.race([
+      Promise.all([branchesReady, commitsReady]),
+      new Promise((r) => setTimeout(r, 5000)),
+    ])
+    if (repoPath.value !== path) return // 期间已切库，整体丢弃（新仓库的 loadRepoData 自己管门闩）
+    firstScreenReady.value = true
+    perfMark('★ 首屏关键路径完成（分支+提交日志），开始加载变更文件')
+
+    // ── 阶段 3（首屏之后）：变更文件 + 其余重量级 / 非首屏任务。
+    //    变更文件（git status 全量扫描）是用户随后「查看差异」的前提，优先发出；
+    //    stash 列表、全部分支 ahead/behind（最重，逐分支图遍历）、上游跟踪信息随后。
+    //    用 requestIdleCallback 让出主线程，避免与首屏渲染争抢。 ──
     const deferred = () => {
       if (repoPath.value !== path) return // 期间已切库，整体丢弃
-      perfMark('延后任务启动（首屏已就绪，开始跑重活）')
+      perfMark('延后任务启动（变更文件扫描 + 其余重活）')
       getFileStatus(path, false)
         .then((data) => {
           if (repoPath.value === path) fileStatuses.value = data
-          perfMark(`文件状态扫描完成（${data.length} 个变更）`)
+          perfMark(`变更文件就绪（${data.length} 个变更，可点击查看差异）`)
         })
         .catch(() => {})
+        .finally(() => { if (repoPath.value === path) fileStatusLoading.value = false })
       stashList(path)
         .then((data) => { if (repoPath.value === path) stashes.value = data })
         .catch(() => { if (repoPath.value === path) stashes.value = [] })
@@ -609,6 +637,11 @@ async function loadRepoData() {
     }
   } catch (e) {
     console.error('Load repo error:', e)
+    // 异常兜底：不能让门闩永久关闭（否则自动刷新全被抑制）、也不能让文件列表卡在「扫描中」
+    if (repoPath.value === path) {
+      firstScreenReady.value = true
+      fileStatusLoading.value = false
+    }
   }
 }
 
@@ -1553,6 +1586,10 @@ function isNoiseDir(path: string): boolean {
 
 // C3: 自动刷新防抖窗口由 400ms 放宽到 800ms，降低大仓库后台 git 状态扫描频率
 function scheduleAutoRefresh() {
+  // 首屏未就绪（分支/提交日志还没回来）时抑制自动刷新：
+  // 启动瞬间窗口 focus 事件、编辑器/fs 噪声都可能触发这里，
+  // 若放行会与首屏关键路径抢磁盘 IO。抑制是安全的——阶段 3 必然扫一次全量。
+  if (!firstScreenReady.value) return
   if (fsRefreshTimer) clearTimeout(fsRefreshTimer)
   fsRefreshTimer = setTimeout(() => {
     fsRefreshTimer = null
@@ -2007,10 +2044,14 @@ onBeforeUnmount(() => {
           @stash-drop="handleStashDrop"
         />
 
+        <!-- 子模块面板：defer-load 让它保持挂载但推迟 list_submodules（多个 git 子进程 +
+             逐子模块 status 扫描），等首屏（分支+提交日志）就绪后再拉，避免抢磁盘 IO。
+             用 prop 而非 v-if：切库时不卸载/重建面板，无闪烁 -->
         <SubmodulePanel
           v-if="repoPath && showSubmodulePanel"
           ref="submodulePanelRef"
           :repo-path="repoPath"
+          :defer-load="!firstScreenReady"
           @changed="onSubmoduleChanged"
           @open-submodule="openSubmodule"
           @added="onSubmoduleChanged"
@@ -2030,6 +2071,7 @@ onBeforeUnmount(() => {
               :files="displayedFiles"
               :selected-files="selectedFiles"
               :view-mode="fileViewMode"
+              :loading="fileStatusLoading"
               @select-files="handleSelectFiles"
               @stage-files="handleStageFiles"
               @commit-files="requestCommitFiles"

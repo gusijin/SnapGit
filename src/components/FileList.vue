@@ -12,6 +12,9 @@ interface Props {
   files: FileStatus[]
   selectedFiles: string[]
   viewMode: 'working-tree' | 'commit' | 'log'
+  // 变更文件扫描进行中（首屏分阶段加载时，git status 延后到分支/提交日志之后）：
+  // 空列表在扫描期间显示「正在扫描变更文件…」，而非误报「工作区干净」
+  loading?: boolean
 }
 
 const props = defineProps<Props>()
@@ -220,11 +223,17 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
       <span v-if="viewMode === 'working-tree'">{{ t('fileList.changedFiles') }}</span>
       <span v-else>{{ t('fileList.commitFiles') }}</span>
       <span class="count" v-if="files.length > 0">{{ files.length }}</span>
+      <span class="count" v-else-if="loading && viewMode === 'working-tree'">…</span>
       <span class="count" v-else>0</span>
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 
-    <div v-if="sortedFiles.length === 0" class="empty">
+    <div v-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
+      <div class="spinner"></div>
+      <p>{{ t('fileList.scanning') }}</p>
+    </div>
+
+    <div v-else-if="sortedFiles.length === 0" class="empty">
       <CheckCircle2 :size="44" class="empty-icon" />
       <p v-if="viewMode === 'working-tree'">{{ t('fileList.wsClean') }}</p>
       <p v-else>{{ t('fileList.noFileChanges') }}</p>
@@ -425,6 +434,20 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
 .empty-icon {
   color: var(--text-muted);
   opacity: 0.55;
+}
+
+/* 扫描中加载指示器（与 DiffViewer .spinner 同款，保持视觉一致） */
+.spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--border-medium);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: file-list-spin 0.8s linear infinite;
+}
+
+@keyframes file-list-spin {
+  to { transform: rotate(360deg); }
 }
 
 .empty p {

@@ -20,6 +20,10 @@ import {
 
 const props = defineProps<{
   repoPath: string
+  // 推迟加载：父组件首屏（分支+提交日志）就绪前为 true。
+  // 保持组件挂载（避免切库时面板卸载/重建闪烁），仅挂起 list_submodules——
+  // 它会跑多个 git 子进程 + 逐子模块 status 扫描，启动瞬间执行会与首屏抢磁盘 IO。
+  deferLoad?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'changed'): void
@@ -56,10 +60,12 @@ async function loadList() {
   }
 }
 
-watch(() => props.repoPath, () => {
-  // 切库先回到默认折叠态，等列表回来再决定是否展开
+// repoPath 变化（含首次挂载）：回到默认折叠态；deferLoad 期间不拉列表，
+// 等父组件首屏就绪（deferLoad 翻 false）时由下方 watch 补一次加载。
+watch([() => props.repoPath, () => props.deferLoad], ([, deferred]) => {
   userToggled.value = false
   collapsed.value = true
+  if (deferred) return
   loadList()
 }, { immediate: true })
 

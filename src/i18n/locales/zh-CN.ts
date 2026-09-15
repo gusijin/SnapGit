@@ -312,6 +312,7 @@ export default {
     selected: '已选 {n}',
     wsClean: '工作区干净，没有修改',
     noFileChanges: '此提交没有文件变更',
+    scanning: '正在扫描变更文件…',
     hintOpenEdit: '双击打开编辑',
     hintViewDiff: '单击查看差异',
     statusNew: '新文件',

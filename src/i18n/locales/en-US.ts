@@ -311,6 +311,7 @@ export default {
     selected: '{n} selected',
     wsClean: 'Working tree is clean',
     noFileChanges: 'No file changes in this commit',
+    scanning: 'Scanning changed files…',
     hintOpenEdit: 'Double-click to edit',
     hintViewDiff: 'Click to view diff',
     statusNew: 'New',
