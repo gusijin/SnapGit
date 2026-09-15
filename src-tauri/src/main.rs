@@ -874,9 +874,16 @@ async fn push(repo_path: String, remote: String, local_branch: String, remote_br
             if msg.trim().is_empty() {
                 msg = "推送失败（未知错误）".to_string();
             }
-            // 常见认证失败错误，提供更友好的提示
-            if msg.contains("Authentication failed") || msg.contains("could not read Username") || msg.contains("terminal prompts disabled") {
-                msg = format!("推送失败：远程仓库认证失败\n\n请确保已配置认证方式（SSH 密钥或 credential helper）。\n\n原始错误:\n{}", msg);
+            // 区分认证失败类型，给出更精准的提示。
+            // 注意：SSH 公钥失败不走「需填令牌」分支，否则已配 SSH 私钥却仍被逼填令牌（与「二选一即可」矛盾）。
+            let lower = msg.to_lowercase();
+            if lower.contains("permission denied (publickey)") || lower.contains("could not read from remote repository") {
+                msg = format!(
+                    "推送失败：SSH 公钥认证未通过\n\n已配置的 SSH 私钥未能通过 GitHub 认证，请检查：\n  · 该私钥对应的公钥是否已添加到 GitHub 账户的 SSH keys\n  · 私钥文件路径与权限是否正确（私钥权限应为 600）\n  · 本机 ~/.ssh/known_hosts 是否已包含 github.com\n\n原始错误:\n{}",
+                    msg,
+                );
+            } else if msg.contains("Authentication failed") || msg.contains("could not read Username") || msg.contains("terminal prompts disabled") {
+                msg = format!("推送失败：远程仓库认证失败\n\n请确保已配置认证方式（SSH 密钥或 credential helper / 访问令牌）。\n\n原始错误:\n{}", msg);
             }
             Err(msg)
         }

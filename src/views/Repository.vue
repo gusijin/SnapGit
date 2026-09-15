@@ -933,7 +933,8 @@ async function handleCommitAndPush() {
   } catch (e: any) {
     console.error('Push error:', e)
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
-    if (/authentication|access denied|认证失败|terminal prompts disabled/i.test(msg)) {
+    // 仅凭证类失败（HTTPS 场景）才引导填令牌；SSH 公钥失败由后端改写为明确提示，不应强制要令牌
+    if (/authentication failed|could not read username|terminal prompts disabled|access denied/i.test(msg)) {
       // 认证失败：让用户在推送对话框里配置凭证（直接进入认证模式，展示 GitHub 授权入口）
       pushDialogBranch.value = committedBranch
       showPushDialog.value = true

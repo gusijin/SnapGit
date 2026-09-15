@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRemotes, getUpstream, pushChanges, saveCredentials, getRemoteUrl } from '../api/git'
+import { Key } from 'lucide-vue-next'
+import { getRemotes, getUpstream, pushChanges, saveCredentials, getRemoteUrl, getRepoConfig } from '../api/git'
 import { startGitHubDeviceAuth, isGitHubClientIdConfigured, isGitHubRemoteUrl, type GitHubAuthStatus } from '../githubAuth'
 import { open } from '@tauri-apps/plugin-shell'
 import type { Branch } from '../types'
@@ -59,6 +60,9 @@ const ghActive = ref(false)
 const ghStatus = ref<GitHubAuthStatus | null>(null)
 const ghAbort = ref<AbortController | null>(null)
 
+// 是否已配置 SSH 私钥（core.sshCommand 非空）：配了则优先走 SSH，无需访问令牌
+const sshConfigured = ref(false)
+
 const localBranches = computed(() => props.branches.filter(b => !b.is_remote))
 
 const selectedBranch = computed(() =>
@@ -110,6 +114,13 @@ async function init() {
   } finally {
     loading.value = false
   }
+  // 检测当前仓库是否已配置 SSH 私钥（core.sshCommand），用于认证失败时分流提示
+  try {
+    const cfg = await getRepoConfig(props.repoPath)
+    sshConfigured.value = !!(cfg && cfg.core_ssh_command)
+  } catch {
+    sshConfigured.value = false
+  }
   // 远端已确定，取 URL 用于展示并判定是否 GitHub
   if (authMode.value) await loadRemoteUrl()
 }
@@ -129,13 +140,22 @@ async function onLocalBranchChange() {
   }
 }
 
-function isAuthError(msg: string): boolean {
+// 凭证类失败（HTTPS 场景）：需用户名/令牌或 credential helper
+function isCredentialError(msg: string): boolean {
   const lower = msg.toLowerCase()
   return lower.includes('authentication failed')
     || lower.includes('access denied')
     || lower.includes('could not read username')
     || lower.includes('terminal prompts disabled')
     || lower.includes('认证失败')
+}
+
+// SSH 公钥类失败：已配 SSH 私钥但未通过认证，应提示检查 SSH 而非强求令牌
+function isSshAuthError(msg: string): boolean {
+  const lower = msg.toLowerCase()
+  return lower.includes('permission denied (publickey)')
+    || lower.includes('could not read from remote repository')
+    || lower.includes('ssh 公钥认证未通过')
 }
 
 async function handlePush() {
@@ -162,7 +182,8 @@ async function handlePush() {
   } catch (e) {
     const msg = String(e)
     error.value = msg
-    if (isAuthError(msg)) {
+    // 凭证失败 或 SSH 公钥失败 都进入认证区，但提示文案分流（SSH 已配则优先 SSH 诊断，令牌为备选）
+    if (isCredentialError(msg) || isSshAuthError(msg)) {
       await loadRemoteUrl()
       authMode.value = true
     }
@@ -309,6 +330,12 @@ init()
             <div class="auth-title">{{ t('push.authTitle') }}</div>
             <div v-if="remoteUrl" class="auth-url">{{ remoteUrl }}</div>
 
+            <!-- 已配置 SSH 私钥：优先使用 SSH 认证，无需访问令牌；令牌仅作备选 -->
+            <div v-if="sshConfigured" class="ssh-note">
+              <Key :size="13" class="ssh-note-icon" />
+              <span>{{ t('push.sshConfiguredHint') }}</span>
+            </div>
+
             <!-- GitHub 设备授权流（推荐）：仅当远端是 github.com 时才显示 -->
             <div v-if="isGitHubRemote" class="gh-auth">
               <Button class="gh-auth-btn" @click="startGithubAuth" :disabled="ghActive">
@@ -405,6 +432,25 @@ init()
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* 已配置 SSH 私钥时的提示：优先 SSH，令牌为备选 */
+.ssh-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background-color: var(--bg-add, #22c55e18);
+  border: 1px solid var(--border-light);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ssh-note-icon {
+  color: var(--color-add, #22c55e);
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 /* GitHub 设备授权流面板 */

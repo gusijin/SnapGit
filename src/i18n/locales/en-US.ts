@@ -216,6 +216,7 @@ export default {
     selectRemoteError: 'Please select a remote',
     remoteBranchError: 'Please enter a remote branch name',
     authTitle: 'Remote Authentication',
+    sshConfiguredHint: 'An SSH private key is already configured, so push uses SSH authentication first — no access token needed. If push still fails, confirm the public key is added to your GitHub account, or use an access token below.',
     username: 'Username',
     usernamePlaceholder: 'Git username',
     token: 'Access Token (Personal Access Token)',
