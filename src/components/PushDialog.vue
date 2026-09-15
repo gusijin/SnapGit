@@ -182,8 +182,9 @@ async function handlePush() {
   } catch (e) {
     const msg = String(e)
     error.value = msg
-    // 凭证失败 或 SSH 公钥失败 都进入认证区，但提示文案分流（SSH 已配则优先 SSH 诊断，令牌为备选）
-    if (isCredentialError(msg) || isSshAuthError(msg)) {
+    // 已配置 SSH 私钥：失败后不自动跳转「远程仓库认证」界面，保持普通推送界面（推送按钮始终可用），
+    // 仅展示错误诊断；SSH 私钥与访问令牌二选一即可，不应在已配 SSH 时强求令牌。
+    if (!sshConfigured.value && (isCredentialError(msg) || isSshAuthError(msg))) {
       await loadRemoteUrl()
       authMode.value = true
     }
@@ -191,6 +192,12 @@ async function handlePush() {
     isPushing.value = false
     emit('pushing', false)
   }
+}
+
+// 手动切到认证模式（已配置 SSH 但确需令牌时的备选入口；默认不进入）
+async function enterAuthMode() {
+  await loadRemoteUrl()
+  authMode.value = true
 }
 
 async function handleSaveAuthAndPush() {
@@ -324,6 +331,12 @@ init()
         </div>
 
         <div v-if="error" class="error-message">{{ error }}</div>
+        <!-- 已配置 SSH 私钥但推送失败时的备选入口：默认不进入认证界面，需用户主动切换 -->
+        <div v-if="error && sshConfigured && !authMode" class="auth-fallback">
+          <button type="button" class="link-btn" @click="enterAuthMode">
+            {{ t('push.useTokenInstead') }}
+          </button>
+        </div>
 
         <Card v-if="authMode" class="auth-card">
           <CardContent class="auth-card-body">
@@ -414,6 +427,25 @@ init()
   border-radius: 4px;
   word-break: break-all;
   white-space: pre-wrap;
+}
+
+/* 已配 SSH 但失败时的备选入口（低调文字链接） */
+.auth-fallback {
+  display: flex;
+  justify-content: flex-end;
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--brand-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover {
+  opacity: 0.8;
 }
 
 .auth-card {

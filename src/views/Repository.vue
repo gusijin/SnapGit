@@ -915,8 +915,9 @@ async function handleCommitAndPush() {
         showToast(t('repository.pushSkippedNoRemote'), 'error')
         return
       }
-      // 有远程但分支未设置上游：打开推送对话框让用户配置
+      // 有远程但分支未设置上游：打开推送对话框让用户配置（普通模式，不需认证）
       pushDialogBranch.value = committedBranch
+      pushDialogAuthMode.value = false
       showPushDialog.value = true
       showToast(t('repository.pushNeedsUpstream'), 'success')
       return
@@ -937,6 +938,7 @@ async function handleCommitAndPush() {
     if (/authentication failed|could not read username|terminal prompts disabled|access denied/i.test(msg)) {
       // 认证失败：让用户在推送对话框里配置凭证（直接进入认证模式，展示 GitHub 授权入口）
       pushDialogBranch.value = committedBranch
+      pushDialogAuthMode.value = true
       showPushDialog.value = true
       showToast(t('repository.pushNeedsAuth'), 'error')
     } else {
@@ -1262,6 +1264,9 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 const showPushDialog = ref(false)
 /** 推送对话框预选分支（右键分支菜单传入；空则默认当前分支） */
 const pushDialogBranch = ref('')
+// 推送对话框是否直接进入认证模式：仅「认证失败」时置 true。
+// 默认 false —— 已配置 SSH 私钥时点推送就是普通推送界面，按钮可用，不再强求访问令牌。
+const pushDialogAuthMode = ref(false)
 const showCloneDialog = ref(false)
 const showRepoConfig = ref(false)
 // 仓库配置对话框实际展示的仓库路径：菜单栏「编辑-配置」用当前仓库，
@@ -1331,6 +1336,7 @@ function handlePush() {
     return
   }
   pushDialogBranch.value = ''
+  pushDialogAuthMode.value = false
   showPushDialog.value = true
 }
 
@@ -1338,6 +1344,7 @@ function handlePush() {
 function handlePushBranch(branchName: string) {
   if (!repoPath.value) return
   pushDialogBranch.value = branchName
+  pushDialogAuthMode.value = false
   showPushDialog.value = true
 }
 
@@ -2294,7 +2301,7 @@ onBeforeUnmount(() => {
         :branches="branches"
         :current-branch="currentBranch"
         :initial-branch="pushDialogBranch || undefined"
-        :initial-auth-mode="true"
+        :initial-auth-mode="pushDialogAuthMode"
         @close="showPushDialog = false"
         @pushed="handlePushed"
         @pushing="(v: boolean) => { isPushing = v }"

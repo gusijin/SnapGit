@@ -218,6 +218,7 @@ export default {
     remoteBranchError: '请输入远程分支名',
     authTitle: '远程仓库认证',
     sshConfiguredHint: '已检测到 SSH 私钥配置，推送优先使用 SSH 认证，无需访问令牌。若推送失败，请确认该公钥已添加到 GitHub 账户，或改用下方访问令牌。',
+    useTokenInstead: '改用访问令牌认证',
     username: '用户名',
     usernamePlaceholder: 'Git 用户名',
     token: '访问令牌 (Personal Access Token)',
