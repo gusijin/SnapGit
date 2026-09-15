@@ -101,6 +101,8 @@ export default {
     pullHint: 'Pull latest commits from remote',
     commitHint: 'Commit staged changes',
     pushHint: 'Push local commits to remote',
+    log: 'Commit Log',
+    logHint: 'View commit history',
     stashHint: 'Stash current working progress',
     githubLogin: 'Login GitHub',
     githubLoginHint: 'Sign in via GitHub Device Flow (global, works for all github.com repos)',

@@ -102,6 +102,8 @@ export default {
     pullHint: '从远程拉取最新提交',
     commitHint: '提交暂存的更改',
     pushHint: '推送本地提交到远程',
+    log: '提交日志',
+    logHint: '查看提交历史记录',
     stashHint: '暂存当前工作进度',
     githubLogin: '登录 GitHub',
     githubLoginHint: '使用 GitHub 设备授权流登录（全局，所有 github.com 仓库通用）',

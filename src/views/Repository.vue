@@ -515,8 +515,19 @@ async function onRemoteAdded() {
   await loadUpstreamInfo()
 }
 
+/**
+ * 启动性能打点：统一用 performance.now() 输出「自页面加载起」的相对毫秒数。
+ * 排查启动慢时在 DevTools Console 过滤 `SnapGit:perf`，即可拿到完整时间线，
+ * 据此判断耗时究竟花在「WebView/页面启动」还是「某个具体 git 操作」上。
+ */
+function perfMark(label: string) {
+  console.log(`[SnapGit:perf] ${label} +${Math.round(performance.now())}ms`)
+}
+
 async function loadRepoData() {
   if (!repoPath.value) return
+  // 固定本次加载的目标路径：异步回调里用它做「期间是否已切库」校验，避免旧仓库数据覆盖新仓库
+  const path = repoPath.value
   // 切库统一：先清空旧仓库的所有面板数据，避免数据错位/残留。
   // （刚 init 的空仓库理论上不会崩，但作为防御性兜底，所有路径先清后拉）
   commits.value = []
@@ -530,42 +541,72 @@ async function loadRepoData() {
   noMoreCommits.value = false
   loadingMoreCommits.value = false
   fileStatuses.value = []
+  perfMark('loadRepoData 开始（发出各波次 git 请求）')
   try {
-    // 乐观：先快速拿到当前分支名（几十 ms，仅一次轻量 HEAD 读取），
-    // 让首屏立刻显示真实分支名，而不是干等最慢的 git status 全量扫描。
-    getCurrentBranch(repoPath.value)
-      .then((name) => { currentBranch.value = name })
+    // ── 第一波（最轻、最优先）：当前分支名。仅一次轻量 HEAD 读取，乐观填充，
+    //    不等任何重活，让工具栏/标题栏立刻显示真实分支名 ──
+    getCurrentBranch(path)
+      .then((name) => {
+        if (repoPath.value === path) currentBranch.value = name
+        perfMark('当前分支就绪')
+      })
       .catch(() => {})
 
-    // 分支列表：一回来就落地并标记「列表已加载」，同时以列表为准校准当前分支
-    getBranches(repoPath.value, false)
+    // ── 第二波（首屏最高优先级）：分支列表。先于重量级的 git status 与全量 ahead/behind 发出，
+    //    让分支面板尽快出现；回来即以列表校准当前分支 ──
+    getBranches(path, false)
       .then((data) => {
+        if (repoPath.value !== path) return
         branches.value = data
         branchListReady.value = true
-        currentBranch.value = data.find(b => b.is_current)?.name || ''
-        // C2: 后台补算全部分支的 ahead/behind（不阻塞首屏），稍后填充分支面板徽章
-        getBranches(repoPath.value, true)
-          .then((full) => { branches.value = full })
-          .catch(() => {})
-        // 工作区状态弹窗：补齐上游跟踪分支与远程地址（此时 currentBranch 已校准）
-        loadUpstreamInfo()
+        currentBranch.value = data.find(b => b.is_current)?.name || currentBranch.value
+        perfMark(`★ 分支列表就绪（${data.length} 个分支，首屏关键路径完成）`)
       })
-      .catch(() => { branchListReady.value = true })
+      .catch(() => { if (repoPath.value === path) branchListReady.value = true })
 
-    // 其余请求各自独立落地，互不阻塞——分支名不再被 git status / 提交历史拖慢
-    getCommits(repoPath.value, 50)
+    // ── 第三波：提交历史。首屏需要，但与分支错峰，不与第一批 IO 争抢 ──
+    getCommits(path, 50)
       .then((data) => {
+        if (repoPath.value !== path) return
         commits.value = data
         noMoreCommits.value = false
         loadingMoreCommits.value = false
+        perfMark(`提交历史就绪（${data.length} 条）`)
       })
       .catch(() => {})
-    getFileStatus(repoPath.value, false)
-      .then((data) => { fileStatuses.value = data })
-      .catch(() => {})
-    stashList(repoPath.value)
-      .then((data) => { stashes.value = data })
-      .catch(() => { stashes.value = [] })
+
+    // ── 第四波（延后到首屏之后）：重量级 / 非首屏关键任务。
+    //    启动瞬间若一次性并发 5 个 git 操作，会争抢磁盘与 CPU，反而拖慢分支显示。
+    //    这里等首屏「分支 + 提交」先发出后，再跑最重的 git status 全量扫描、
+    //    全部分支 ahead/behind、stash 列表与上游跟踪信息。 ──
+    const deferred = () => {
+      if (repoPath.value !== path) return // 期间已切库，整体丢弃
+      perfMark('延后任务启动（首屏已就绪，开始跑重活）')
+      getFileStatus(path, false)
+        .then((data) => {
+          if (repoPath.value === path) fileStatuses.value = data
+          perfMark(`文件状态扫描完成（${data.length} 个变更）`)
+        })
+        .catch(() => {})
+      stashList(path)
+        .then((data) => { if (repoPath.value === path) stashes.value = data })
+        .catch(() => { if (repoPath.value === path) stashes.value = [] })
+      // 全部分支 ahead/behind：逐分支图遍历，最重，放最后
+      getBranches(path, true)
+        .then((full) => {
+          if (repoPath.value === path) branches.value = full
+          perfMark('全量 ahead/behind 完成（分支徽章已补齐）')
+        })
+        .catch(() => {})
+      // 工作区状态弹窗：补齐上游跟踪分支与远程地址（此时 currentBranch 已校准）
+      loadUpstreamInfo()
+    }
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback
+    if (typeof ric === 'function') {
+      ric(deferred, { timeout: 600 })
+    } else {
+      setTimeout(deferred, 60)
+    }
   } catch (e) {
     console.error('Load repo error:', e)
   }
@@ -1806,7 +1847,8 @@ onMounted(() => {
   const hasCache = savedProjects !== null
   if (hasCache) {
     try { scannedProjects.value = sanitizeProjects(JSON.parse(savedProjects)) } catch {}
-    console.log('[SnapGit] 命中仓库缓存', scannedProjects.value.length, '个，跳过扫盘')
+    console.log(`[SnapGit] 命中仓库缓存 ${scannedProjects.value.length} 个，跳过扫盘`)
+    perfMark('onMounted 完成（仓库列表来自缓存，未扫盘）')
   } else {
     console.log('[SnapGit] 无仓库缓存，将后台扫描一次')
   }
@@ -1912,10 +1954,9 @@ onBeforeUnmount(() => {
       @refresh="refreshAll"
       @checkout-branch="handleCheckoutBranch"
       @branch="handleMenuAction('new-branch')"
-      @merge="handleMenuAction('merge')"
       @stash="handleMenuAction('stash')"
-      @show-working-tree="refreshAll"
-      @show-log="refreshAll"
+      @show-working-tree="handleMenuAction('show-working-tree')"
+      @show-log="handleMenuAction('show-log')"
     />
 
     <!-- 主布局 -->

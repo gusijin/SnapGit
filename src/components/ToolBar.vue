@@ -13,6 +13,7 @@ import {
   RefreshCw,
   FolderGit2,
   Archive,
+  History,
   GitBranch,
   Check,
   Loader2,
@@ -61,7 +62,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits([
   'open-repo', 'commit', 'push', 'pull', 'branch', 'refresh',
-  'show-working-tree', 'stash', 'checkout-branch',
+  'show-working-tree', 'show-log', 'stash', 'checkout-branch',
 ])
 
 // GitHub 设备授权登录对话框开关（常驻按钮触发，不依赖是否打开仓库）
@@ -90,6 +91,7 @@ const primaryTools: Tool[] = [
 
 /** 右侧：辅助操作，仅图标 + 悬浮提示（工作区状态单独渲染为弹窗） */
 const iconTools: Tool[] = [
+  { id: 'log', labelKey: 'toolbar.log', hintKey: 'toolbar.logHint', icon: History, action: 'show-log' },
   { id: 'stash', labelKey: 'toolbar.stash', hintKey: 'toolbar.stashHint', icon: Archive, action: 'stash' },
 ]
 

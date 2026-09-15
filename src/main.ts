@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'
-import EditorWindow from './views/EditorWindow.vue'
 import router from './router'
 import { i18n } from './i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -75,22 +74,29 @@ if (editArgs) {
 
 if (isEditorContext) {
   console.log('[SnapGit] 编辑窗口上下文，label:', currentWindowLabel, 'URL:', window.location.href)
-  try {
-    const editorApp = createApp(EditorWindow)
-    editorApp.use(i18n)
-    editorApp.config.errorHandler = (err, _vm, info) => {
-      console.error('[SnapGit] EditorWindow 渲染错误:', err, info)
-    }
-    editorApp.mount('#app')
-  } catch (e) {
-    console.error('[SnapGit] 编辑窗口挂载失败:', e)
-  }
+  // 动态导入：EditorWindow 的依赖树包含 DiffEditor / ConflictSolver 等重量级组件，
+  // 只有编辑窗口上下文才用得到。若在文件顶部静态导入，主窗口首屏也被迫下载并执行
+  // 整棵编辑器模块图 —— dev 模式未打包时每个模块一次请求，这份开销尤其明显。
+  import('./views/EditorWindow.vue')
+    .then(({ default: EditorWindow }) => {
+      const editorApp = createApp(EditorWindow)
+      editorApp.use(i18n)
+      editorApp.config.errorHandler = (err, _vm, info) => {
+        console.error('[SnapGit] EditorWindow 渲染错误:', err, info)
+      }
+      editorApp.mount('#app')
+    })
+    .catch((e) => {
+      console.error('[SnapGit] 编辑窗口挂载失败:', e)
+    })
 } else {
   console.log('[SnapGit] 主窗口上下文，URL:', window.location.href)
   // 诊断「整窗白屏后恢复」：每次页面加载都会打印本日志。
   // 若白屏发生时控制台重新出现这条加载日志 → 是整页重载（外部因素触发）；
   // 若只出现渲染错误日志而不重载 → 是组件渲染中断（Vue 层问题）。
-  console.log('[SnapGit] 主窗口页面加载', new Date().toISOString())
+  // `+Xms` 为自 HTML 导航开始的耗时：若这里已经很大（1~3 秒），说明「启动慢」
+  // 主要来自 WebView2 冷启动 / dev 依赖加载，而非仓库数据加载，需分开看待。
+  console.log(`[SnapGit] 主窗口页面加载 ${new Date().toISOString()} (脚本执行 +${Math.round(performance.now())}ms)`)
   window.addEventListener('beforeunload', () => {
     console.warn('[SnapGit] 页面即将卸载：发生了整页重载或窗口关闭')
   })
