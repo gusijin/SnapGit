@@ -983,7 +983,8 @@ async fn get_repo_config(repo_path: String) -> Result<serde_json::Value> {
         for cand in candidates {
             let expanded = if let Some(ref home) = home_dir {
                 let p = cand.trim_start_matches("~/");
-                home.join(p).to_string_lossy().to_string()
+                // 避免 "home.join(\".ssh/id_ed25519\")" 保留正斜杠导致 Windows 路径混用斜杠
+                p.split('/').fold(home.clone(), |acc, s| acc.join(s)).to_string_lossy().to_string()
             } else {
                 cand.to_string()
             };
@@ -2110,7 +2111,10 @@ fn open_file_dialog() -> Result<Option<String>> {
 #[command]
 async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
     let _guard = git_read_guard();
-    let key_path = key_path.trim().to_string();
+    // 规范化为正斜杠（Git 风格）：Windows 反斜杠路径在 core.sshCommand 经 git 的
+    // split_cmdline / sh 解析时属于脆弱写法，部分 git/ssh 版本或环境下会被当作转义符吃错，
+    // 导致私钥路径解析失败而拉取报认证错误。正斜杠在 Git for Windows 下始终可用。
+    let key_path = key_path.trim().replace('\\', "/").to_string();
     if key_path.is_empty() {
         // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
         let _ = git_command()

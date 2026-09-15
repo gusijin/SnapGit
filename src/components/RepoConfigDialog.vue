@@ -111,7 +111,14 @@ async function load() {
 function extractSshKeyPath(cmd: string | null): string {
   if (!cmd) return ''
   const m = cmd.match(/-i\s+"([^"]+)"|-i\s+'([^']+)'|-i\s+(\S+)/)
-  return m ? (m[1] || m[2] || m[3] || '') : ''
+  return toDisplayPath(m ? (m[1] || m[2] || m[3] || '') : '')
+}
+
+// Windows 下把路径统一显示为反斜杠；其它平台保留原样
+function toDisplayPath(p: string | undefined): string {
+  if (!p) return ''
+  if (!navigator.userAgent.toLowerCase().includes('windows')) return p
+  return p.replace(/[/\\]+/g, '\\')
 }
 
 // 保存基本信息（user.name / user.email）
@@ -441,7 +448,7 @@ const tabs = computed(() => [
                   <span class="status-dot" :class="pair.public.exists ? 'ok' : 'missing'" />
                   {{ pair.public.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
                 </div>
-                <div class="ssh-path" :title="pair.private?.path">{{ pair.private?.path }}</div>
+                <div class="ssh-path" :title="pair.private?.path">{{ toDisplayPath(pair.private?.path) }}</div>
               </div>
             </div>
           </section>
