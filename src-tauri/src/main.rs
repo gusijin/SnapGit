@@ -3687,6 +3687,8 @@ async fn open_edit_window(
         // Windows/Linux: 关闭系统标题栏，由前端 TitleBar.vue 自绘（跟随主题切换）。
         // macOS 分支见下，改用 TitleBarStyle::Overlay 让内容撑满、交通灯浮层覆盖（无空白行）。
         .decorations(false)
+        // 窗口背景色 = 应用头部色 #e2e8f0：WebView2 首帧前的空窗期不再闪白。
+        .background_color(tauri::window::Color::from((226, 232, 240, 255)))
         .initialization_script(&script);
 
         #[cfg(target_os = "macos")]
@@ -3978,6 +3980,9 @@ fn main() {
                 .inner_size(1200.0, 800.0)
                 .resizable(true)
                 .decorations(false)
+                // WebView2 冷启动要几秒才出首帧，期间整窗显示窗口背景色。
+                // 设为应用头部色 #e2e8f0（与 macOS 一致），避免「启动后全白几秒」的割裂感。
+                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
                 .build()?;
 
             // macOS: 使用系统原生菜单栏（显示在屏幕顶部）
