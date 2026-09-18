@@ -775,9 +775,7 @@ defineExpose({ openCreateDialog })
   user-select: none;
 }
 
-.group-title:hover {
-  background-color: var(--bg-tertiary);
-}
+/* 分组标题栏 hover 不变背景（本地/远程/储藏统一，古哥 13:52 确认） */
 
 .group-title-left {
   display: flex;
