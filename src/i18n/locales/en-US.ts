@@ -108,8 +108,6 @@ export default {
     worktree: 'Working Tree',
     worktreeHint: 'Switch back to working tree',
     stashHint: 'Stash current working progress',
-    githubLogin: 'Login GitHub',
-    githubLoginHint: 'Sign in via GitHub Device Flow (global, works for all github.com repos)',
     refreshHint: 'Refresh repository status',
     wsStatus: 'Working Tree Status',
     lastPullNever: 'Never pulled',

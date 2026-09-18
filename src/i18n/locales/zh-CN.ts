@@ -109,8 +109,6 @@ export default {
     worktree: '工作视图',
     worktreeHint: '切换回工作视图',
     stashHint: '暂存当前工作进度',
-    githubLogin: '登录 GitHub',
-    githubLoginHint: '使用 GitHub 设备授权流登录（全局，所有 github.com 仓库通用）',
     refreshHint: '刷新仓库状态',
     wsStatus: '工作区状态',
     lastPullNever: '从未拉取',
