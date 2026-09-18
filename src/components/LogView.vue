@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, X, GitCommitVertical, History } from 'lucide-vue-next'
+import { Search, X, GitCommitVertical, History, ArrowLeft } from 'lucide-vue-next'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Commit } from '../types'
 
 interface Props {
@@ -10,11 +11,18 @@ interface Props {
   // 分页加载状态：滚动到底自动加载更早历史
   loadingMore?: boolean
   noMore?: boolean
+  // 是否在面板头部显示「返回工作区」按钮（仅历史视图需要，工作视图底部的日志小面板不需要）
+  showExitButton?: boolean
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits(['select-commit', 'show-commit-files', 'exit-log', 'load-more'])
 const { t } = useI18n()
+
+// 历史视图头部「返回工作区」按钮触发，交父组件收尾（Repository.exitLogView）
+function exitLog() {
+  emit('exit-log')
+}
 
 const filterText = ref('')
 
@@ -140,6 +148,16 @@ onMounted(() => {
 <template>
   <div class="log-viewer">
     <div class="panel-header">
+      <TooltipProvider v-if="showExitButton" :delay-duration="260">
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button class="header-exit-btn" :aria-label="t('logView.backToWorkspace')" @click="exitLog">
+              <ArrowLeft :size="13" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{{ t('logView.backToWorkspace') }}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <History :size="13" class="header-icon" />
       <span>{{ t('logView.logTitle') }}</span>
       <span class="count">{{ filteredCommits.length }}</span>
@@ -199,8 +217,8 @@ onMounted(() => {
           </div>
         </div>
         <!-- 分页加载提示 -->
-        <div v-if="loadingMore" class="log-more">加载中...</div>
-        <div v-else-if="noMore && commits.length > 0" class="log-more end">已加载全部提交</div>
+        <div v-if="loadingMore" class="log-more">{{ t('logView.loadingMore') }}</div>
+        <div v-else-if="noMore && commits.length > 0" class="log-more end">{{ t('logView.allLoaded') }}</div>
       </div>
     </div>
   </div>
@@ -239,6 +257,29 @@ onMounted(() => {
 .header-icon {
   color: var(--accent-text);
   flex-shrink: 0;
+}
+
+/* 历史视图头部「返回工作区」按钮（icon-only，必配 Tooltip） */
+.header-exit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-right: 2px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.header-exit-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
 }
 
 .count {

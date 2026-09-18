@@ -32,13 +32,17 @@ import {
   Check,
 } from 'lucide-vue-next'
 
-// 父组件传入的面板显隐状态，仅用于「视图 → 子模块」的勾选态显示
-const props = defineProps<{ submoduleVisible?: boolean }>()
+// 父组件传入的面板显隐状态与当前主视图，分别用于「视图 → 子模块」「视图 → 工作视图/历史视图」的勾选态显示
+const props = defineProps<{
+  submoduleVisible?: boolean
+  currentView?: 'worktree' | 'log'
+}>()
 
 const emit = defineEmits([
   'open-repo', 'clone-repo', 'commit', 'push', 'pull',
   'branch', 'checkout-branch', 'merge', 'refresh',
-  'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules'
+  'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules',
+  'show-working-tree', 'show-log'
 ])
 
 const { theme, toggleTheme } = useTheme()
@@ -117,6 +121,19 @@ const menuItems = computed<MenuEntry[]>(() => [
   {
     nameKey: 'menu.view',
     submenu: [
+      {
+        type: 'check',
+        labelKey: 'menu.worktreeView',
+        action: 'show-working-tree',
+        checked: props.currentView !== 'log'
+      },
+      {
+        type: 'check',
+        labelKey: 'menu.logView',
+        action: 'show-log',
+        checked: props.currentView === 'log'
+      },
+      { type: 'separator' },
       {
         type: 'check',
         labelKey: 'menu.submodules',

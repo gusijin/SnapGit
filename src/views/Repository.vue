@@ -1818,10 +1818,12 @@ function handleMenuAction(payload: any) {
       showCheckoutBranch.value = true
       break
     case 'show-working-tree':
+      if (mainView.value === 'worktree') break
       mainView.value = 'worktree'
       refreshAll()
       break
     case 'show-log':
+      if (mainView.value === 'log') break
       mainView.value = 'log'
       break
     case 'toggle-submodules':
@@ -1967,7 +1969,10 @@ onBeforeUnmount(() => {
       @merge="handleMenuAction('merge')"
       @repo-config="handleMenuAction('repo-config')"
       :submodule-visible="showSubmodulePanel"
+      :current-view="mainView"
       @toggle-submodules="handleMenuAction('toggle-submodules')"
+      @show-working-tree="handleMenuAction('show-working-tree')"
+      @show-log="handleMenuAction('show-log')"
     />
 
     <!-- 工具栏 -->
@@ -2117,11 +2122,12 @@ onBeforeUnmount(() => {
                 :selected-id="currentCommitId"
                 :loading-more="loadingMoreCommits"
                 :no-more="noMoreCommits"
-                @select-commit="handleSelectCommit"
-                @show-commit-files="handleShowCommitFiles"
-                @load-more="loadMoreCommits"
-                @exit-log="exitLogView"
-              />
+              @select-commit="handleSelectCommit"
+              @show-commit-files="handleShowCommitFiles"
+              @load-more="loadMoreCommits"
+              :show-exit-button="true"
+              @exit-log="exitLogView"
+            />
             </div>
             <!-- 右侧：提交详情（复用现有组件与 diff 链路） -->
             <div class="commit-detail-area">
