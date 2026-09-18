@@ -105,6 +105,8 @@ export default {
     pushHint: 'Push local commits to remote',
     log: 'Commit Log',
     logHint: 'View commit history',
+    worktree: 'Working Tree',
+    worktreeHint: 'Switch back to working tree',
     stashHint: 'Stash current working progress',
     githubLogin: 'Login GitHub',
     githubLoginHint: 'Sign in via GitHub Device Flow (global, works for all github.com repos)',

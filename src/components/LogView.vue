@@ -228,9 +228,14 @@ onMounted(() => {
 .log-viewer {
   display: flex;
   flex-direction: column;
+  /* 父级 .log-pane 是 flex row（Repository.vue），作为 flex item 必须显式定宽：
+     container-type 的 inline-size containment 会让内容尺寸按 0 计算，缺这行面板会塌成竖条 */
+  width: 100%;
   height: 100%;
   background-color: var(--bg-secondary);
   min-height: 0;
+  /* 容器查询：面板内宽变窄时据此精简列，优先保留「提交信息 + 作者」 */
+  container-type: inline-size;
   /* 提交日志面板内容禁止选中文字，兼容 Windows(WebView2) 与 macOS(WKWebView) */
   -webkit-user-select: none;
   -moz-user-select: none;
@@ -295,6 +300,10 @@ onMounted(() => {
   margin-left: auto;
   display: flex;
   align-items: center;
+  /* 自适应：默认占 190px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度 */
+  flex: 0 1 190px;
+  min-width: 56px;
+  max-width: 190px;
 }
 
 .search-icon {
@@ -305,8 +314,8 @@ onMounted(() => {
 }
 
 .search-input {
-  width: 190px;
-  max-width: 42vw;
+  width: 100%;
+  min-width: 0;
   height: 24px;
   padding: 0 26px 0 26px;
   font-size: 12px;
@@ -513,5 +522,17 @@ onMounted(() => {
 
 .col-date {
   justify-content: flex-end;
+}
+
+/* 面板较窄时（如历史视图左侧日志面板在窗口缩小时）：隐藏 ID 与日期列，
+   仅保留「提交信息 + 作者」两列，grid 重排为 [1fr 作者]，确保窄屏下核心信息优先展示 */
+@container (max-width: 460px) {
+  .log-item {
+    grid-template-columns: 1fr 140px;
+  }
+  .col-id,
+  .col-date {
+    display: none;
+  }
 }
 </style>

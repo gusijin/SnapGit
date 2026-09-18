@@ -46,6 +46,8 @@ interface Props {
   repoName?: string
   /** 上次成功拉取的时间戳（客户端记录，非后端） */
   lastPullTime?: number | null
+  /** 当前主视图：用于工具栏「切换工作/历史视图」按钮的激活态与提示 */
+  currentView?: 'worktree' | 'log'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -59,6 +61,7 @@ const props = withDefaults(defineProps<Props>(), {
   remoteUrl: null,
   repoName: '',
   lastPullTime: null,
+  currentView: 'worktree',
 })
 const emit = defineEmits([
   'open-repo', 'commit', 'push', 'pull', 'branch', 'refresh',
@@ -91,12 +94,23 @@ const primaryTools: Tool[] = [
 
 /** 右侧：辅助操作，仅图标 + 悬浮提示（工作区状态单独渲染为弹窗） */
 const iconTools: Tool[] = [
-  { id: 'log', labelKey: 'toolbar.log', hintKey: 'toolbar.logHint', icon: History, action: 'show-log' },
   { id: 'stash', labelKey: 'toolbar.stash', hintKey: 'toolbar.stashHint', icon: Archive, action: 'stash' },
 ]
 
 function handleAction(action: string) {
   emit(action as any)
+}
+
+// 视图切换按钮：根据当前主视图在「工作视图 ↔ 历史视图」之间 toggle
+const viewToggleActive = computed(() => props.currentView === 'log')
+const viewToggleLabel = computed(() =>
+  viewToggleActive.value ? t('toolbar.worktree') : t('toolbar.log'),
+)
+const viewToggleHint = computed(() =>
+  viewToggleActive.value ? t('toolbar.worktreeHint') : t('toolbar.logHint'),
+)
+function handleViewToggle() {
+  emit(viewToggleActive.value ? 'show-working-tree' : 'show-log')
 }
 
 // ===== 工作区状态弹窗 =====
@@ -373,6 +387,24 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <!-- 切换工作视图 / 历史视图（根据当前视图 toggle） -->
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="h-8 w-8"
+              :class="{ 'view-toggle-active': viewToggleActive }"
+              :aria-label="viewToggleLabel"
+              :disabled="!hasRepo"
+              @click="handleViewToggle"
+            >
+              <History />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{{ viewToggleHint }}</TooltipContent>
+        </Tooltip>
+
         <Tooltip v-for="tool in iconTools" :key="tool.id">
           <TooltipTrigger as-child>
             <Button
@@ -494,6 +526,17 @@ onBeforeUnmount(() => {
 .no-repo-hint {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 视图切换按钮激活态：当前处于历史视图时高亮，提示「再点一下回到工作视图」 */
+.view-toggle-active {
+  background-color: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.view-toggle-active:hover:not(:disabled) {
+  background-color: var(--bg-active);
+  color: var(--text-bright);
 }
 
 /* 左侧 Git 主流程：连接式分段按钮（拉取 | 提交 | 推送）

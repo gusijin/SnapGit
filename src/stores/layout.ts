@@ -12,6 +12,8 @@ export interface LayoutState {
   fileListFlex: number
   diffAreaFlex: number
   logAreaFlex: number
+  logPaneFlex: number
+  logDetailFlex: number
 }
 
 const STORAGE_KEY = 'snapgit-layout'
@@ -30,6 +32,8 @@ const DEFAULTS: LayoutState = {
   fileListFlex: 1,
   diffAreaFlex: 1.4,
   logAreaFlex: 1,
+  logPaneFlex: 4,
+  logDetailFlex: 6,
 }
 
 function clampNum(v: unknown, min: number, max: number, fallback: number): number {
@@ -48,6 +52,8 @@ function loadLayout(): LayoutState {
       fileListFlex: clampNum(p.fileListFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.fileListFlex),
       diffAreaFlex: clampNum(p.diffAreaFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.diffAreaFlex),
       logAreaFlex: clampNum(p.logAreaFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logAreaFlex),
+      logPaneFlex: clampNum(p.logPaneFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logPaneFlex),
+      logDetailFlex: clampNum(p.logDetailFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logDetailFlex),
     }
   } catch {
     return { ...DEFAULTS }
@@ -61,6 +67,8 @@ const branchPanelFlex = ref(saved.branchPanelFlex)
 const fileListFlex = ref(saved.fileListFlex)
 const diffAreaFlex = ref(saved.diffAreaFlex)
 const logAreaFlex = ref(saved.logAreaFlex)
+const logPaneFlex = ref(saved.logPaneFlex)
+const logDetailFlex = ref(saved.logDetailFlex)
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -68,10 +76,12 @@ function persist() {
   const state: LayoutState = {
     leftPanelWidth: leftPanelWidth.value,
     branchPanelFlex: branchPanelFlex.value,
-    fileListFlex: fileListFlex.value,
-    diffAreaFlex: diffAreaFlex.value,
-    logAreaFlex: logAreaFlex.value,
-  }
+      fileListFlex: fileListFlex.value,
+      diffAreaFlex: diffAreaFlex.value,
+      logAreaFlex: logAreaFlex.value,
+      logPaneFlex: logPaneFlex.value,
+      logDetailFlex: logDetailFlex.value,
+    }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   } catch {
@@ -96,7 +106,7 @@ function scheduleSave() {
   }, 250)
 }
 
-watch([leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex], scheduleSave)
+watch([leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex], scheduleSave)
 
 // 窗口关闭/刷新前兜底落盘
 window.addEventListener('beforeunload', flushLayout)
@@ -108,9 +118,11 @@ export function resetLayout() {
   fileListFlex.value = DEFAULTS.fileListFlex
   diffAreaFlex.value = DEFAULTS.diffAreaFlex
   logAreaFlex.value = DEFAULTS.logAreaFlex
+  logPaneFlex.value = DEFAULTS.logPaneFlex
+  logDetailFlex.value = DEFAULTS.logDetailFlex
   flushLayout()
 }
 
 export function useLayout() {
-  return { leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, resetLayout, flushLayout }
+  return { leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex, resetLayout, flushLayout }
 }

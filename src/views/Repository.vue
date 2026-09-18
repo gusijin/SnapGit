@@ -156,11 +156,14 @@ const repoName = computed(() => {
 // 面板尺寸：从持久化 store 读取（首次启动用默认值，之后恢复上次拖拽的位置）
 const {
   leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex,
+  logPaneFlex, logDetailFlex,
 } = useLayout()
 const isResizingBranchPanel = ref(false)
 const REPO_LIST_FLEX = 1
 const isResizingCenter = ref(false)
 const isResizingLeftPanel = ref(false)
+const isResizingLogView = ref(false)
+const isResizingLogDetail = ref(false)
 
 // 对话框
 const showCommitDialog = ref(false)
@@ -322,6 +325,129 @@ function stopResizeLeftPanel() {
   flushLayout()
   document.removeEventListener('mousemove', onResizeLeftPanelMove)
   document.removeEventListener('mouseup', stopResizeLeftPanel)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.body.style.webkitUserSelect = ''
+}
+
+// ===== 历史视图：提交日志面板 ↔ 提交文件面板 左右拖拽 =====
+let logViewStartX = 0
+let logViewStartFlex1 = 0
+let logViewStartFlex2 = 0
+let logViewStartTotalFlex = 0
+let logViewLayoutWidth = 0
+
+function startResizeLogView(e: MouseEvent) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isResizingLogView.value = true
+  logViewStartX = e.clientX
+
+  const layout = document.querySelector('.log-view-layout') as HTMLElement
+  if (layout) {
+    logViewLayoutWidth = layout.clientWidth
+  }
+
+  logViewStartTotalFlex = logPaneFlex.value + logDetailFlex.value
+  logViewStartFlex1 = logPaneFlex.value
+  logViewStartFlex2 = logDetailFlex.value
+
+  document.addEventListener('mousemove', onResizeLogViewMove)
+  document.addEventListener('mouseup', stopResizeLogView)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.body.style.webkitUserSelect = 'none'
+}
+
+function onResizeLogViewMove(e: MouseEvent) {
+  if (!isResizingLogView.value) return
+  const deltaX = e.clientX - logViewStartX
+  const flexDelta = deltaX * logViewStartTotalFlex / logViewLayoutWidth
+
+  let newFlex1 = logViewStartFlex1 + flexDelta
+  let newFlex2 = logViewStartFlex2 - flexDelta
+
+  // 约束最小 flex，防止某一侧被压没（与中央三块共用 CENTER_MIN_FLEX 下界）
+  if (newFlex1 < CENTER_MIN_FLEX) {
+    newFlex1 = CENTER_MIN_FLEX
+    newFlex2 = logViewStartFlex1 + logViewStartFlex2 - CENTER_MIN_FLEX
+  }
+  if (newFlex2 < CENTER_MIN_FLEX) {
+    newFlex2 = CENTER_MIN_FLEX
+    newFlex1 = logViewStartFlex1 + logViewStartFlex2 - CENTER_MIN_FLEX
+  }
+
+  logPaneFlex.value = newFlex1
+  logDetailFlex.value = newFlex2
+}
+
+function stopResizeLogView() {
+  isResizingLogView.value = false
+  flushLayout()
+  document.removeEventListener('mousemove', onResizeLogViewMove)
+  document.removeEventListener('mouseup', stopResizeLogView)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.body.style.webkitUserSelect = ''
+}
+
+// ===== 历史视图：提交文件面板 ↔ 查看差异面板 上下拖拽 =====
+// 说明：历史视图右侧为「文件列表 + 差异」两块，与工作视图的 file-diff 共用 fileListFlex / diffAreaFlex，
+// 因此这里直接调整这对 flex，行为与工作视图文件↔差异拖拽完全统一；范围以 .commit-detail-area 实际高度为准。
+let logDetailStartY = 0
+let logDetailStartFlex1 = 0
+let logDetailStartFlex2 = 0
+let logDetailStartTotalFlex = 0
+let logDetailAreaHeight = 0
+
+function startResizeLogDetail(e: MouseEvent) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isResizingLogDetail.value = true
+  logDetailStartY = e.clientY
+
+  const area = document.querySelector('.commit-detail-area') as HTMLElement
+  if (area) {
+    logDetailAreaHeight = area.clientHeight
+  }
+
+  logDetailStartTotalFlex = fileListFlex.value + diffAreaFlex.value
+  logDetailStartFlex1 = fileListFlex.value
+  logDetailStartFlex2 = diffAreaFlex.value
+
+  document.addEventListener('mousemove', onResizeLogDetailMove)
+  document.addEventListener('mouseup', stopResizeLogDetail)
+  document.body.style.cursor = 'ns-resize'
+  document.body.style.userSelect = 'none'
+  document.body.style.webkitUserSelect = 'none'
+}
+
+function onResizeLogDetailMove(e: MouseEvent) {
+  if (!isResizingLogDetail.value) return
+  const deltaY = e.clientY - logDetailStartY
+  const flexDelta = deltaY * logDetailStartTotalFlex / logDetailAreaHeight
+
+  let newFlex1 = logDetailStartFlex1 + flexDelta
+  let newFlex2 = logDetailStartFlex2 - flexDelta
+
+  if (newFlex1 < CENTER_MIN_FLEX) {
+    newFlex1 = CENTER_MIN_FLEX
+    newFlex2 = logDetailStartFlex1 + logDetailStartFlex2 - CENTER_MIN_FLEX
+  }
+  if (newFlex2 < CENTER_MIN_FLEX) {
+    newFlex2 = CENTER_MIN_FLEX
+    newFlex1 = logDetailStartFlex1 + logDetailStartFlex2 - CENTER_MIN_FLEX
+  }
+
+  fileListFlex.value = newFlex1
+  diffAreaFlex.value = newFlex2
+}
+
+function stopResizeLogDetail() {
+  isResizingLogDetail.value = false
+  flushLayout()
+  document.removeEventListener('mousemove', onResizeLogDetailMove)
+  document.removeEventListener('mouseup', stopResizeLogDetail)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
   document.body.style.webkitUserSelect = ''
@@ -1996,6 +2122,7 @@ onBeforeUnmount(() => {
       @refresh="refreshAll"
       @checkout-branch="handleCheckoutBranch"
       @branch="handleMenuAction('new-branch')"
+      :current-view="mainView"
       @stash="handleMenuAction('stash')"
       @show-working-tree="handleMenuAction('show-working-tree')"
       @show-log="handleMenuAction('show-log')"
@@ -2116,7 +2243,7 @@ onBeforeUnmount(() => {
         <!-- 提交历史视图：左侧日志 / 右侧提交详情（文件 + 差异） -->
         <template v-else>
           <div class="log-view-layout">
-            <div class="log-pane">
+            <div class="log-pane" :style="{ flex: logPaneFlex }">
               <LogView 
                 :commits="commits"
                 :selected-id="currentCommitId"
@@ -2129,8 +2256,10 @@ onBeforeUnmount(() => {
               @exit-log="exitLogView"
             />
             </div>
+            <!-- 提交日志面板 ↔ 提交文件面板 左右拖拽分隔条 -->
+            <div class="resize-handle-col" @mousedown="startResizeLogView"></div>
             <!-- 右侧：提交详情（复用现有组件与 diff 链路） -->
-            <div class="commit-detail-area">
+            <div class="commit-detail-area" :style="{ flex: logDetailFlex }">
               <div class="file-list-area" :style="{ flex: fileListFlex }">
                 <FileList 
                   :files="commitFiles"
@@ -2141,7 +2270,7 @@ onBeforeUnmount(() => {
                   @refresh="refreshAll"
                 />
               </div>
-              <div class="resize-handle" @mousedown="startResizeCenter($event, 'diff-log')"></div>
+              <div class="resize-handle" @mousedown="startResizeLogDetail"></div>
               <div class="diff-area" :style="{ flex: diffAreaFlex }">
                 <DiffViewer 
                   :diff="selectedFileDiff"
@@ -2638,18 +2767,14 @@ onBeforeUnmount(() => {
 }
 
 .log-pane {
-  flex: 4;
   min-width: 0;
   min-height: 0;
   display: flex;
 }
 
-.log-pane > :deep(.log-viewer) {
-  border-right: 1px solid var(--border-color);
-}
+/* 历史视图日志面板与提交详情之间由 .resize-handle-col 把手分隔，故此处不再加右边框 */
 
 .commit-detail-area {
-  flex: 6;
   min-width: 0;
   min-height: 0;
   display: flex;
