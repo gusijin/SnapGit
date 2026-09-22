@@ -336,13 +336,13 @@ const tabs = computed(() => [
 
           <!-- 认证与 SSH -->
           <section v-show="activeTab === 'auth'" class="cfg-section">
-            <div class="group-title">
+            <div v-if="isGitHubRepo" class="group-title">
               <Key :size="13" class="group-icon" />
               <span>{{ t('repoConfig.authMethodsTitle') }}</span>
             </div>
 
-            <!-- credential.helper -->
-            <div class="field-inline">
+            <!-- credential.helper（仅 GitHub 远端相关，非 GitHub 仓库整块隐藏） -->
+            <div v-if="isGitHubRepo" class="field-inline">
               <span class="field-label">credential.helper</span>
               <code class="field-value mono">{{ cfg.credential_helper || t('repoConfig.defaultHelper') }}</code>
             </div>
@@ -377,10 +377,6 @@ const tabs = computed(() => [
               <div v-if="clientIdMsg" class="ssh-key-msg" :class="{ error: clientIdErr }">
                 <Check v-if="!clientIdErr" :size="13" class="msg-icon" />{{ clientIdMsg }}
               </div>
-            </div>
-            <div v-else class="info-box">
-              <Info :size="15" class="info-icon" />
-              <span>{{ t('repoConfig.githubNotApplicable') }}</span>
             </div>
 
             <!-- 本地 SSH 密钥 -->
@@ -438,10 +434,6 @@ const tabs = computed(() => [
                 <div class="ssh-name">
                   <Key :size="13" class="ssh-name-icon" />
                   {{ pair.private ? pair.private.path.split(/[/\\]/).pop() : '' }}
-                </div>
-                <div class="ssh-status">
-                  <span class="status-dot" :class="pair.private?.exists ? 'ok' : 'missing'" />
-                  {{ pair.private?.exists ? t('repoConfig.exists') : t('repoConfig.missing') }}
                 </div>
                 <div v-if="pair.public" class="ssh-status subtle">
                   {{ t('repoConfig.publicKey') }}
