@@ -167,6 +167,10 @@ export async function openFileDialog(): Promise<string | null> {
   return result
 }
 
+export async function openInTerminal(repoPath: string): Promise<void> {
+  await invoke('open_in_terminal', { repoPath })
+}
+
 export async function setSshKeyPath(repoPath: string, keyPath: string): Promise<string> {
   return await invoke('set_ssh_key_path', { repoPath, keyPath })
 }

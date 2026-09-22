@@ -2115,6 +2115,57 @@ fn open_file_dialog() -> Result<Option<String>> {
     }
 }
 
+// 在仓库目录打开系统终端（命令行 / git shell）
+#[command]
+fn open_in_terminal(repo_path: String) -> Result<()> {
+    let raw = repo_path.trim().to_string();
+    // Windows 扩展长度路径前缀（\\?\）会让 start 解析异常，剥掉
+    let path = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+    if !Path::new(&path).is_dir() {
+        return Err(format!("仓库路径不存在或不是目录: {}", path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // 优先用 Git Bash（自带 git + Linux 命令，比裸 cmd 顺手）
+        // git-bash.exe 的 --cd=DIR 可在新窗口中直接定位到仓库目录
+        let git_bash_candidates = [
+            "C:\\Program Files\\Git\\git-bash.exe",
+            "C:\\Program Files (x86)\\Git\\git-bash.exe",
+        ];
+        if let Some(git_bash) = git_bash_candidates.iter().find(|p| Path::new(p).exists()) {
+            // MSYS 对路径分隔符更友好，反斜杠统一转正斜杠再喂给 --cd
+            let unix_path = path.replace('\\', "/");
+            let child = std::process::Command::new(git_bash)
+                .arg(format!("--cd={}", unix_path))
+                .creation_flags(0x00000010)
+                .spawn();
+            return child.map(|_| ()).map_err(|e| format!("无法打开 Git Bash: {}", e));
+        }
+        // 回退：新开一个 cmd 窗口并 cd 到仓库目录（Git for Windows 的 git.exe 已在 PATH 上）
+        // /d 指定起始目录；CREATE_NEW_CONSOLE(0x10) 让其独立成窗口
+        let child = std::process::Command::new("cmd")
+            .args(["/c", "start", "/d", &path, "cmd"])
+            .creation_flags(0x00000010)
+            .spawn();
+        return child.map(|_| ()).map_err(|e| format!("无法打开终端: {}", e));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // 用系统 Terminal 打开仓库目录（新窗口自动定位到该路径）
+        let child = std::process::Command::new("open")
+            .args(["-a", "Terminal", &path])
+            .spawn();
+        return child.map(|_| ()).map_err(|e| format!("无法打开终端: {}", e));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err("当前平台不支持打开终端".to_string())
+    }
+}
+
 #[command]
 async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
     let _guard = git_read_guard();
@@ -4087,6 +4138,7 @@ fn main() {
             check_remote_branch_deletable,
             open_folder_dialog,
             open_file_dialog,
+            open_in_terminal,
             set_ssh_key_path,
             set_user_identity,
             detect_git,
