@@ -106,6 +106,27 @@ jobs:
         with:
           args: --target ${{ matrix.target }} --bundles dmg
 
+      # 校验 app 是否真的带代码签名。
+      # Apple Silicon 内核强制要求所有可执行文件有签名，未签名的 arm64 app 在 M 系列上
+      # 会被 Gatekeeper 直接报「已损坏」（文案误导，实为签名校验失败）。
+      # tauri.conf.json 的 bundle.macOS.signingIdentity 保持 "-"（ad-hoc）时，
+      # 这里应输出 "Signature=adhoc" 且 --verify 通过。一旦将来回退成未签名，本步会告警。
+      - name: Verify code signature (${{ matrix.arch }})
+        run: |
+          APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          echo "== bundle/macos 目录 =="
+          ls -la "$APP_DIR" 2>/dev/null || echo "(目录不存在)"
+          if [ -d "$APP_DIR/SnapGit.app" ]; then
+            codesign -dv --verbose=2 "$APP_DIR/SnapGit.app" 2>&1 || true
+            if codesign --verify --deep --strict "$APP_DIR/SnapGit.app"; then
+              echo "签名校验通过"
+            else
+              echo "::warning::SnapGit.app 签名校验未通过，macOS 用户安装时会报「已损坏」"
+            fi
+          else
+            echo "::warning::未找到 SnapGit.app，跳过签名校验"
+          fi
+
       # Tauri 的 dmg bundler 只设置卷宗图标（挂载后），不设置 dmg 文件本身的 Finder 图标
       # （在 macOS Finder 列表里看到的 .dmg 文件图标）。这里补一刀，让 dmg 文件本身也显示 SnapGit 图标。
       # 原理：dmg → UDRW → 挂载 → 写 Icon\r + SetFile -a C → 卸载 → 转回 UDZO
