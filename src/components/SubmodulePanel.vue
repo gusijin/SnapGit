@@ -194,7 +194,8 @@ const empty = computed(() => !loading.value && submodules.value.length === 0)
 </script>
 
 <template>
-  <section class="submodule-panel" :class="{ collapsed }">
+  <!-- @contextmenu.prevent：面板内空白区域右键不弹出任何菜单（子模块操作走行内三点按钮） -->
+  <section class="submodule-panel" :class="{ collapsed }" @contextmenu.prevent>
     <!-- 组头 -->
     <header class="sm-header" @click="toggleCollapsed">
       <button class="sm-collapse" :title="collapsed ? t('submodule.expand') : t('submodule.collapse')">

@@ -300,10 +300,10 @@ onMounted(() => {
   margin-left: auto;
   display: flex;
   align-items: center;
-  /* 自适应：默认占 190px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度 */
-  flex: 0 1 190px;
+  /* 自适应：默认占 140px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度 */
+  flex: 0 1 140px;
   min-width: 56px;
-  max-width: 190px;
+  max-width: 140px;
 }
 
 .search-icon {
@@ -420,7 +420,9 @@ onMounted(() => {
 
 .log-item {
   display: grid;
-  grid-template-columns: 110px 1fr 150px 150px;
+  /* 列序：ID / 提交信息 / 作者 / 日期。作者列收窄至 110px（原 150px），
+     avatar 20px + gap 8px + 名字约 82px，足够显示常见用户名；过长的截断省略 */
+  grid-template-columns: 110px 1fr 110px 150px;
   gap: 12px;
   padding: 8px 12px;
   min-height: 38px;
@@ -528,7 +530,7 @@ onMounted(() => {
    仅保留「提交信息 + 作者」两列，grid 重排为 [1fr 作者]，确保窄屏下核心信息优先展示 */
 @container (max-width: 460px) {
   .log-item {
-    grid-template-columns: 1fr 140px;
+    grid-template-columns: 1fr 100px;
   }
   .col-id,
   .col-date {
