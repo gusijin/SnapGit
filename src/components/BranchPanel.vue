@@ -869,16 +869,21 @@ defineExpose({ openCreateDialog })
   flex-shrink: 0;
 }
 
+/* 「切换」按钮：与同面板 stash-btn 同一套变量（--brand-primary/--bg-active/--text-secondary），
+   不用 dialog 的 --accent-* 体系，保持列表内微按钮语言一致。
+   rest = 透明底 + 品牌蓝字（表意"可操作"）；hover = 浅蓝底(--bg-active) + 品牌蓝字（与 stash-btn 完全一致）。
+   圆角 4px 与 stash-btn / .btn 对齐，不用胶囊。 */
 .checkout-btn {
   padding: 2px 8px;
   font-size: 10px;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-medium);
-  color: var(--accent-text);
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  color: var(--brand-primary);
   border-radius: 4px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, background-color 0.12s;
+  transition: opacity 0.15s, background-color 0.12s, color 0.12s;
 }
 
 .branch-item:hover .checkout-btn {
@@ -886,9 +891,8 @@ defineExpose({ openCreateDialog })
 }
 
 .checkout-btn:hover {
-  background-color: var(--bg-tertiary);
-  border-color: var(--accent-primary);
-  color: var(--text-bright);
+  background-color: var(--bg-active);
+  color: var(--brand-primary);
 }
 
 .empty {

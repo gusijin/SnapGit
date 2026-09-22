@@ -246,7 +246,16 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  /* 高度与其它面板标题栏（提交文件 FileList .panel-header / 仓库 RepositoryList .list-header）严格一致 = 30px。
+     这些标题栏是 padding:6px 10px + 内容自适应，内容最高的是计数徽章：
+     徽章 font-size:10px × 继承行高 1.5 = 15px + 上下 padding 2px = 17px
+     → 6 + 17 + 6 = 29px，再加下方 1px 分隔线 = 30px。
+     本面板内容最高的是 24px 搜索框，若沿用 padding:6px 会撑到 37px、比别的标题栏高 7px。
+     故改为定高 30px（border-box 含 padding 与 1px 分隔线）→ 内容区 29px，24px 搜索框上下各余 2.5px。
+     ⚠️ 若全局行高或徽章样式变化，此处 30px 需同步重算。 */
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;
@@ -300,10 +309,12 @@ onMounted(() => {
   margin-left: auto;
   display: flex;
   align-items: center;
-  /* 自适应：默认占 140px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度 */
-  flex: 0 1 140px;
+  /* 自适应：默认占 150px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度。
+     ⚠️ flex-basis 与 max-width 必须同步改：basis 才是主轴实际宽度，
+     只调 max-width 而 basis 更小时，max-width 根本不起约束作用（宽度不会变）。 */
+  flex: 0 1 150px;
   min-width: 56px;
-  max-width: 140px;
+  max-width: 150px;
 }
 
 .search-icon {
