@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Key } from 'lucide-vue-next'
-import { getRemotes, getUpstream, pushChanges, saveCredentials, getRemoteUrl, getRepoConfig } from '../api/git'
+import { Key, TriangleAlert } from 'lucide-vue-next'
+import { getRemotes, getUpstream, pushChanges, pullWithStrategy, saveCredentials, getRemoteUrl, getRepoConfig } from '../api/git'
+import { classifyPushError } from '../pushError'
 import { startGitHubDeviceAuth, isGitHubClientIdConfigured, isGitHubRemoteUrl, type GitHubAuthStatus } from '../githubAuth'
 import { open } from '@tauri-apps/plugin-shell'
 import type { Branch } from '../types'
@@ -34,10 +35,12 @@ interface Props {
   initialBranch?: string
   /** 打开即进入认证模式（用于提交并推送时认证失败，直接展示授权入口） */
   initialAuthMode?: boolean
+  /** 打开时预置的推送失败信息（用于提交并推送因「非快进」被拒时，直接展示「拉取并推送」出口） */
+  initialError?: string
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['close', 'pushed', 'pushing'])
+const emit = defineEmits(['close', 'pushed', 'pushing', 'pull-conflict'])
 const { t } = useI18n()
 
 const remotes = ref<string[]>([])
@@ -45,7 +48,10 @@ const localBranch = ref('')
 const remote = ref('')
 const remoteBranch = ref('')
 const isPushing = ref(false)
+const isPulling = ref(false)
 const error = ref('')
+// 推送被拒（非快进）：远程有本地没有的新提交 → 展示「拉取并推送」出口
+const rejected = ref(false)
 const loading = ref(true)
 
 // 认证相关状态
@@ -123,6 +129,12 @@ async function init() {
   }
   // 远端已确定，取 URL 用于展示并判定是否 GitHub
   if (authMode.value) await loadRemoteUrl()
+  // 由「提交并推送」因非快进被拒而打开：预置错误信息，直接展示「拉取并推送」出口
+  if (props.initialError) {
+    const info = classifyPushError(props.initialError)
+    error.value = info.detail
+    rejected.value = info.kind === 'non-ff'
+  }
 }
 
 async function onLocalBranchChange() {
@@ -138,24 +150,6 @@ async function onLocalBranchChange() {
   } catch (e) {
     remoteBranch.value = localBranch.value
   }
-}
-
-// 凭证类失败（HTTPS 场景）：需用户名/令牌或 credential helper
-function isCredentialError(msg: string): boolean {
-  const lower = msg.toLowerCase()
-  return lower.includes('authentication failed')
-    || lower.includes('access denied')
-    || lower.includes('could not read username')
-    || lower.includes('terminal prompts disabled')
-    || lower.includes('认证失败')
-}
-
-// SSH 公钥类失败：已配 SSH 私钥但未通过认证，应提示检查 SSH 而非强求令牌
-function isSshAuthError(msg: string): boolean {
-  const lower = msg.toLowerCase()
-  return lower.includes('permission denied (publickey)')
-    || lower.includes('could not read from remote repository')
-    || lower.includes('ssh 公钥认证未通过')
 }
 
 async function handlePush() {
@@ -180,17 +174,46 @@ async function handlePush() {
     emit('pushed')
     emit('close')
   } catch (e) {
-    const msg = String(e)
-    error.value = msg
+    const info = classifyPushError(String(e))
+    error.value = info.detail
+    // 推送被拒（非快进）：远程有本地没有的新提交 → 展示「拉取并推送」出口
+    rejected.value = info.kind === 'non-ff'
     // 已配置 SSH 私钥：失败后不自动跳转「远程仓库认证」界面，保持普通推送界面（推送按钮始终可用），
     // 仅展示错误诊断；SSH 私钥与访问令牌二选一即可，不应在已配 SSH 时强求令牌。
-    if (!sshConfigured.value && (isCredentialError(msg) || isSshAuthError(msg))) {
+    if (!rejected.value && !sshConfigured.value && (info.kind === 'credential' || info.kind === 'ssh')) {
       await loadRemoteUrl()
       authMode.value = true
     }
   } finally {
     isPushing.value = false
     emit('pushing', false)
+  }
+}
+
+/**
+ * 推送被拒（非快进）时的一键修复：先以 merge 方式拉取远程新提交，成功后再重试推送。
+ * - 拉取成功 → 清除被拒状态并重试推送；
+ * - 拉取产生冲突 → 关闭本弹窗并把冲突交给主窗口「变更文件」面板解决（emit pull-conflict）。
+ */
+async function onPullAndPush() {
+  if (isPulling.value || isPushing.value) return
+  isPulling.value = true
+  try {
+    await pullWithStrategy(props.repoPath, 'merge')
+    rejected.value = false
+    isPulling.value = false
+    await handlePush()
+  } catch (e) {
+    const msg = typeof e === 'string' ? e : (e?.toString?.() || String(e))
+    if (msg.startsWith('PULL_CONFLICT:')) {
+      emit('pull-conflict', 'merge')
+      emit('close')
+      return
+    }
+    error.value = classifyPushError(msg).detail
+    rejected.value = false
+  } finally {
+    isPulling.value = false
   }
 }
 
@@ -273,7 +296,7 @@ function onOpenChange(open: boolean) {
 }
 
 function guardClose(e: Event) {
-  if (isPushing.value || isSavingAuth.value || ghActive.value) e.preventDefault()
+  if (isPushing.value || isPulling.value || isSavingAuth.value || ghActive.value) e.preventDefault()
 }
 
 init()
@@ -330,9 +353,23 @@ init()
           <Input id="remote-branch" v-model="remoteBranch" :placeholder="t('push.remoteBranchPlaceholder')" :disabled="authMode" />
         </div>
 
-        <div v-if="error" class="error-message">{{ error }}</div>
+        <!-- 推送被拒（非快进）：友好说明 + 可折叠原始错误（原始错误默认收起，避免噪声） -->
+        <div v-if="rejected" class="rejected-box">
+          <div class="rejected-title">
+            <TriangleAlert :size="13" />
+            <span>{{ t('push.rejectedTitle') }}</span>
+          </div>
+          <p class="rejected-desc">
+            {{ t('push.rejectedDesc', { remote, branch: remoteBranch.trim() || localBranch }) }}
+          </p>
+          <details v-if="error" class="rejected-detail">
+            <summary>{{ t('push.rejectedDetail') }}</summary>
+            <pre>{{ error }}</pre>
+          </details>
+        </div>
+        <div v-else-if="error" class="error-message">{{ error }}</div>
         <!-- 已配置 SSH 私钥但推送失败时的备选入口：默认不进入认证界面，需用户主动切换 -->
-        <div v-if="error && sshConfigured && !authMode" class="auth-fallback">
+        <div v-if="error && !rejected && sshConfigured && !authMode" class="auth-fallback">
           <button type="button" class="link-btn" @click="enterAuthMode">
             {{ t('push.useTokenInstead') }}
           </button>
@@ -388,7 +425,7 @@ init()
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="emit('close')" :disabled="isPushing || isSavingAuth">
+        <Button variant="outline" @click="emit('close')" :disabled="isPushing || isPulling || isSavingAuth">
           {{ t('push.cancel') }}
         </Button>
         <template v-if="authMode">
@@ -400,7 +437,14 @@ init()
           </Button>
         </template>
         <template v-else>
-          <Button @click="handlePush" :disabled="isPushing || loading">
+          <!-- 被拒时提供两个出口：直接重试推送 / 一键「拉取并推送」 -->
+          <Button v-if="rejected" variant="outline" @click="handlePush" :disabled="isPushing || isPulling">
+            {{ t('push.pushBtn') }}
+          </Button>
+          <Button v-if="rejected" @click="onPullAndPush" :disabled="isPushing || isPulling">
+            {{ isPulling ? t('push.pulling') : t('push.pullAndPush') }}
+          </Button>
+          <Button v-else @click="handlePush" :disabled="isPushing || loading">
             {{ isPushing ? t('push.pushing') : t('push.pushBtn') }}
           </Button>
         </template>
@@ -427,6 +471,53 @@ init()
   border-radius: 4px;
   word-break: break-all;
   white-space: pre-wrap;
+}
+
+/* 推送被拒（非快进）：温和的警示块；主操作是「拉取并推送」，原始错误默认折叠 */
+.rejected-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  background-color: var(--danger-bg);
+}
+
+.rejected-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger-color);
+}
+
+.rejected-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.rejected-detail summary {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.rejected-detail pre {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-family: Consolas, Monaco, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* 已配 SSH 但失败时的备选入口（低调文字链接） */

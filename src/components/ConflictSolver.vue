@@ -2,7 +2,8 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ConflictFile, ConflictBlock } from '../types'
-import { fileLang, tokenizeLine, type Token } from '../syntaxHighlight'
+import { fileLang } from '../syntaxHighlight'
+import { diffWords, plainSegments, changedSegments, mergeSegments, type Segment } from '../wordDiff'
 import {
   ChevronUp, ChevronDown, ArrowLeftToLine, ArrowRightToLine,
   AlignJustify, Save, X, GitMerge, ArrowLeft, ArrowRight,
@@ -119,44 +120,152 @@ const currentBlock = computed(() => blocks.value[currentBlockIndex.value] ?? nul
 const oursText = computed(() => props.conflictFile.ours_content.join('\n'))
 const theirsText = computed(() => props.conflictFile.theirs_content.join('\n'))
 
-// 语法高亮：逐行分词，供着色层（diff-overlay）渲染关键字颜色
+// 语言（决定语法高亮规则）
 const lang = computed(() => fileLang(props.conflictFile.path))
-function tokenizeLines(lines: string[]): Token[][] {
-  return lines.map((ln) => tokenizeLine(ln, lang.value))
+
+/** 去掉行尾换行：冲突块片段来自 splitLinesKeepNewline（带 '\n'），而 ours_content/theirs_content 不带 */
+function stripEol(s: string): string {
+  return s.replace(/\r?\n$/, '')
 }
-const oursSegs = computed(() => tokenizeLines(props.conflictFile.ours_content))
-const theirsSegs = computed(() => tokenizeLines(props.conflictFile.theirs_content))
-const middleSegs = computed(() => tokenizeLines(workingContent.value.split('\n')))
+
+// ---- 行内（词级）差异：参考 IDEA / SmartGit 的合并编辑器 ----
+// 每个冲突块内把 ours / theirs 按行对齐，逐行做 token 级 LCS 差异，标出「只属于某一侧」的词。
+// 与行级底色叠加，形成「行级色块 + 词级高亮」两层差异表达；这在原先只有整行色块的基础上，
+// 让用户直接看到「这一行里到底哪几个词不同」。
+interface BlockLineSegs {
+  left: Segment[]
+  right: Segment[]
+}
+
+const blockWordSegs = computed<BlockLineSegs[][]>(() =>
+  blocks.value.map((b) => {
+    const n = Math.max(b.ours.length, b.theirs.length)
+    const rows: BlockLineSegs[] = []
+    for (let i = 0; i < n; i++) {
+      const hasL = i < b.ours.length
+      const hasR = i < b.theirs.length
+      const l = hasL ? stripEol(b.ours[i]) : ''
+      const r = hasR ? stripEol(b.theirs[i]) : ''
+      if (hasL && hasR) {
+        const d = diffWords(l, r)
+        rows.push({ left: mergeSegments(d.left, l, lang.value), right: mergeSegments(d.right, r, lang.value) })
+      } else if (hasL) {
+        rows.push({ left: changedSegments(l, lang.value), right: [] })
+      } else {
+        rows.push({ left: [], right: changedSegments(r, lang.value) })
+      }
+    }
+    return rows
+  })
+)
+
+// ---- 冲突块片段在 ours / theirs 全文中的行范围（顺序查找）----
+// 用于在左右两栏「仅标记冲突片段所在的行」（非整栏染色），与 working 栏的差异标记对应。
+interface FragSpan {
+  first: number
+  last: number
+}
+
+function findFragment(full: string[], frag: string[], from: number): number {
+  if (frag.length === 0) return -1
+  outer: for (let s = from; s + frag.length <= full.length; s++) {
+    for (let k = 0; k < frag.length; k++) {
+      if (full[s + k] !== frag[k]) continue outer
+    }
+    return s
+  }
+  return -1
+}
+
+function locateFragments(full: string[], pick: (b: ConflictBlock) => string[]): (FragSpan | null)[] {
+  let pos = 0
+  return blocks.value.map((b) => {
+    const frag = pick(b).map(stripEol)
+    const idx = findFragment(full, frag, pos)
+    if (idx < 0) return null
+    pos = idx + frag.length
+    return { first: idx, last: idx + frag.length - 1 }
+  })
+}
+
+const oursFragSpans = computed(() => locateFragments(props.conflictFile.ours_content, (b) => b.ours))
+const theirsFragSpans = computed(() => locateFragments(props.conflictFile.theirs_content, (b) => b.theirs))
+
+// 逐行渲染模型：一行 = 词级分段 + 行级 class
+interface LineModel {
+  segs: Segment[]
+  cls: string
+}
+
+function buildSideLines(
+  full: string[],
+  spans: (FragSpan | null)[],
+  pick: (b: ConflictBlock) => string[],
+  side: 'ours' | 'theirs',
+): LineModel[] {
+  const models: LineModel[] = full.map((ln) => ({ segs: plainSegments(ln, lang.value), cls: '' }))
+  blocks.value.forEach((b, bi) => {
+    const span = spans[bi]
+    if (!span) return
+    const cur = bi === currentBlockIndex.value ? ' current' : ''
+    const fragLen = pick(b).length
+    for (let k = 0; k < fragLen; k++) {
+      const li = span.first + k
+      if (li >= models.length) break
+      const row = blockWordSegs.value[bi]?.[k]
+      const segs = (side === 'ours' ? row?.left : row?.right) ?? []
+      models[li] = { segs, cls: `side-${side}${cur}` }
+    }
+  })
+  return models
+}
+
+const oursLines = computed(() =>
+  buildSideLines(props.conflictFile.ours_content, oursFragSpans.value, (b) => b.ours, 'ours'),
+)
+const theirsLines = computed(() =>
+  buildSideLines(props.conflictFile.theirs_content, theirsFragSpans.value, (b) => b.theirs, 'theirs'),
+)
+
+// 中间（working）栏：逐行「词级分段 + 行角色 class」。
+// 行级底色与编辑页 .hl-del/.hl-add 同源：ours 段红 / theirs 段绿 / 标记行灰 / base（diff3 祖先）行灰；
+// 当前块追加 current 强调。
+const middleLines = computed<LineModel[]>(() => {
+  const lines = workingContent.value.split('\n')
+  const models: LineModel[] = lines.map((ln) => ({ segs: plainSegments(ln, lang.value), cls: '' }))
+  const mark = (idx: number, cls: string, segs?: Segment[]) => {
+    if (idx < 0 || idx >= models.length) return
+    const merged = models[idx].cls ? models[idx].cls + ' ' + cls : cls
+    models[idx] = { segs: segs ?? models[idx].segs, cls: merged }
+  }
+  blocks.value.forEach((b, bi) => {
+    const cur = bi === currentBlockIndex.value ? ' current' : ''
+    const wordRows = blockWordSegs.value[bi] ?? []
+    // ours 段
+    for (let k = 0; k < b.ours.length; k++) {
+      mark(b.start_line + 1 + k, `line-confl-ours${cur}`, wordRows[k]?.left)
+    }
+    // base 段（仅在 merge.conflictStyle=diff3 时存在）
+    if (b.base && b.base.length > 0) {
+      const baseStart = b.separator_line - b.base.length
+      for (let k = 0; k < b.base.length; k++) mark(baseStart + k, `line-confl-base${cur}`)
+      mark(baseStart - 1, `line-confl-marker${cur}`)
+    }
+    // theirs 段
+    for (let k = 0; k < b.theirs.length; k++) {
+      mark(b.end_line - b.theirs.length + k, `line-confl-theirs${cur}`, wordRows[k]?.right)
+    }
+    // 三种标记行
+    mark(b.start_line, `line-confl-marker${cur}`)
+    mark(b.separator_line, `line-confl-marker${cur}`)
+    mark(b.end_line, `line-confl-marker${cur}`)
+  })
+  return models
+})
 
 const allLineCount = computed(() => workingContent.value.split('\n').length)
 const leftLineCount = computed(() => props.conflictFile.ours_content.length || 1)
 const rightLineCount = computed(() => props.conflictFile.theirs_content.length || 1)
-
-// 冲突块逐行底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod 的「行级整行底色」）：
-// working 栏每一行按角色给一个底色 class —— 标记行（<<<<<<< / ||||||| / ======= / >>>>>>>）灰、
-// ours 段红、theirs 段绿；取代原先「整块一个矩形 + 边框」的框式高亮（古哥：不要整个都是框的 hover）。
-const middleLineClasses = computed(() => {
-  const lines = workingContent.value.split('\n')
-  const arr: string[] = new Array(lines.length).fill('')
-  for (const b of blocks.value) {
-    for (let i = b.start_line; i <= b.end_line && i < arr.length; i++) {
-      const txt = lines[i] ?? ''
-      if (
-        txt.startsWith('<<<<<<<') ||
-        txt.startsWith('|||||||') ||
-        txt.startsWith('=======') ||
-        txt.startsWith('>>>>>>>')
-      ) {
-        arr[i] = 'line-confl-marker'
-      } else if (i < b.separator_line) {
-        arr[i] = 'line-confl-ours'
-      } else {
-        arr[i] = 'line-confl-theirs'
-      }
-    }
-  }
-  return arr
-})
 
 // 当前冲突块在左/右操作列中的垂直定位（与编辑区行号对应）
 function blockTop(idx: number): number {
@@ -464,7 +573,7 @@ function lineNumberArray(count: number): number[] {
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
               <div ref="leftOverlayInner" class="diff-overlay-inner">
-                <div v-for="(segs, idx) in oursSegs" :key="'lo' + idx" class="hl-line"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+                <div v-for="(line, idx) in oursLines" :key="'lo' + idx" class="hl-line" :class="line.cls"><span v-for="(seg, si) in line.segs" :key="si" :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]">{{ seg.text }}</span></div>
               </div>
             </div>
             <textarea
@@ -526,7 +635,7 @@ function lineNumberArray(count: number): number[] {
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
               <div ref="middleOverlayInner" class="diff-overlay-inner">
-                <div v-for="(segs, idx) in middleSegs" :key="'mo' + idx" class="hl-line" :class="middleLineClasses[idx]"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+                <div v-for="(line, idx) in middleLines" :key="'mo' + idx" class="hl-line" :class="line.cls"><span v-for="(seg, si) in line.segs" :key="si" :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]">{{ seg.text }}</span></div>
               </div>
             </div>
             <textarea
@@ -604,7 +713,7 @@ function lineNumberArray(count: number): number[] {
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
               <div ref="rightOverlayInner" class="diff-overlay-inner">
-                <div v-for="(segs, idx) in theirsSegs" :key="'ro' + idx" class="hl-line"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+                <div v-for="(line, idx) in theirsLines" :key="'ro' + idx" class="hl-line" :class="line.cls"><span v-for="(seg, si) in line.segs" :key="si" :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]">{{ seg.text }}</span></div>
               </div>
             </div>
             <textarea
@@ -868,9 +977,10 @@ function lineNumberArray(count: number): number[] {
 .tok-constant { color: var(--syntax-constant); }
 .tok-plain    { color: var(--text-primary); }
 
-/* 冲突块逐行底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod）：整行底色、无边框/无框。
-   标记行灰（--bg-tertiary）、ours 段红（--bg-del）、theirs 段绿（--bg-add）。 */
-.hl-line.line-confl-marker {
+/* 行级底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod）：整行底色、无边框。
+   标记行灰 / base（diff3 祖先）灰、ours 段红（--bg-del）、theirs 段绿（--bg-add）。 */
+.hl-line.line-confl-marker,
+.hl-line.line-confl-base {
   background-color: var(--bg-tertiary);
 }
 
@@ -880,6 +990,48 @@ function lineNumberArray(count: number): number[] {
 
 .hl-line.line-confl-theirs {
   background-color: var(--bg-add);
+}
+
+/* 左右两栏：仅在该冲突块「片段所在的行」上底色（不是整栏染色），
+   标出这一侧参与冲突的区域 —— 与 working 栏的差异标记一一对应，对齐 IDEA / SmartGit。 */
+.hl-line.side-ours {
+  background-color: var(--bg-del);
+}
+
+.hl-line.side-theirs {
+  background-color: var(--bg-add);
+}
+
+/* 当前冲突块：在三栏原有底色之上再加一层强调，便于在长文件里定位（IDEA 的当前冲突高亮） */
+.hl-line.current.line-confl-ours,
+.hl-line.side-ours.current {
+  background-color: color-mix(in srgb, var(--color-del) 22%, transparent);
+}
+
+.hl-line.current.line-confl-theirs,
+.hl-line.side-theirs.current {
+  background-color: color-mix(in srgb, var(--color-add) 22%, transparent);
+}
+
+.hl-line.current.line-confl-marker,
+.hl-line.current.line-confl-base {
+  background-color: var(--bg-toolbar);
+}
+
+/* 词级差异高亮：在行级底色之上，进一步框出「这一行里到底哪几个词不同」（IDEA / SmartGit 风格）。
+   色相跟随所在侧：ours = 红（--color-del），theirs = 绿（--color-add）。 */
+.seg-chg {
+  border-radius: 2px;
+}
+
+.line-confl-ours .seg-chg,
+.hl-line.side-ours .seg-chg {
+  background-color: color-mix(in srgb, var(--color-del) 30%, transparent);
+}
+
+.line-confl-theirs .seg-chg,
+.hl-line.side-theirs .seg-chg {
+  background-color: color-mix(in srgb, var(--color-add) 30%, transparent);
 }
 
 /* 两列之间的操作列：与编辑页面(编辑差异)一致，按冲突块行号垂直定位箭头按钮 */

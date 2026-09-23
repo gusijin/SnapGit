@@ -10,6 +10,7 @@ import {
   stashCreate, stashList, stashApply, stashDrop, openEditWindow,
   finishMerge, continueRebase, abortMerge, abortRebase,
 } from '../api/git'
+import { classifyPushError } from '../pushError'
 import type { Commit, Branch, FileStatus, ScannedProject, FileTreeNode, FileDiff, StashEntry } from '../types'
 import { useTheme } from '../stores/theme'
 import { setLocale } from '../i18n'
@@ -1138,6 +1139,7 @@ async function handleCommitAndPush() {
       // 有远程但分支未设置上游：打开推送对话框让用户配置（普通模式，不需认证）
       pushDialogBranch.value = committedBranch
       pushDialogAuthMode.value = false
+      pushDialogError.value = ''
       showPushDialog.value = true
       showToast(t('repository.pushNeedsUpstream'), 'success')
       return
@@ -1153,16 +1155,24 @@ async function handleCommitAndPush() {
     loadRepoData()
   } catch (e: any) {
     console.error('Push error:', e)
-    const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
+    const info = classifyPushError(typeof e === 'string' ? e : (e?.toString?.() || String(e)))
     // 仅凭证类失败（HTTPS 场景）才引导填令牌；SSH 公钥失败由后端改写为明确提示，不应强制要令牌
-    if (/authentication failed|could not read username|terminal prompts disabled|access denied/i.test(msg)) {
+    if (info.kind === 'credential') {
       // 认证失败：让用户在推送对话框里配置凭证（直接进入认证模式，展示 GitHub 授权入口）
       pushDialogBranch.value = committedBranch
       pushDialogAuthMode.value = true
+      pushDialogError.value = ''
       showPushDialog.value = true
       showToast(t('repository.pushNeedsAuth'), 'error')
+    } else if (info.kind === 'non-ff') {
+      // 推送被拒（非快进）：打开推送对话框并预置错误信息，直接给出「拉取并推送」出口
+      pushDialogBranch.value = committedBranch
+      pushDialogAuthMode.value = false
+      pushDialogError.value = info.detail
+      showPushDialog.value = true
+      showToast(t('repository.pushRejectedHint'), 'error')
     } else {
-      showToast(t('repository.pushFailed', { error: msg }), 'error')
+      showToast(t('repository.pushFailed', { error: info.detail }), 'error')
     }
   } finally {
     isPushing.value = false
@@ -1484,6 +1494,8 @@ const pushDialogBranch = ref('')
 // 推送对话框是否直接进入认证模式：仅「认证失败」时置 true。
 // 默认 false —— 已配置 SSH 私钥时点推送就是普通推送界面，按钮可用，不再强求访问令牌。
 const pushDialogAuthMode = ref(false)
+// 推送对话框预置的失败信息（「提交并推送」因非快进被拒时传入，直接展示「拉取并推送」出口）
+const pushDialogError = ref('')
 const showCloneDialog = ref(false)
 const showRepoConfig = ref(false)
 // 仓库配置对话框实际展示的仓库路径：菜单栏「编辑-配置」用当前仓库，
@@ -1555,6 +1567,7 @@ function handlePush() {
   }
   pushDialogBranch.value = ''
   pushDialogAuthMode.value = false
+  pushDialogError.value = ''
   showPushDialog.value = true
 }
 
@@ -1563,7 +1576,17 @@ function handlePushBranch(branchName: string) {
   if (!repoPath.value) return
   pushDialogBranch.value = branchName
   pushDialogAuthMode.value = false
+  pushDialogError.value = ''
   showPushDialog.value = true
+}
+
+// 推送对话框内「拉取并推送」时拉取产生冲突：关闭弹窗后把冲突交给主窗口「变更文件」面板解决
+function handlePullConflict(strategy: 'merge' | 'rebase') {
+  pendingPullStrategy.value = strategy
+  pullConflictActive.value = true
+  refreshConflictList().then(() => {
+    showToast(t('repository.pullConflictFiles', { n: conflictFiles.value.length }), 'error')
+  })
 }
 
 // 右键分支菜单：创建分支（从当前 HEAD 创建，不切换）
@@ -2491,9 +2514,11 @@ onBeforeUnmount(() => {
         :current-branch="currentBranch"
         :initial-branch="pushDialogBranch || undefined"
         :initial-auth-mode="pushDialogAuthMode"
+        :initial-error="pushDialogError || undefined"
         @close="showPushDialog = false"
         @pushed="handlePushed"
         @pushing="(v: boolean) => { isPushing = v }"
+        @pull-conflict="handlePullConflict"
       />
     </Teleport>
 
