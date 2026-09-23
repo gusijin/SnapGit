@@ -36,6 +36,9 @@ const middleOverlayInner = ref<HTMLElement | null>(null)
 const rightOverlayInner = ref<HTMLElement | null>(null)
 const leftMidColRef = ref<HTMLElement | null>(null)
 const rightMidColRef = ref<HTMLElement | null>(null)
+// 中间列顶部占位高度 = 相邻文本栏 .panel-label 高度（运行时实测），用于把弧形/箭头按钮的
+// 垂直坐标原点对齐到编辑器内容原点（文本栏被 panel-label 整体下压了同样高度，中间列没有，会偏高 ≈L）
+const midcolTopPad = ref(28)
 
 const LINE_HEIGHT = 18
 const PADDING_TOP = 8
@@ -246,6 +249,7 @@ watch(currentBlock, async () => {
 })
 
 onMounted(() => {
+  measureLabelHeight()
   scrollToCurrentBlock()
 })
 
@@ -255,6 +259,13 @@ function scrollToCurrentBlock() {
   if (!block || !ta) return
   const targetTop = PADDING_TOP + block.start_line * LINE_HEIGHT
   ta.scrollTop = Math.max(0, targetTop - ta.clientHeight / 3)
+}
+
+// 实测相邻文本栏 .panel-label 的高度，作为中间列顶部占位，使弧形/箭头按钮与编辑器内容原点
+// （被 panel-label 下压了同样高度）精确对齐。主题/CSS 改动后自动跟随，无需硬编码。
+function measureLabelHeight() {
+  const lbl = document.querySelector<HTMLElement>('.solver-panels .panel-label')
+  if (lbl) midcolTopPad.value = lbl.offsetHeight
 }
 
 function syncScroll(source: 'left' | 'middle' | 'right') {
@@ -470,6 +481,7 @@ function lineNumberArray(count: number): number[] {
 
       <!-- 左中间操作列：ours ↔ working，每个冲突块对应位置一个「接受 ours」箭头 -->
       <div class="solver-midcol" ref="leftMidColRef">
+        <div class="midcol-label-spacer" :style="{ height: midcolTopPad + 'px' }"></div>
         <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
           <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，绿=ours，当前块高亮 -->
           <svg
@@ -547,6 +559,7 @@ function lineNumberArray(count: number): number[] {
 
       <!-- 右中间操作列：working ↔ theirs，每个冲突块对应位置一个「接受 theirs」箭头 -->
       <div class="solver-midcol" ref="rightMidColRef">
+        <div class="midcol-label-spacer" :style="{ height: midcolTopPad + 'px' }"></div>
         <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
           <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，蓝=theirs，当前块高亮 -->
           <svg
@@ -887,6 +900,21 @@ function lineNumberArray(count: number): number[] {
   height: 0;
 }
 
+/* 中间列顶部占位：高度 = 相邻文本栏 .panel-label（运行时实测，midcolTopPad）。
+   文本栏的编辑器被 panel-label 整体下压了 L，中间列没有 label，故补一个等高的
+   非滚动占位（sticky 不随滚动移走），把弧形/箭头按钮的垂直原点对齐到编辑器内容原点，
+   修正原「弧形整体偏高 ≈L」的错位。占位用与 panel-label 一致的灰底+下边框，滚动时
+   与文本栏一样把上方内容遮在条带之下，保证三栏顶部视觉对齐。 */
+.midcol-label-spacer {
+  position: sticky;
+  top: 0;
+  flex-shrink: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  background-color: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-color);
+}
+
 .midcol-inner {
   position: relative;
   /* 顶部 8px：与 textarea 内容起点一致（行 0 上沿对齐） */
@@ -924,25 +952,33 @@ function lineNumberArray(count: number): number[] {
   fill-opacity: 1;
 }
 
-/* 左列：绿（ours），与 accept-left 按钮同色 */
+/* 连接带配色 = 「它连接的那一侧的差异色」，与同侧行底色同一套语义
+   （ours = 红/删 --color-del，与 .line-confl-ours 的 --bg-del 同源；
+     theirs = 绿/增 --color-add，与 .line-confl-theirs 的 --bg-add 同源），
+   与编辑页 .band-del / .band-add 也是同一套色。这样中间列的带子读作
+   「这一块差异顺着缺口延续过去」，而不是「某个动作按钮的颜色」。
+   注意：中间列底色 --bg-toolbar(#f1f5f9) 比 ours/theirs 栏底色 --bg-tertiary(#e2e8f0) 亮，
+   同一 alpha 在中间列会显得更淡，故这里 alpha 取比行底色略高的值以保证「桥」可见。 */
+
+/* 左中列（ours ↔ working）：红 = 该块 ours 内容（删/HEAD 侧） */
 .diff-bands.band-ours .band {
-  fill: rgba(46, 160, 67, 0.09);
-  stroke: var(--color-add, #2ea043);
+  fill: color-mix(in srgb, var(--color-del, #dc2626) 22%, transparent);
+  stroke: var(--color-del, #dc2626);
 }
 
 .diff-bands.band-ours .band.active {
-  fill: rgba(46, 160, 67, 0.16);
+  fill: color-mix(in srgb, var(--color-del, #dc2626) 34%, transparent);
   stroke-opacity: 0.85;
 }
 
-/* 右列：蓝（theirs），与 accept-right 按钮同色 */
+/* 右中列（working ↔ theirs）：绿 = 该块 theirs 内容（增/合并侧） */
 .diff-bands.band-theirs .band {
-  fill: rgba(56, 139, 253, 0.09);
-  stroke: var(--accent-primary, #388bfd);
+  fill: color-mix(in srgb, var(--color-add, #16a34a) 22%, transparent);
+  stroke: var(--color-add, #16a34a);
 }
 
 .diff-bands.band-theirs .band.active {
-  fill: rgba(56, 139, 253, 0.16);
+  fill: color-mix(in srgb, var(--color-add, #16a34a) 34%, transparent);
   stroke-opacity: 0.85;
 }
 

@@ -15,10 +15,16 @@ interface Props {
   // 变更文件扫描进行中（首屏分阶段加载时，git status 延后到分支/提交日志之后）：
   // 空列表在扫描期间显示「正在扫描变更文件…」，而非误报「工作区干净」
   loading?: boolean
+  // 拉取产生的合并/变基是否仍在进行中（存在未完成的 pull 冲突）。
+  // 仅 working-tree 视图使用：为 true 时在面板底部展示「冲突解决条」，
+  // 提供「完成合并/继续变基」与「放弃」入口，替代原先的弹窗。
+  conflictActive?: boolean
+  // 进行中的拉取策略，决定解决条按钮文案（merge → 完成合并 / rebase → 继续变基）
+  pullStrategy?: 'merge' | 'rebase' | null
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['select-files', 'stage-files', 'commit-files', 'discard-files', 'open-file', 'refresh'])
+const emit = defineEmits(['select-files', 'stage-files', 'commit-files', 'discard-files', 'open-file', 'refresh', 'resolve-conflicts', 'abort-conflicts'])
 const { t } = useI18n()
 
 const pendingClickTimer = ref<number | null>(null)
@@ -182,6 +188,8 @@ function handleStage() {
 }
 
 function handleCommitFile() {
+  // 存在未解决冲突时禁止提交（提交守卫由「变更文件」面板内冲突条统一处理）
+  if (hasConflicts.value) return
   emit('commit-files', props.selectedFiles)
   closeContextMenu()
 }
@@ -206,6 +214,12 @@ function selectAllFiles() {
 }
 
 const isMultiSelected = computed(() => props.selectedFiles.length > 1)
+
+// 当前列表中的冲突文件数（status 为 conflict / unmerged），用于面板内冲突条与提交守卫
+const conflictCount = computed(() =>
+  props.files.filter(f => f.status === 'conflict' || f.status === 'unmerged').length,
+)
+const hasConflicts = computed(() => conflictCount.value > 0)
 </script>
 
 <template>
@@ -262,6 +276,39 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
       </div>
     </div>
 
+    <!-- 面板内冲突解决条：拉取产生合并/变基冲突时显示，替代原先的弹窗。
+         未解决前「完成合并/继续变基」禁用，必须在上方逐一点开解决；冲突全部解决后该按钮才可点击。 -->
+    <div
+      v-if="viewMode === 'working-tree' && conflictActive"
+      class="conflict-banner"
+      :class="{ resolved: !hasConflicts }"
+    >
+      <div class="cb-text">
+        <span class="cb-title">{{ t('fileList.conflictBannerTitle') }}</span>
+        <span class="cb-desc">
+          <template v-if="hasConflicts">{{ t('fileList.conflictBannerDesc', { n: conflictCount }) }}</template>
+          <template v-else>{{ t('fileList.conflictBannerResolved') }}</template>
+        </span>
+      </div>
+      <div class="cb-actions">
+        <button
+          type="button"
+          class="cb-btn cb-primary"
+          :disabled="hasConflicts"
+          @click="$emit('resolve-conflicts')"
+        >
+          {{ pullStrategy === 'rebase' ? t('fileList.continueRebase') : t('fileList.finishMerge') }}
+        </button>
+        <button
+          type="button"
+          class="cb-btn"
+          @click="$emit('abort-conflicts')"
+        >
+          {{ pullStrategy === 'rebase' ? t('fileList.abortRebase') : t('fileList.abortMerge') }}
+        </button>
+      </div>
+    </div>
+
     <Teleport to="body">
       <div
         v-if="showContextMenu"
@@ -269,7 +316,7 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
         :style="{ left: contextMenuPos.x + 'px', top: contextMenuPos.y + 'px' }"
         @click.stop
       >
-        <div class="menu-item" @click="handleCommitFile" v-if="rightClickFile && viewMode === 'working-tree'">
+        <div :class="['menu-item', { disabled: hasConflicts }]" @click="handleCommitFile" v-if="rightClickFile && viewMode === 'working-tree'">
           <Check :size="14" class="menu-icon" />
           <span v-if="isMultiSelected">{{ t('fileList.commitSelected') }}</span>
           <span v-else>{{ t('fileList.commitThis') }}</span>
@@ -508,6 +555,77 @@ const isMultiSelected = computed(() => props.selectedFiles.length > 1)
 .menu-item.danger:hover {
   background-color: var(--danger-bg, rgba(244, 71, 71, 0.15));
   color: var(--danger-color, #f44747);
+}
+
+/* 面板底部冲突解决条（替代原有的拉取冲突弹窗，显示在「变更文件」面板内） */
+.conflict-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background-color: var(--bg-del, rgba(239, 68, 68, 0.12));
+  border-top: 1px solid var(--border-color);
+}
+.conflict-banner.resolved {
+  background-color: var(--bg-add, rgba(34, 197, 94, 0.12));
+}
+.cb-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.cb-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.cb-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+.cb-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.cb-btn {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.1s, opacity 0.1s;
+}
+.cb-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+}
+.cb-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cb-btn.cb-primary {
+  border-color: var(--accent-primary, #3b82f6);
+  color: var(--accent-primary, #3b82f6);
+  background-color: transparent;
+}
+.cb-btn.cb-primary:hover:not(:disabled) {
+  background-color: var(--bg-active);
+}
+.menu-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.menu-item.disabled:hover {
+  background-color: transparent;
+  color: var(--text-secondary);
 }
 
 .menu-icon {

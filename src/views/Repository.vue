@@ -43,7 +43,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, GitMerge, XCircle } from 'lucide-vue-next'
+import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, XCircle } from 'lucide-vue-next'
 
 const { toggleTheme } = useTheme()
 const { t, locale } = useI18n()
@@ -1020,6 +1020,11 @@ async function handleDiscardFiles(paths: string[]) {
 
 function requestCommitFiles(paths: string[]) {
   if (paths.length === 0) return
+  // 提交守卫：存在未解决的冲突文件时禁止提交
+  if (conflictFiles.value.length > 0) {
+    showToast(t('repository.conflictCommitBlocked', { n: conflictFiles.value.length }), 'error')
+    return
+  }
   committingFiles.value = paths
   if (paths.length === 1) {
     commitMessage.value = t('repository.modifiedSingle', { name: paths[0].split(/[\\/]/).pop() })
@@ -1032,6 +1037,11 @@ function requestCommitFiles(paths: string[]) {
 function handleCommitFromToolbar() {
   if (!repoPath.value) {
     showToast(t('repository.noRepoOpen'), 'error')
+    return
+  }
+  // 提交守卫：存在未解决的冲突文件时禁止提交，引导用户先解决
+  if (conflictFiles.value.length > 0) {
+    showToast(t('repository.conflictCommitBlocked', { n: conflictFiles.value.length }), 'error')
     return
   }
   // 收集所有有变更的文件
@@ -1051,6 +1061,11 @@ function handleCommitFromToolbar() {
 
 async function handleCommit() {
   if (!repoPath.value || !commitMessage.value.trim() || isCommitting.value) return
+  // 提交守卫：存在未解决的冲突文件时禁止提交
+  if (conflictFiles.value.length > 0) {
+    showToast(t('repository.conflictCommitBlocked', { n: conflictFiles.value.length }), 'error')
+    return
+  }
   isCommitting.value = true
   try {
     // 如果指定了文件，先暂存
@@ -1077,6 +1092,11 @@ async function handleCommit() {
 // 提交并推送：先 commit，再用 upstream 自动推送；无上游或认证失败时退化为打开推送对话框
 async function handleCommitAndPush() {
   if (!repoPath.value || !commitMessage.value.trim() || isCommitting.value) return
+  // 提交守卫：存在未解决的冲突文件时禁止提交
+  if (conflictFiles.value.length > 0) {
+    showToast(t('repository.conflictCommitBlocked', { n: conflictFiles.value.length }), 'error')
+    return
+  }
   isCommitting.value = true
   const committedBranch = currentBranch.value
   try {
@@ -1292,10 +1312,13 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
     console.error('Pull strategy error:', e)
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
     if (msg.startsWith('PULL_CONFLICT:')) {
-      // 拉取产生冲突：记录本次策略，刷新冲突文件列表并打开「冲突解决」面板
+      // 拉取产生冲突：不再弹窗，刷新冲突列表（冲突文件已在「变更文件」面板红字显示），
+      // 并在面板底部展示冲突解决条，引导用户逐个解决后完成合并/变基。
       pendingPullStrategy.value = strategy
+      pullConflictActive.value = true
       await refreshConflictList()
-      showConflictDialog.value = true
+      const n = conflictFiles.value.length
+      showToast(t('repository.pullConflictFiles', { n }), 'error')
     } else {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
@@ -1312,12 +1335,6 @@ async function refreshConflictList() {
   } catch (e) {
     console.error('刷新冲突列表失败:', e)
   }
-}
-
-// 在独立编辑窗口中打开单个冲突文件，进入 ConflictSolver 解决
-function openConflictFile(path: string) {
-  if (!repoPath.value) return
-  openEditWindow(repoPath.value, path, 'conflict')
 }
 
 // 冲突全部解决后：merge 提交合并结果 / rebase 继续变基
@@ -1337,7 +1354,7 @@ async function finishPullResolve() {
       await finishMerge(repoPath.value)
     }
     await loadRepoData()
-    showConflictDialog.value = false
+    pullConflictActive.value = false
     showToast(t('repository.pullSuccess'), 'success')
   } catch (e: any) {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
@@ -1358,7 +1375,7 @@ async function abortPullResolve() {
       await abortMerge(repoPath.value)
     }
     await loadRepoData()
-    showConflictDialog.value = false
+    pullConflictActive.value = false
     showToast(t('repository.pullAborted'), 'success')
   } catch (e: any) {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
@@ -1489,8 +1506,9 @@ const initing = ref(false)
 const showNoRemoteDialog = ref(false)
 // 分支分叉（--ff-only 失败）时弹出的「选择拉取方式」对话框
 const showPullDivergedDialog = ref(false)
-// 拉取产生冲突时弹出的「冲突解决」面板：列出冲突文件，引导用户完成合并/变基或中止
-const showConflictDialog = ref(false)
+// 拉取产生的合并/变基是否仍在进行中（存在未完成的 pull 冲突）。
+// 为 true 时「变更文件」面板底部展示冲突解决条，替代原先的弹窗提示。
+const pullConflictActive = ref(false)
 const pendingPullStrategy = ref<'merge' | 'rebase'>('merge')
 // 当前仓库所有冲突文件（status === 'conflict' 或 'unmerged'）
 const conflictFiles = computed(() =>
@@ -2204,12 +2222,16 @@ onBeforeUnmount(() => {
               :selected-files="selectedFiles"
               :view-mode="fileViewMode"
               :loading="fileStatusLoading"
+              :conflict-active="pullConflictActive"
+              :pull-strategy="pendingPullStrategy"
               @select-files="handleSelectFiles"
               @stage-files="handleStageFiles"
               @commit-files="requestCommitFiles"
               @discard-files="handleDiscardFiles"
               @open-file="handleOpenFile"
               @refresh="refreshAll"
+              @resolve-conflicts="finishPullResolve"
+              @abort-conflicts="abortPullResolve"
             />
           </div>
           <!-- 拖拉分隔条 -->
@@ -2447,57 +2469,6 @@ onBeforeUnmount(() => {
         <DialogFooter class="gap-2">
           <Button variant="outline" @click="showPullDivergedDialog = false">
             {{ t('repository.pullDivergedCancel') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <!-- 拉取冲突 → "冲突解决"面板 -->
-    <Dialog v-model:open="showConflictDialog">
-      <DialogContent class="max-w-[480px] gap-3 p-5">
-        <DialogHeader class="gap-1 p-0">
-          <DialogTitle class="text-[15px] leading-snug">
-            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictRebaseTitle') : t('repository.conflictMergeTitle') }}
-          </DialogTitle>
-          <p class="init-repo-desc">{{ t('repository.conflictDesc') }}</p>
-        </DialogHeader>
-
-        <div class="mt-1 flex flex-col gap-1.5">
-          <div class="flex items-center justify-between">
-            <span class="text-[12px] text-[var(--text-tertiary)]">
-              {{ t('repository.conflictFileCount', { n: conflictFiles.length }) }}
-            </span>
-            <Button variant="outline" size="sm" @click="refreshConflictList">
-              {{ t('repository.conflictRefresh') }}
-            </Button>
-          </div>
-          <div class="max-h-[240px] overflow-y-auto rounded-lg border border-[var(--border-medium)]">
-            <button
-              v-for="f in conflictFiles"
-              :key="f.path"
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--bg-hover)]"
-              @click="openConflictFile(f.path)"
-            >
-              <GitMerge class="h-3.5 w-3.5 shrink-0 text-[var(--danger-color)]" />
-              <span class="truncate text-[13px] text-[var(--text-bright)]">{{ f.path }}</span>
-              <span class="ml-auto text-[11px] text-[var(--text-tertiary)]">{{ t('repository.conflictSolve') }}</span>
-            </button>
-            <p
-              v-if="conflictFiles.length === 0"
-              class="px-3 py-3 text-center text-[12px] text-[var(--text-tertiary)]"
-            >
-              {{ t('repository.conflictNone') }}
-            </p>
-          </div>
-        </div>
-
-        <DialogFooter class="gap-2">
-          <Button variant="outline" :disabled="isPulling" @click="abortPullResolve">
-            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictAbortRebase') : t('repository.conflictAbortMerge') }}
-          </Button>
-          <Button :disabled="isPulling" @click="finishPullResolve">
-            {{ pendingPullStrategy === 'rebase' ? t('repository.conflictContinueRebase') : t('repository.conflictFinishMerge') }}
           </Button>
         </DialogFooter>
       </DialogContent>

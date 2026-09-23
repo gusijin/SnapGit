@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
               <Button
                 variant="ghost"
                 :class="tool.emphasis === 'primary' ? 'seg-btn seg-commit' : 'seg-btn'"
-                :disabled="!hasRepo"
+                :disabled="!hasRepo || (tool.action === 'commit' && workingTree.conflict > 0)"
                 @click="handleAction(tool.action)"
               >
                 <component :is="tool.icon" />

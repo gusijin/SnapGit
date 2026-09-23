@@ -322,6 +322,14 @@ export default {
     statusDeleted: '删除',
     statusConflict: '冲突',
     statusRenamed: '重命名',
+    // 面板底部冲突解决条（替代原拉取冲突弹窗）
+    conflictBannerTitle: '拉取冲突待解决',
+    conflictBannerDesc: '有 {n} 个文件冲突，请逐一点开上方文件解决；未解决前禁止提交。',
+    conflictBannerResolved: '冲突已全部解决，可完成合并/变基。',
+    finishMerge: '完成合并',
+    continueRebase: '继续变基',
+    abortMerge: '放弃合并',
+    abortRebase: '放弃变基',
     commitSelected: '提交所选文件…',
     commitThis: '提交此文件…',
     stageSelected: '暂存所选文件',
@@ -520,6 +528,8 @@ export default {
     pullRebaseHint: '把本地提交接到远程之后，历史更线性；改写历史后推送需 force',
     pullConflictTitle: '拉取产生冲突',
     pullConflictDesc: '拉取过程中产生冲突，请解决冲突文件后再试。',
+    pullConflictFiles: '拉取产生 {n} 个冲突文件，已在「变更文件」面板标红，请逐一点开解决后再完成合并/变基。',
+    conflictCommitBlocked: '有 {n} 个冲突文件未解决，无法提交，请先在「变更文件」面板中解决。',
     // 拉取冲突解决面板
     conflictMergeTitle: '解决合并冲突',
     conflictRebaseTitle: '解决变基冲突',

@@ -321,6 +321,14 @@ export default {
     statusDeleted: 'Deleted',
     statusConflict: 'Conflict',
     statusRenamed: 'Renamed',
+    // Conflict resolution bar at the bottom of the panel (replaces the old modal)
+    conflictBannerTitle: 'Pull conflict to resolve',
+    conflictBannerDesc: '{n} file(s) conflicted. Open each file above to resolve; committing is blocked until resolved.',
+    conflictBannerResolved: 'All conflicts resolved. You can finish the merge / rebase.',
+    finishMerge: 'Finish merge',
+    continueRebase: 'Continue rebase',
+    abortMerge: 'Abort merge',
+    abortRebase: 'Abort rebase',
     commitSelected: 'Commit selected files…',
     commitThis: 'Commit this file…',
     stageSelected: 'Stage selected files',
@@ -520,6 +528,8 @@ export default {
     pullRebaseHint: 'Replays local commits on top of remote, linear history; push needs force after rewrite',
     pullConflictTitle: 'Pull conflict',
     pullConflictDesc: 'The pull produced conflicts. Resolve the conflicting files and try again.',
+    pullConflictFiles: 'The pull produced {n} conflicting file(s). They are highlighted in red in the "Changed files" panel; open each to resolve, then finish the merge / rebase.',
+    conflictCommitBlocked: 'Cannot commit: {n} conflicting file(s) are unresolved. Resolve them in the "Changed files" panel first.',
     // Conflict resolution panel
     conflictMergeTitle: 'Resolve Merge Conflict',
     conflictRebaseTitle: 'Resolve Rebase Conflict',
