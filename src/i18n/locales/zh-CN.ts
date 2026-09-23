@@ -394,6 +394,8 @@ export default {
     useRight: '使用右边',
     useLeftTitle: '使用当前块左边内容',
     useRightTitle: '使用当前块右边内容',
+    acceptOursTitle: '使用 ours（本地）版本解决此冲突块',
+    acceptTheirsTitle: '使用 theirs（远端）版本解决此冲突块',
     allLeft: '全部左边',
     allRight: '全部右边',
     allCombine: '全部合并',

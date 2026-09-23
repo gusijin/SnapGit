@@ -393,6 +393,8 @@ export default {
     useRight: 'Use right',
     useLeftTitle: 'Keep the left content of current block',
     useRightTitle: 'Keep the right content of current block',
+    acceptOursTitle: 'Resolve this conflict block with the ours (local) version',
+    acceptTheirsTitle: 'Resolve this conflict block with the theirs (remote) version',
     allLeft: 'All left',
     allRight: 'All right',
     allCombine: 'Combine all',

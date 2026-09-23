@@ -1152,9 +1152,12 @@ onMounted(() => {
   outline: none;
 }
 
-/* 选区：蓝底 + 透明字（彩色文字层在下，选区只盖背景） */
+/* 选区：半透明蓝底 + 透明字。
+   文字由下层 .diff-overlay（z-index:0）渲染，而选区背景画在 textarea（z-index:1）之上 ——
+   若用 --accent-primary 实色，选中后整块实心蓝会把下层彩色文字完全盖住、读不出内容。
+   改用半透明 --bg-selection（亮 30% / 暗 35%）：既看得出选中范围，又透出底层文字。 */
 .editor-textarea::selection {
-  background-color: var(--accent-primary);
+  background-color: var(--bg-selection);
   color: transparent;
 }
 

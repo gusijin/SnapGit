@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ConflictFile, ConflictBlock } from '../types'
+import { fileLang, tokenizeLine, type Token } from '../syntaxHighlight'
 import {
   ChevronUp, ChevronDown, ArrowLeftToLine, ArrowRightToLine,
   AlignJustify, Save, X, GitMerge, ArrowLeft, ArrowRight,
@@ -29,6 +30,12 @@ const rightTextarea = ref<HTMLTextAreaElement | null>(null)
 const leftLinesRef = ref<HTMLElement | null>(null)
 const middleLinesRef = ref<HTMLElement | null>(null)
 const rightLinesRef = ref<HTMLElement | null>(null)
+// 着色层（语法高亮）与两列之间的操作列，随文本滚动同步
+const leftOverlayInner = ref<HTMLElement | null>(null)
+const middleOverlayInner = ref<HTMLElement | null>(null)
+const rightOverlayInner = ref<HTMLElement | null>(null)
+const leftMidColRef = ref<HTMLElement | null>(null)
+const rightMidColRef = ref<HTMLElement | null>(null)
 
 const LINE_HEIGHT = 18
 const PADDING_TOP = 8
@@ -109,35 +116,129 @@ const currentBlock = computed(() => blocks.value[currentBlockIndex.value] ?? nul
 const oursText = computed(() => props.conflictFile.ours_content.join('\n'))
 const theirsText = computed(() => props.conflictFile.theirs_content.join('\n'))
 
+// 语法高亮：逐行分词，供着色层（diff-overlay）渲染关键字颜色
+const lang = computed(() => fileLang(props.conflictFile.path))
+function tokenizeLines(lines: string[]): Token[][] {
+  return lines.map((ln) => tokenizeLine(ln, lang.value))
+}
+const oursSegs = computed(() => tokenizeLines(props.conflictFile.ours_content))
+const theirsSegs = computed(() => tokenizeLines(props.conflictFile.theirs_content))
+const middleSegs = computed(() => tokenizeLines(workingContent.value.split('\n')))
+
 const allLineCount = computed(() => workingContent.value.split('\n').length)
 const leftLineCount = computed(() => props.conflictFile.ours_content.length || 1)
 const rightLineCount = computed(() => props.conflictFile.theirs_content.length || 1)
 
-const highlights = computed(() => {
-  return blocks.value.map((block, idx) => ({
-    top: PADDING_TOP + block.start_line * LINE_HEIGHT,
-    height: (block.end_line - block.start_line + 1) * LINE_HEIGHT,
+// 冲突块逐行底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod 的「行级整行底色」）：
+// working 栏每一行按角色给一个底色 class —— 标记行（<<<<<<< / ||||||| / ======= / >>>>>>>）灰、
+// ours 段红、theirs 段绿；取代原先「整块一个矩形 + 边框」的框式高亮（古哥：不要整个都是框的 hover）。
+const middleLineClasses = computed(() => {
+  const lines = workingContent.value.split('\n')
+  const arr: string[] = new Array(lines.length).fill('')
+  for (const b of blocks.value) {
+    for (let i = b.start_line; i <= b.end_line && i < arr.length; i++) {
+      const txt = lines[i] ?? ''
+      if (
+        txt.startsWith('<<<<<<<') ||
+        txt.startsWith('|||||||') ||
+        txt.startsWith('=======') ||
+        txt.startsWith('>>>>>>>')
+      ) {
+        arr[i] = 'line-confl-marker'
+      } else if (i < b.separator_line) {
+        arr[i] = 'line-confl-ours'
+      } else {
+        arr[i] = 'line-confl-theirs'
+      }
+    }
+  }
+  return arr
+})
+
+// 当前冲突块在左/右操作列中的垂直定位（与编辑区行号对应）
+function blockTop(idx: number): number {
+  const b = blocks.value[idx]
+  return b ? PADDING_TOP + b.start_line * LINE_HEIGHT : 0
+}
+function blockHeight(idx: number): number {
+  const b = blocks.value[idx]
+  return b ? (b.end_line - b.start_line + 1) * LINE_HEIGHT : 0
+}
+
+// ---- 中间列弧形背景色标记（与「编辑页面」diff-bands 同构的 S 曲线漏斗） ----
+// 编辑页有 rowModel 行对齐模型，可算出 hunk 左右两侧各自的「有内容行范围」，再用三次贝塞尔
+// （S 曲线）把两侧的上/下沿连起来：两侧行数不同 → 梯形/漏斗；某一侧无内容 → 该侧塌缩成块的
+// 纵向中点（叶子形）。
+// 冲突页三栏是纯 textarea、没有行对齐模型，故两侧端点统一取 working 文档坐标，避免出现与文本
+// 错位的长斜条（三栏同步滚动、同为 18px 行高，坐标系可直接对应）：
+//   · 左中列（ours ↔ working）：左沿 = 该块 ours 内容在块内的行范围，右沿 = 整个冲突块的范围
+//   · 右中列（working ↔ theirs）：左沿 = 整个冲突块的范围，右沿 = 该块 theirs 内容在块内的行范围
+// 某侧内容为空（纯增 / 纯删）时该侧塌缩成一个点 → 即编辑页截图里的叶子形。
+interface DocSpan {
+  first: number
+  last: number
+}
+
+/** 冲突块某一侧内容在块内的行范围（working 文档坐标，已排除 <<<<<<< / ||||||| / ======= / >>>>>>> 标记行）；该侧为空时返回 null */
+function sideSpanInBlock(b: ConflictBlock, side: 'ours' | 'theirs'): DocSpan | null {
+  const first = side === 'ours' ? b.start_line + 1 : b.end_line - b.theirs.length
+  const last = side === 'ours' ? b.start_line + b.ours.length : b.end_line - 1
+  return last >= first ? { first, last } : null
+}
+
+const MIDCOL_W = 35 // .solver-midcol 内容宽（36px 减 1px border-right）
+const BAND_INSET = 0.75 // 左右各内缩，避免描边被容器裁掉
+
+/** 与编辑页 hunks 完全同构的路径：上下沿各一条 S 曲线把两栏连起来 */
+function buildBandPath(left: DocSpan | null, right: DocSpan | null, midY: number): string {
+  const x0 = BAND_INSET
+  const x1 = MIDCOL_W - BAND_INSET
+  const c = MIDCOL_W / 2
+  const lt = left ? PADDING_TOP + left.first * LINE_HEIGHT : midY
+  const lb = left ? PADDING_TOP + (left.last + 1) * LINE_HEIGHT : midY
+  const rt = right ? PADDING_TOP + right.first * LINE_HEIGHT : midY
+  const rb = right ? PADDING_TOP + (right.last + 1) * LINE_HEIGHT : midY
+  return [
+    `M ${x0} ${lt}`,
+    `C ${c} ${lt} ${c} ${rt} ${x1} ${rt}`,
+    `L ${x1} ${rb}`,
+    `C ${c} ${rb} ${c} ${lb} ${x0} ${lb}`,
+    'Z',
+  ].join(' ')
+}
+
+/** 冲突块纵向中点：某一侧无内容时该侧塌缩到此（与编辑页 mid 语义一致） */
+function blockMidY(idx: number): number {
+  const b = blocks.value[idx]
+  if (!b) return PADDING_TOP
+  return PADDING_TOP + ((b.start_line + b.end_line + 1) / 2) * LINE_HEIGHT
+}
+
+const bandsTotalHeight = computed(() => allLineCount.value * LINE_HEIGHT + PADDING_TOP)
+
+// 左中列：绿（ours）——左沿接该块 ours 内容的行范围，右沿接整个冲突块的行范围
+const leftBands = computed(() =>
+  blocks.value.map((b, idx) => ({
+    path: buildBandPath(
+      sideSpanInBlock(b, 'ours'),
+      { first: b.start_line, last: b.end_line },
+      blockMidY(idx)
+    ),
     active: idx === currentBlockIndex.value,
   }))
-})
+)
 
-const previewContent = computed(() => {
-  let content = workingContent.value
-  const list = parseConflictBlocks(content)
-  for (let i = list.length - 1; i >= 0; i--) {
-    const block = list[i]
-    const replacement = block.ours.join('') + block.theirs.join('')
-    const lines = splitLinesKeepNewline(content)
-    content = [
-      ...lines.slice(0, block.start_line),
-      replacement,
-      ...lines.slice(block.end_line + 1),
-    ].join('')
-  }
-  return content
-})
-
-const conflictFree = computed(() => !hasBlocks.value)
+// 右中列：蓝（theirs）——左沿接整个冲突块的行范围，右沿接该块 theirs 内容的行范围
+const rightBands = computed(() =>
+  blocks.value.map((b, idx) => ({
+    path: buildBandPath(
+      { first: b.start_line, last: b.end_line },
+      sideSpanInBlock(b, 'theirs'),
+      blockMidY(idx)
+    ),
+    active: idx === currentBlockIndex.value,
+  }))
+)
 
 watch(currentBlock, async () => {
   await nextTick()
@@ -167,22 +268,32 @@ function syncScroll(source: 'left' | 'middle' | 'right') {
     middle: middleLinesRef.value,
     right: rightLinesRef.value,
   }
+  const overlayInners: Record<string, HTMLElement | null> = {
+    left: leftOverlayInner.value,
+    middle: middleOverlayInner.value,
+    right: rightOverlayInner.value,
+  }
   const sourceEl = refs[source]
   if (!sourceEl) return
   const scrollTop = sourceEl.scrollTop
   const scrollLeft = sourceEl.scrollLeft
 
-  ;(Object.keys(refs) as Array<keyof typeof refs>).forEach((key) => {
+  ;(['left', 'middle', 'right'] as const).forEach((key) => {
     const el = refs[key]
     const lineEl = lineRefs[key]
+    const ov = overlayInners[key]
     if (el && el !== sourceEl) {
       el.scrollTop = scrollTop
       el.scrollLeft = scrollLeft
     }
-    if (lineEl && lineEl !== sourceEl) {
-      lineEl.scrollTop = scrollTop
-    }
+    if (lineEl) lineEl.scrollTop = scrollTop
+    // 着色层跟随滚动（translate 不触发 scroll 事件，安全）
+    if (ov) ov.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`
   })
+
+  // 两侧操作列跟随编辑区滚动：按钮按冲突块行号定位，需与文本保持垂直对齐
+  if (leftMidColRef.value) leftMidColRef.value.scrollTop = scrollTop
+  if (rightMidColRef.value) rightMidColRef.value.scrollTop = scrollTop
 }
 
 function goToPreviousBlock() {
@@ -340,6 +451,11 @@ function lineNumberArray(count: number): number[] {
             <div v-for="n in lineNumberArray(leftLineCount)" :key="n" class="line-num">{{ n }}</div>
           </div>
           <div class="textarea-wrapper">
+            <div class="diff-overlay" aria-hidden="true">
+              <div ref="leftOverlayInner" class="diff-overlay-inner">
+                <div v-for="(segs, idx) in oursSegs" :key="'lo' + idx" class="hl-line"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+              </div>
+            </div>
             <textarea
               ref="leftTextarea"
               :value="oursText"
@@ -348,6 +464,39 @@ function lineNumberArray(count: number): number[] {
               spellcheck="false"
               @scroll="syncScroll('left')"
             />
+          </div>
+        </div>
+      </div>
+
+      <!-- 左中间操作列：ours ↔ working，每个冲突块对应位置一个「接受 ours」箭头 -->
+      <div class="solver-midcol" ref="leftMidColRef">
+        <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
+          <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，绿=ours，当前块高亮 -->
+          <svg
+            class="diff-bands band-ours"
+            :viewBox="`0 0 ${MIDCOL_W} ${bandsTotalHeight}`"
+            :style="{ height: bandsTotalHeight + 'px' }"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path
+              v-for="(b, bi) in leftBands"
+              :key="'lb' + bi"
+              class="band"
+              :class="{ active: b.active }"
+              :d="b.path"
+              vector-effect="non-scaling-stroke"
+            />
+          </svg>
+          <div
+            v-for="(_, bi) in blocks"
+            :key="'lm' + bi"
+            class="solver-action-group"
+            :style="{ top: blockTop(bi) + 'px', height: blockHeight(bi) + 'px' }"
+          >
+            <button class="merge-btn accept-left" :title="t('conflictSolver.acceptOursTitle')" @click="applyBlock(bi, 'ours')">
+              <svg class="arrow-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M10 3L5 8l5 5V3z" transform="rotate(180 8 8)"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -363,6 +512,11 @@ function lineNumberArray(count: number): number[] {
             <div v-for="n in lineNumberArray(allLineCount)" :key="n" class="line-num">{{ n }}</div>
           </div>
           <div class="textarea-wrapper">
+            <div class="diff-overlay" aria-hidden="true">
+              <div ref="middleOverlayInner" class="diff-overlay-inner">
+                <div v-for="(segs, idx) in middleSegs" :key="'mo' + idx" class="hl-line" :class="middleLineClasses[idx]"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+              </div>
+            </div>
             <textarea
               ref="middleTextarea"
               v-model="workingContent"
@@ -370,15 +524,6 @@ function lineNumberArray(count: number): number[] {
               spellcheck="false"
               @scroll="syncScroll('middle')"
             />
-            <div class="highlight-overlays">
-              <div
-                v-for="(h, idx) in highlights"
-                :key="idx"
-                class="conflict-highlight"
-                :class="{ active: h.active }"
-                :style="{ top: h.top + 'px', height: h.height + 'px' }"
-              />
-            </div>
           </div>
         </div>
 
@@ -400,6 +545,39 @@ function lineNumberArray(count: number): number[] {
         </div>
       </div>
 
+      <!-- 右中间操作列：working ↔ theirs，每个冲突块对应位置一个「接受 theirs」箭头 -->
+      <div class="solver-midcol" ref="rightMidColRef">
+        <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
+          <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，蓝=theirs，当前块高亮 -->
+          <svg
+            class="diff-bands band-theirs"
+            :viewBox="`0 0 ${MIDCOL_W} ${bandsTotalHeight}`"
+            :style="{ height: bandsTotalHeight + 'px' }"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path
+              v-for="(b, bi) in rightBands"
+              :key="'rb' + bi"
+              class="band"
+              :class="{ active: b.active }"
+              :d="b.path"
+              vector-effect="non-scaling-stroke"
+            />
+          </svg>
+          <div
+            v-for="(_, bi) in blocks"
+            :key="'rm' + bi"
+            class="solver-action-group"
+            :style="{ top: blockTop(bi) + 'px', height: blockHeight(bi) + 'px' }"
+          >
+            <button class="merge-btn accept-right" :title="t('conflictSolver.acceptTheirsTitle')" @click="applyBlock(bi, 'theirs')">
+              <svg class="arrow-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M10 3L5 8l5 5V3z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- theirs -->
       <div class="solver-panel">
         <div class="panel-label">
@@ -411,6 +589,11 @@ function lineNumberArray(count: number): number[] {
             <div v-for="n in lineNumberArray(rightLineCount)" :key="n" class="line-num">{{ n }}</div>
           </div>
           <div class="textarea-wrapper">
+            <div class="diff-overlay" aria-hidden="true">
+              <div ref="rightOverlayInner" class="diff-overlay-inner">
+                <div v-for="(segs, idx) in theirsSegs" :key="'ro' + idx" class="hl-line"><span v-for="(seg, si) in segs" :key="si" :class="'tok-' + seg.type">{{ seg.text }}</span></div>
+              </div>
+            </div>
             <textarea
               ref="rightTextarea"
               :value="theirsText"
@@ -422,22 +605,6 @@ function lineNumberArray(count: number): number[] {
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- 底部合并预览 -->
-    <div class="preview-panel">
-      <div class="preview-label">
-        <Combine :size="11" />
-        <span>{{ t('conflictSolver.preview') }}</span>
-        <span v-if="conflictFree" class="preview-badge clean">{{ t('conflictSolver.clean') }}</span>
-        <span v-else class="preview-badge pending">{{ t('conflictSolver.pendingBlocks', { n: blocks.length }) }}</span>
-      </div>
-      <textarea
-        :value="previewContent"
-        readonly
-        class="preview-textarea"
-        spellcheck="false"
-      />
     </div>
   </div>
 </template>
@@ -574,6 +741,12 @@ function lineNumberArray(count: number): number[] {
   flex: 1;
   position: relative;
   min-width: 0;
+  /* 背景交给 wrapper：textarea 透明（文字由下方着色层显示），背景须在此层兜底 */
+  background-color: var(--bg-tertiary);
+}
+
+.middle-panel .textarea-wrapper {
+  background-color: var(--bg-primary);
 }
 
 .solver-textarea {
@@ -585,49 +758,241 @@ function lineNumberArray(count: number): number[] {
   font-family: Consolas, Monaco, 'Courier New', monospace;
   font-size: 12px;
   line-height: 18px;
-  padding: 8px;
-  background-color: var(--bg-secondary);
-  color: var(--text-primary);
+  /* 底部 18px：常驻横向滚动条占位，使 scrollHeight 与着色层逐行对齐，滚到底不钳制 */
+  padding: 8px 8px 18px;
+  /* 文字透明，实际可见文本由下方着色层（.diff-overlay）渲染 */
+  background-color: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
   white-space: pre;
   overflow: auto;
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
 }
 
+/* 聚焦态：与编辑页一致——只在「编辑区顶部」画 2px accent 线 + 3px 柔光，不留四边框。
+   原先挂在 textarea 自身的 inset ring 会四面全露（截图实测 x505..993 / y40..918 一整圈）。
+   编辑页 .editor-container:focus-within 的 ring 名义上也是四边，但左被行号槽、右/下被
+   textarea 自己的不透明滚动条盖住，可见部分只有顶边（实测左带/右带蓝像素均为 0）。
+   这里用 wrapper 伪元素复刻同一可见结果：z-index:0 置于 textarea(z-index:1) 之下，
+   于是右端被竖直滚动条截断、左端自然从行号槽右侧起。2px@55% + 3px@16% 与编辑页规格一致。 */
 .solver-textarea:focus {
   outline: none;
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
 }
 
-.solver-textarea:read-only {
+.textarea-wrapper::before,
+.textarea-wrapper::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.textarea-wrapper::before {
+  top: 0;
+  height: 2px;
+  background-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+}
+
+.textarea-wrapper::after {
+  top: 2px;
+  height: 3px;
+  background-color: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.textarea-wrapper:focus-within::before,
+.textarea-wrapper:focus-within::after {
+  opacity: 1;
+}
+
+/* 选区：半透明蓝底 + 透明字（同编辑页）。
+   选区背景画在 textarea（z-index:1）之上、彩色文字在 .diff-overlay（z-index:0）之下，
+   实色 --accent-primary 会把文字整块盖住 → 改用半透明 --bg-selection 透出文字。 */
+.solver-textarea::selection {
+  background-color: var(--bg-selection);
+  color: transparent;
+}
+
+/* 着色层：铺在 textarea 之下，承载语法高亮文字；textarea 透明，由本层显示可见文本 */
+.diff-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.diff-overlay-inner {
+  padding-top: 8px;
+  will-change: transform;
+}
+
+/* 每行：与 textarea 完全相同的字体度量，保证光标与彩色文字逐字符对齐 */
+.hl-line {
+  height: 18px;
+  line-height: 18px;
+  padding-left: 8px;
+  white-space: pre;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+/* 语法高亮 token 颜色（IDEA 风格，随主题切换 var(--syntax-*)） */
+.tok-keyword  { color: var(--syntax-keyword); }
+.tok-string   { color: var(--syntax-string); }
+.tok-comment  { color: var(--syntax-comment); font-style: italic; }
+.tok-number   { color: var(--syntax-number); }
+.tok-function { color: var(--syntax-function); }
+.tok-type     { color: var(--syntax-type); }
+.tok-constant { color: var(--syntax-constant); }
+.tok-plain    { color: var(--text-primary); }
+
+/* 冲突块逐行底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod）：整行底色、无边框/无框。
+   标记行灰（--bg-tertiary）、ours 段红（--bg-del）、theirs 段绿（--bg-add）。 */
+.hl-line.line-confl-marker {
   background-color: var(--bg-tertiary);
 }
 
-.middle-panel .solver-textarea {
-  background-color: var(--bg-primary);
+.hl-line.line-confl-ours {
+  background-color: var(--bg-del);
 }
 
-.highlight-overlays {
+.hl-line.line-confl-theirs {
+  background-color: var(--bg-add);
+}
+
+/* 两列之间的操作列：与编辑页面(编辑差异)一致，按冲突块行号垂直定位箭头按钮 */
+.solver-midcol {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-toolbar);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.solver-midcol::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.midcol-inner {
+  position: relative;
+  /* 顶部 8px：与 textarea 内容起点一致（行 0 上沿对齐） */
+  padding-top: 8px;
+}
+
+.solver-action-group {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 置于弧形背景色标记（.diff-bands，z-index:0）之上，避免背景盖住箭头按钮 */
+  z-index: 1;
+}
+
+/* 中间列弧形背景色标记（与编辑页 .diff-bands 同款 S 曲线漏斗）：绝对定位于 midcol-inner
+   顶部，随中间列滚动；纯装饰，不拦截事件。坐标与 .solver-action-group 的 top 同基准 */
+.diff-bands {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
+  width: 100%;
+  z-index: 0;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
 }
 
-.conflict-highlight {
-  position: absolute;
-  left: 0;
-  right: 0;
-  background-color: rgba(244, 71, 71, 0.08);
-  border-left: 2px solid var(--color-del);
+/* 与编辑页 .diff-bands .band 完全一致的描边规格 */
+.diff-bands .band {
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-opacity: 0.45;
+  fill-opacity: 1;
 }
 
-.conflict-highlight.active {
-  background-color: rgba(244, 71, 71, 0.16);
-  border-left: 2px solid var(--color-del);
-  box-shadow: inset 0 0 0 1px rgba(244, 71, 71, 0.25);
+/* 左列：绿（ours），与 accept-left 按钮同色 */
+.diff-bands.band-ours .band {
+  fill: rgba(46, 160, 67, 0.09);
+  stroke: var(--color-add, #2ea043);
+}
+
+.diff-bands.band-ours .band.active {
+  fill: rgba(46, 160, 67, 0.16);
+  stroke-opacity: 0.85;
+}
+
+/* 右列：蓝（theirs），与 accept-right 按钮同色 */
+.diff-bands.band-theirs .band {
+  fill: rgba(56, 139, 253, 0.09);
+  stroke: var(--accent-primary, #388bfd);
+}
+
+.diff-bands.band-theirs .band.active {
+  fill: rgba(56, 139, 253, 0.16);
+  stroke-opacity: 0.85;
+}
+
+.merge-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.12s ease, transform 0.1s ease;
+}
+
+.merge-btn .arrow-icon {
+  opacity: 0.6;
+  transition: opacity 0.12s ease;
+}
+
+.merge-btn:hover {
+  background-color: var(--bg-hover);
+}
+
+.merge-btn:hover .arrow-icon {
+  opacity: 1;
+}
+
+/* 接受 ours → 绿色（与编辑页面 accept-left 一致） */
+.merge-btn.accept-left {
+  color: var(--color-add, #2ea043);
+}
+
+.merge-btn.accept-left:hover {
+  background-color: rgba(46, 160, 67, 0.2);
+}
+
+/* 接受 theirs → 蓝色（与编辑页面 accept-right 一致） */
+.merge-btn.accept-right {
+  color: var(--accent-primary, #388bfd);
+}
+
+.merge-btn.accept-right:hover {
+  background-color: rgba(56, 139, 253, 0.2);
+}
+
+.merge-btn:active {
+  transform: scale(0.9);
 }
 
 .inline-widget {
@@ -659,64 +1024,5 @@ function lineNumberArray(count: number): number[] {
   padding: 0 8px;
   font-size: 10px;
   gap: 3px;
-}
-
-.preview-panel {
-  height: 120px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--border-color);
-  background-color: var(--bg-secondary);
-}
-
-.preview-label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  background-color: var(--bg-toolbar);
-  border-bottom: 1px solid var(--border-color);
-  text-transform: uppercase;
-}
-
-.preview-badge {
-  margin-left: auto;
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  text-transform: none;
-}
-
-.preview-badge.clean {
-  background-color: var(--bg-add);
-  color: var(--color-add);
-}
-
-.preview-badge.pending {
-  background-color: var(--bg-del);
-  color: var(--color-del);
-}
-
-.preview-textarea {
-  flex: 1;
-  resize: none;
-  border: none;
-  border-radius: 0;
-  font-family: Consolas, Monaco, 'Courier New', monospace;
-  font-size: 11px;
-  line-height: 16px;
-  padding: 6px 10px;
-  background-color: var(--bg-tertiary);
-  color: var(--text-primary);
-  white-space: pre;
-  overflow: auto;
-}
-
-.preview-textarea:read-only {
-  outline: none;
 }
 </style>
