@@ -180,8 +180,8 @@ onMounted(() => {
       <History :size="13" class="header-icon" />
       <span>{{ t('logView.logTitle') }}</span>
       <span class="count">{{ filteredCommits.length }}</span>
-      <!-- 搜索：收起态仅显示搜索图标按钮，点击后展开输入框 -->
-      <template v-if="!searchOpen">
+      <!-- 搜索：图标按钮与输入框同处 .search-area，常驻 DOM，靠容器宽度 + 透明度过渡平滑切换 -->
+      <div class="search-area" :class="{ 'is-open': searchOpen }">
         <TooltipProvider :delay-duration="260">
           <Tooltip>
             <TooltipTrigger as-child>
@@ -192,8 +192,6 @@ onMounted(() => {
             <TooltipContent side="bottom">{{ t('logView.search') }}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-      </template>
-      <template v-else>
         <div class="search-box">
           <Search :size="13" class="search-icon" />
           <input
@@ -215,7 +213,7 @@ onMounted(() => {
             </Tooltip>
           </TooltipProvider>
         </div>
-      </template>
+      </div>
     </div>
 
     <div v-if="filteredCommits.length === 0" class="empty">
@@ -339,27 +337,53 @@ onMounted(() => {
   color: var(--text-bright);
 }
 
-/* 搜索收起态：icon-only 按钮，视觉与交互完全复用 .header-exit-btn 规范（统一标题栏风格） */
+/* 搜索收起态：icon-only 按钮，视觉与交互统一于 .header-exit-btn；
+   绝对定位于 .search-area 右侧，靠 opacity + scale 与输入框做平滑切换 */
 .header-search-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
   padding: 0;
-  margin-left: auto;
   border: none;
   border-radius: 5px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  opacity: 1;
+  z-index: 2;
+  transition: background-color 0.15s, color 0.15s, opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
 }
 
 .header-search-btn:hover {
   background-color: var(--bg-hover);
   color: var(--text-bright);
+}
+
+/* 搜索区域容器：宽度随展开/收起过渡（20px 图标态 ↔ 150px 输入框态），
+   实现图标「长」成输入框的平滑效果；右对齐挤占标题栏右侧空间 */
+.search-area {
+  position: relative;
+  margin-left: auto;
+  height: 24px;
+  width: 20px;
+  flex-shrink: 0;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-area.is-open {
+  width: 150px;
+}
+
+.search-area.is-open .header-search-btn {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .count {
@@ -371,16 +395,23 @@ onMounted(() => {
 }
 
 .search-box {
-  position: relative;
-  margin-left: auto;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
   align-items: center;
-  /* 自适应：默认占 150px 且靠右，面板变窄时随 flex 收缩，最小保留可点宽度。
-     ⚠️ flex-basis 与 max-width 必须同步改：basis 才是主轴实际宽度，
-     只调 max-width 而 basis 更小时，max-width 根本不起约束作用（宽度不会变）。 */
-  flex: 0 1 150px;
-  min-width: 56px;
-  max-width: 150px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-area.is-open .search-box {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .search-icon {
@@ -403,7 +434,7 @@ onMounted(() => {
   outline: none;
   text-transform: none;
   font-weight: 400;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s;
 }
 
 .search-input::placeholder {
@@ -412,7 +443,6 @@ onMounted(() => {
 
 .search-input:focus {
   border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--bg-primary));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 
 .search-clear {
@@ -612,6 +642,10 @@ onMounted(() => {
   .col-id,
   .col-date {
     display: none;
+  }
+  /* 窄面板下展开态输入框收敛，避免挤压标题文字 */
+  .search-area.is-open {
+    width: 110px;
   }
 }
 </style>
