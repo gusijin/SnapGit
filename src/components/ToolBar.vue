@@ -73,14 +73,12 @@ const hasRepo = computed(() => !!props.repositoryPath)
 
 const { t } = useI18n()
 
-// 拉取进度阶段文案：后端推送的英文阶段键映射为本地化短标签
+// 拉取进度阶段文案：统一显示「拉取中」，完成时短暂显示「完成」。
+// 不再暴露 git 内部阶段名（Receiving/Compressing/Resolving...），避免用户看到「压缩中」这种技术阶段。
 const pullPhaseLabel = computed(() => {
   const phase = props.pullProgress?.phase
-  if (phase === 'receiving') return t('toolbar.phaseReceiving')
-  if (phase === 'resolving') return t('toolbar.phaseResolving')
-  if (phase === 'counting') return t('toolbar.phaseCounting')
-  if (phase === 'compressing') return t('toolbar.phaseCompressing')
-  return ''
+  if (phase === 'done') return t('toolbar.pullDone')
+  return t('toolbar.pulling')
 })
 
 interface Tool {

@@ -205,6 +205,16 @@ fn run_git_progress(
     });
 
     let status = child.wait()?;
+    if status.success() {
+        let _ = app.emit(
+            "pull-progress",
+            serde_json::json!({
+                "percent": 100,
+                "phase": "done",
+                "detail": "完成",
+            }),
+        );
+    }
     let stderr_out = stderr_thread.join().unwrap_or_default();
     let stdout_out = stdout_thread.join().unwrap_or_default();
     let combined = format!("{}{}", stderr_out, stdout_out);

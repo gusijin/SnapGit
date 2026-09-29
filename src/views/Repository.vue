@@ -1582,14 +1582,14 @@ function beginPullProgress() {
   }, 10000)
 }
 
-// 结束拉取：清理计时器；若已展示进度则补满 100% 并延迟 600ms 淡出，否则立即结束
+// 结束拉取：清理计时器；若已展示进度则进入「100% 完成」态，延迟 600ms 淡出，否则立即结束
 function finishPullProgress() {
   if (pullProgressTimer !== null) {
     clearTimeout(pullProgressTimer)
     pullProgressTimer = null
   }
   if (pullProgress.value.visible) {
-    pullProgress.value.percent = 100
+    pullProgress.value = { percent: 100, phase: 'done', detail: '完成', visible: true }
     setTimeout(() => {
       isPulling.value = false
       pullProgress.value.visible = false
@@ -2071,9 +2071,25 @@ async function setupMenuListener() {
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
-        pullProgress.value.percent = event.payload.percent
-        pullProgress.value.phase = event.payload.phase
-        pullProgress.value.detail = event.payload.detail
+        const { percent, phase, detail } = event.payload
+        pullProgress.value.percent = percent
+        pullProgress.value.phase = phase
+        pullProgress.value.detail = detail
+        if (phase === 'done') {
+          if (pullProgressTimer !== null) {
+            clearTimeout(pullProgressTimer)
+            pullProgressTimer = null
+          }
+          if (pullProgress.value.visible) {
+            setTimeout(() => {
+              isPulling.value = false
+              pullProgress.value.visible = false
+            }, 600)
+          } else {
+            isPulling.value = false
+            pullProgress.value.visible = false
+          }
+        }
       },
     )
   } catch (e) {
