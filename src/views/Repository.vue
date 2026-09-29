@@ -1238,10 +1238,11 @@ async function handleCheckoutFastForward(branchName: string) {
   try {
     await checkoutBranch(repoPath.value, branchName)
     isPulling.value = true
+    beginPullProgress()
     try {
       await pullBranch(repoPath.value)
     } finally {
-      isPulling.value = false
+      finishPullProgress()
     }
     await loadRepoData()
     resetCommitViewState()
@@ -1282,6 +1283,7 @@ async function handlePull() {
   }
   if (isPulling.value) return
   isPulling.value = true
+  beginPullProgress()
   try {
     await pullBranch(repoPath.value)
     await loadRepoData()
@@ -1304,7 +1306,7 @@ async function handlePull() {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
   } finally {
-    isPulling.value = false
+    finishPullProgress()
   }
 }
 
@@ -1312,6 +1314,7 @@ async function handlePull() {
 async function handlePullStrategy(strategy: 'merge' | 'rebase') {
   if (!repoPath.value || isPulling.value) return
   isPulling.value = true
+  beginPullProgress()
   showPullDivergedDialog.value = false
   try {
     await pullWithStrategy(repoPath.value, strategy)
@@ -1333,7 +1336,7 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
   } finally {
-    isPulling.value = false
+    finishPullProgress()
   }
 }
 
@@ -1559,6 +1562,43 @@ let pushStateTimer: ReturnType<typeof setTimeout> | null = null
 // 拉取 / 推送中状态（驱动 ToolBar 按钮加载效果）
 const isPulling = ref(false)
 const isPushing = ref(false)
+
+// 拉取进度：后端通过 `pull-progress` 事件实时推送 git fetch/pull 百分比（Receiving/Resolving 等阶段）。
+// visible 仅在拉取超过 10 秒后才置 true，避免快速拉取时闪烁打扰。
+const pullProgress = ref<{ percent: number; phase: string; detail: string; visible: boolean }>({
+  percent: 0,
+  phase: '',
+  detail: '',
+  visible: false,
+})
+let pullProgressTimer: ReturnType<typeof setTimeout> | null = null
+
+// 进入拉取：重置进度并启动 10 秒计时器，超时且仍在拉取则显示百分比
+function beginPullProgress() {
+  pullProgress.value = { percent: 0, phase: '', detail: '', visible: false }
+  if (pullProgressTimer !== null) clearTimeout(pullProgressTimer)
+  pullProgressTimer = setTimeout(() => {
+    if (isPulling.value) pullProgress.value.visible = true
+  }, 10000)
+}
+
+// 结束拉取：清理计时器；若已展示进度则补满 100% 并延迟 600ms 淡出，否则立即结束
+function finishPullProgress() {
+  if (pullProgressTimer !== null) {
+    clearTimeout(pullProgressTimer)
+    pullProgressTimer = null
+  }
+  if (pullProgress.value.visible) {
+    pullProgress.value.percent = 100
+    setTimeout(() => {
+      isPulling.value = false
+      pullProgress.value.visible = false
+    }, 600)
+  } else {
+    isPulling.value = false
+    pullProgress.value.visible = false
+  }
+}
 
 function handlePush() {
   if (!repoPath.value) {
@@ -1935,6 +1975,8 @@ function onWindowFocus() {
 let unlistenMenuAction: (() => void) | null = null
 // 编辑窗口保存文件后发射 file-edited，主窗口监听并刷新数据
 let unlistenFileEdited: (() => void) | null = null
+// 后端拉取进度事件（git fetch/pull 的百分比），实时驱动工具栏百分比展示
+let unlistenPullProgress: (() => void) | null = null
 
 function handleMenuAction(payload: any) {
   // 兼容三种来源：
@@ -2025,6 +2067,15 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由工具栏在超过 10 秒后展示
+    unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
+      'pull-progress',
+      (event) => {
+        pullProgress.value.percent = event.payload.percent
+        pullProgress.value.phase = event.payload.phase
+        pullProgress.value.detail = event.payload.detail
+      },
+    )
   } catch (e) {
     console.warn('菜单事件监听失败：', e)
   }
@@ -2113,6 +2164,10 @@ onBeforeUnmount(() => {
     unlistenFileEdited()
     unlistenFileEdited = null
   }
+  if (unlistenPullProgress) {
+    unlistenPullProgress()
+    unlistenPullProgress = null
+  }
 })
 </script>
 
@@ -2155,6 +2210,7 @@ onBeforeUnmount(() => {
       :last-pull-time="lastPullTime"
       :push-state="pushState"
       :pulling="isPulling"
+      :pull-progress="pullProgress"
       :pushing="isPushing"
       @open-repo="handleOpenRepo"
       @commit="handleCommitFromToolbar"

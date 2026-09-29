@@ -1,8 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
@@ -106,6 +107,108 @@ fn git_command() -> std::process::Command {
     #[cfg(windows)]
     cmd.creation_flags(0x08000000);
     cmd
+}
+
+/// 解析 git 进度行，提取 (百分比, 阶段键, 原始文本)。非进度行返回 None。
+/// 进度行形如 `remote: Receiving objects:  42% (100/238), ...`、`Resolving deltas:  50% (100/200)`。
+fn parse_git_progress(line: &str) -> Option<(u32, &'static str, String)> {
+    let l = line.trim();
+    let phase = if l.contains("Receiving objects") {
+        "receiving"
+    } else if l.contains("Resolving deltas") {
+        "resolving"
+    } else if l.contains("Counting objects") {
+        "counting"
+    } else if l.contains("Compressing objects") {
+        "compressing"
+    } else {
+        return None;
+    };
+    // 提取最后一个 "NN%" 前的数字作为百分比
+    let bytes = l.as_bytes();
+    let mut pct: Option<u32> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let mut j = i;
+            while j > 0 && bytes[j - 1].is_ascii_digit() {
+                j -= 1;
+            }
+            if j < i {
+                if let Ok(n) = l[j..i].parse::<u32>() {
+                    pct = Some(n);
+                }
+            }
+        }
+        i += 1;
+    }
+    let pct = pct?;
+    Some((pct, phase, l.to_string()))
+}
+
+/// 流式执行 git 子命令，把 fetch/pull 的实时进度通过 `pull-progress` 事件推送给前端。
+/// 管道下 git 默认不输出进度，因此 fetch/pull 强制加 `--progress`。返回 (是否成功, 合并后的输出)。
+fn run_git_progress(
+    app: &AppHandle,
+    repo_path: &str,
+    subcmd: &str,
+    extra_args: &[&str],
+) -> std::io::Result<(bool, String)> {
+    let mut cmd = git_command();
+    cmd.arg("-C").arg(repo_path).arg(subcmd);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    // 网络/合并类子命令在管道下默认不输出进度，强制输出以便解析百分比
+    if subcmd == "fetch" || subcmd == "pull" {
+        cmd.arg("--progress");
+    }
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+
+    // stderr：进度信息 + 报错都走这里，逐行读取并解析进度推送前端
+    let stderr = child.stderr.take().expect("stderr 应当可获取");
+    let app_stderr = app.clone();
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut captured = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    captured.push_str(&l);
+                    captured.push('\n');
+                    if let Some((pct, phase, detail)) = parse_git_progress(&l) {
+                        let _ = app_stderr.emit(
+                            "pull-progress",
+                            serde_json::json!({
+                                "percent": pct,
+                                "phase": phase,
+                                "detail": detail,
+                            }),
+                        );
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        captured
+    });
+
+    // stdout：成功信息（如 "Already up to date."）
+    let mut stdout = child.stdout.take().expect("stdout 应当可获取");
+    let stdout_thread = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stdout.read_to_string(&mut s);
+        s
+    });
+
+    let status = child.wait()?;
+    let stderr_out = stderr_thread.join().unwrap_or_default();
+    let stdout_out = stdout_thread.join().unwrap_or_default();
+    let combined = format!("{}{}", stderr_out, stdout_out);
+    Ok((status.success(), combined))
 }
 
 // 编辑窗口参数仓库：key = 窗口 label，value = { repoPath, filePath, mode }。
@@ -1269,7 +1372,7 @@ fn checkout_remote_branch(repo_path: String, remote_branch: String) -> Result<()
 }
 
 #[command]
-async fn pull_branch(repo_path: String) -> Result<()> {
+async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
 
@@ -1284,21 +1387,11 @@ async fn pull_branch(repo_path: String) -> Result<()> {
             }
         }
 
-        // 先 fetch 远程最新代码
-        let fetch_output = git_command()
-            .arg("-C")
-            .arg(&repo_path)
-            .arg("fetch")
-            .arg("--all")
-            .arg("--no-progress")
-            .env("GIT_TERMINAL_PROMPT", "0")  // 禁用交互式凭证提示，防止无终端时挂起
-            .output()
+        // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
+        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
-
-        if !fetch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-            let stdout = String::from_utf8_lossy(&fetch_output.stdout);
-            let mut msg = format!("{}{}", stderr, stdout);
+        if !ok {
+            let mut msg = out;
             if msg.trim().is_empty() {
                 msg = "获取远程代码失败".to_string();
             }
@@ -1308,30 +1401,13 @@ async fn pull_branch(repo_path: String) -> Result<()> {
             return Err(msg);
         }
 
-        // 再尝试 fast-forward merge
-        let output = git_command()
-            .arg("-C")
-            .arg(&repo_path)
-            .arg("pull")
-            .arg("--ff-only")
-            .arg("--no-progress")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
+        // 再尝试 fast-forward merge（流式执行，实时推送拉取进度）
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &["--ff-only"])
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // 返回拉取结果信息
-            if stdout.trim().is_empty() {
-                Ok(())
-            } else {
-                // 即使成功也返回信息（如 "Already up to date."）
-                Ok(())
-            }
+        if ok2 {
+            Ok(())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = format!("{}{}", stderr, stdout);
+            let msg = out2;
             // 分叉（diverging）：--ff-only 拒绝快进。返回结构化前缀，前端据此弹「选择拉取方式」对话框，
             // 而非直接吐 git 原始的 hint 文本。
             if msg.contains("Not possible to fast-forward") || msg.contains("Diverging") {
@@ -1347,24 +1423,15 @@ async fn pull_branch(repo_path: String) -> Result<()> {
 /// 分支分叉时按指定策略拉取：merge（`--no-ff` 生成合并提交）或 rebase（变基到远程之上）。
 /// 由前端「选择拉取方式」对话框触发。冲突时返回 `PULL_CONFLICT:` 前缀，供前端引导解决。
 #[command]
-async fn pull_with_strategy(repo_path: String, strategy: String) -> Result<()> {
+async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
 
-        // 先 fetch 远程最新代码（与 pull_branch 一致）
-        let fetch_output = git_command()
-            .arg("-C")
-            .arg(&repo_path)
-            .arg("fetch")
-            .arg("--all")
-            .arg("--no-progress")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
+        // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
+        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
-        if !fetch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-            let stdout = String::from_utf8_lossy(&fetch_output.stdout);
-            let mut msg = format!("{}{}", stderr, stdout);
+        if !ok {
+            let mut msg = out;
             if msg.trim().is_empty() {
                 msg = "获取远程代码失败".to_string();
             }
@@ -1372,30 +1439,18 @@ async fn pull_with_strategy(repo_path: String, strategy: String) -> Result<()> {
         }
 
         // 按策略拉取：merge 生成合并提交（不改写历史），rebase 改写本地历史接到远程之后
-        let mut cmd = git_command();
-        cmd.arg("-C")
-            .arg(&repo_path)
-            .arg("pull")
-            .arg("--no-progress");
-        match strategy.as_str() {
-            "rebase" => {
-                cmd.arg("--rebase");
-            }
-            _ => {
-                cmd.arg("--no-ff");
-            }
-        }
-        cmd.env("GIT_TERMINAL_PROMPT", "0");
-        let output = cmd
-            .output()
+        let strategy_arg = if strategy.as_str() == "rebase" {
+            "--rebase"
+        } else {
+            "--no-ff"
+        };
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &[strategy_arg])
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
 
-        if output.status.success() {
+        if ok2 {
             Ok(())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = format!("{}{}", stderr, stdout);
+            let msg = out2;
             // 冲突：git 留下冲突标记并中止，返回结构化前缀引导前端解决
             if msg.contains("CONFLICT") || msg.to_lowercase().contains("conflict") {
                 return Err(format!(
