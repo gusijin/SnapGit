@@ -631,6 +631,8 @@ export default {
     backToWorkspace: '返回工作区',
     logTitle: '提交日志',
     searchPlaceholder: '搜索提交信息 / 作者 / ID',
+    search: '搜索',
+    collapseSearch: '收起搜索',
     clearSearch: '清除搜索',
     noMatch: '没有匹配的提交',
     noCommits: '暂无提交记录',

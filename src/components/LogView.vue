@@ -25,6 +25,25 @@ function exitLog() {
 }
 
 const filterText = ref('')
+// 搜索框展开状态：false=收起（标题栏只显示搜索图标按钮），true=展开（显示输入框）
+const searchOpen = ref(false)
+const searchInputRef = ref<HTMLInputElement | null>(null)
+
+// 点击标题栏搜索图标：展开输入框并自动聚焦
+function openSearch() {
+  searchOpen.value = true
+  nextTick(() => searchInputRef.value?.focus())
+}
+
+// 输入框内的 X 按钮：有文本→清除并重新聚焦；无文本→收起搜索框回到图标态
+function onSearchClear() {
+  if (filterText.value) {
+    filterText.value = ''
+    nextTick(() => searchInputRef.value?.focus())
+  } else {
+    searchOpen.value = false
+  }
+}
 
 const filteredCommits = computed(() => {
   const q = filterText.value.trim().toLowerCase()
@@ -161,18 +180,42 @@ onMounted(() => {
       <History :size="13" class="header-icon" />
       <span>{{ t('logView.logTitle') }}</span>
       <span class="count">{{ filteredCommits.length }}</span>
-      <div class="search-box">
-        <Search :size="13" class="search-icon" />
-        <input
-          v-model="filterText"
-          class="search-input"
-          type="text"
-          :placeholder="t('logView.searchPlaceholder')"
-        />
-        <button v-if="filterText" class="search-clear" @click="filterText = ''" :title="t('logView.clearSearch')">
-          <X :size="13" />
-        </button>
-      </div>
+      <!-- 搜索：收起态仅显示搜索图标按钮，点击后展开输入框 -->
+      <template v-if="!searchOpen">
+        <TooltipProvider :delay-duration="260">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <button class="header-search-btn" :aria-label="t('logView.search')" @click="openSearch">
+                <Search :size="13" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ t('logView.search') }}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </template>
+      <template v-else>
+        <div class="search-box">
+          <Search :size="13" class="search-icon" />
+          <input
+            ref="searchInputRef"
+            v-model="filterText"
+            class="search-input"
+            type="text"
+            :placeholder="t('logView.searchPlaceholder')"
+            @keydown.esc="onSearchClear"
+          />
+          <TooltipProvider :delay-duration="260">
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <button class="search-clear" @click="onSearchClear" :aria-label="t('logView.clearSearch')">
+                  <X :size="13" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{{ filterText ? t('logView.clearSearch') : t('logView.collapseSearch') }}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </template>
     </div>
 
     <div v-if="filteredCommits.length === 0" class="empty">
@@ -292,6 +335,29 @@ onMounted(() => {
 }
 
 .header-exit-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+/* 搜索收起态：icon-only 按钮，视觉与交互完全复用 .header-exit-btn 规范（统一标题栏风格） */
+.header-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-left: auto;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.header-search-btn:hover {
   background-color: var(--bg-hover);
   color: var(--text-bright);
 }

@@ -631,6 +631,8 @@ export default {
     backToWorkspace: 'Back to working tree',
     logTitle: 'Commit Log',
     searchPlaceholder: 'Search message / author / ID',
+    search: 'Search',
+    collapseSearch: 'Collapse search',
     clearSearch: 'Clear search',
     noMatch: 'No matching commits',
     noCommits: 'No commits yet',
