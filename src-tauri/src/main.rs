@@ -1419,6 +1419,66 @@ fn resolve_pull_target(repo_path: &str) -> Vec<String> {
     }
 }
 
+/// 工作区是否包含未提交改动（含未跟踪文件）。用于判断拉取前是否需要先 stash。
+fn is_worktree_dirty(repo_path: &str) -> bool {
+    let out = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .arg("status")
+        .arg("--porcelain")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output();
+    match out {
+        Ok(o) => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// 拉取前自动 stash 未提交改动。原因：git 在脏工作区直接 pull 会直接 abort
+/// （"Your local changes would be overwritten by merge"），无法产生真正的合并冲突。
+/// 先 stash 让工作区干净，拉取成功后再 pop 还原；若与远端改动重叠则产生冲突，
+/// 由「变更文件」面板标红展示（不弹窗、不阻塞）。仅脏工作区时执行。
+/// 返回是否真的 stash 了（用于拉取后还原）。
+fn auto_stash_before_pull(repo_path: &str) -> bool {
+    if !is_worktree_dirty(repo_path) {
+        return false;
+    }
+    let out = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .args(["stash", "push", "-u", "-m", "snapgit-pull-autostash"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output();
+    matches!(out, Ok(o) if o.status.success())
+}
+
+/// 拉取后还原 stash（`git stash pop`）。
+/// - 成功：返回 None（改动已还原）。
+/// - 冲突：保留 stash 不丢弃，返回冲突信息，交由前端冲突流程处理。
+fn auto_unstash_after_pull(repo_path: &str) -> Option<String> {
+    let out = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .args(["stash", "pop"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output();
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            if !o.status.success() || combined.contains("CONFLICT") || combined.contains("could not apply") {
+                Some(combined)
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
 #[command]
 async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
@@ -1435,6 +1495,10 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
             }
         }
 
+        // 拉取前若工作区有未提交改动，先自动 stash（git 在脏工作区直接 pull 会 abort，无法产生真正冲突）。
+        // stash 后工作区干净可正常拉取，还原时若与远端改动重叠则产生冲突，由「变更文件」面板标红展示。
+        let stashed = auto_stash_before_pull(&repo_path);
+
         // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
         let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
@@ -1445,6 +1509,10 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
             }
             if msg.contains("Authentication failed") || msg.contains("could not read Username") || msg.contains("terminal prompts disabled") {
                 msg = format!("拉取失败：远程仓库认证失败\n\n请确保已配置认证方式（SSH 密钥或 credential helper）。\n\n原始错误:\n{}", msg);
+            }
+            // 拉取失败：还原 stash，避免改动被留在工作区之外
+            if stashed {
+                let _ = auto_unstash_after_pull(&repo_path);
             }
             return Err(msg);
         }
@@ -1459,11 +1527,23 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
         let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
         if ok2 {
+            // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
+            if stashed {
+                if let Some(conflict) = auto_unstash_after_pull(&repo_path) {
+                    return Err(format!(
+                        "PULL_CONFLICT: 拉取成功，但还原本地改动时与远端改动冲突，已在「变更文件」面板标红，请直接打开对应文件解决。\n\n{}",
+                        conflict
+                    ));
+                }
+            }
             Ok(())
         } else {
             let msg = out2;
-            // 分叉（diverging）：--ff-only 拒绝快进。返回结构化前缀，前端据此弹「选择拉取方式」对话框，
-            // 而非直接吐 git 原始的 hint 文本。
+            // 分叉（diverging）：--ff-only 拒绝快进。还原 stash 后返回结构化前缀，
+            // 前端据此弹「选择拉取方式」对话框，而非直接吐 git 原始的 hint 文本。
+            if stashed {
+                let _ = auto_unstash_after_pull(&repo_path);
+            }
             if msg.contains("Not possible to fast-forward") || msg.contains("Diverging") {
                 return Err("PULL_DIVERGED: 本地分支与远程分支已分叉，无法快进合并，请选择合并或变基策略".to_string());
             }
@@ -1481,6 +1561,9 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
 
+        // 拉取前若工作区有未提交改动，先自动 stash（git 在脏工作区直接 pull 会 abort，无法产生真正冲突）。
+        let stashed = auto_stash_before_pull(&repo_path);
+
         // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
         let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
@@ -1488,6 +1571,9 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
             let mut msg = out;
             if msg.trim().is_empty() {
                 msg = "获取远程代码失败".to_string();
+            }
+            if stashed {
+                let _ = auto_unstash_after_pull(&repo_path);
             }
             return Err(msg);
         }
@@ -1506,9 +1592,21 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
 
         if ok2 {
+            // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
+            if stashed {
+                if let Some(conflict) = auto_unstash_after_pull(&repo_path) {
+                    return Err(format!(
+                        "PULL_CONFLICT: 拉取成功，但还原本地改动时与远端改动冲突，已在「变更文件」面板标红，请直接打开对应文件解决。\n\n{}",
+                        conflict
+                    ));
+                }
+            }
             Ok(())
         } else {
             let msg = out2;
+            if stashed {
+                let _ = auto_unstash_after_pull(&repo_path);
+            }
             // 冲突：git 留下冲突标记并中止，返回结构化前缀引导前端解决
             if msg.contains("CONFLICT") || msg.to_lowercase().contains("conflict") {
                 return Err(format!(
@@ -3242,16 +3340,23 @@ async fn get_conflict_file(repo_path: String, file_path: String) -> Result<Confl
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
 
-        // ours = stage 2 (HEAD/current branch), theirs = stage 3 (incoming branch)
-        let ours_content = read_stage_content(&repo_path, 2, &file_path).unwrap_or_default();
-        let theirs_content = read_stage_content(&repo_path, 3, &file_path).unwrap_or_default();
-        let base_content = read_stage_content(&repo_path, 1, &file_path);
-
         let full_path = PathBuf::from(&repo_path).join(&file_path);
         let working_raw = fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
         let working_content = working_raw.lines().map(|l| l.to_string()).collect();
 
         let blocks = parse_conflict_blocks(&working_raw);
+
+        // ours = stage 2 (HEAD/current branch), theirs = stage 3 (incoming branch)
+        let mut ours_content = read_stage_content(&repo_path, 2, &file_path).unwrap_or_default();
+        let mut theirs_content = read_stage_content(&repo_path, 3, &file_path).unwrap_or_default();
+        let base_content = read_stage_content(&repo_path, 1, &file_path);
+
+        // stash-pop 产生的冲突不填充 index 阶段（stage 1/2/3 为空），此时从冲突标记解析
+        // ours/theirs 兜底，保证冲突解决器左右两栏仍显示「本地改动」与「远端改动」。
+        if ours_content.is_empty() && theirs_content.is_empty() && !blocks.is_empty() {
+            ours_content = blocks.iter().flat_map(|b| b.ours.iter().cloned()).collect();
+            theirs_content = blocks.iter().flat_map(|b| b.theirs.iter().cloned()).collect();
+        }
 
         Ok(ConflictFile {
             path: file_path,
