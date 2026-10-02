@@ -1381,6 +1381,44 @@ fn checkout_remote_branch(repo_path: String, remote_branch: String) -> Result<()
     }
 }
 
+/// 解析 `git pull` 的目标参数：
+/// - 当前分支已有 upstream → 返回空，走裸 `git pull`（沿用用户既有跟踪配置）；
+/// - 没有 upstream（典型：首次 push 未带 -u）→ 返回 `<remote> <branch>` 显式拉取，
+///   避免 git 报 "There is no tracking information for the current branch"。
+///   注意：不写用户仓库配置（不自动 set-upstream），保持无副作用。
+/// - HEAD 游离 / 仓库打不开 / 无 remote → 返回空，保持原有报错行为。
+fn resolve_pull_target(repo_path: &str) -> Vec<String> {
+    let Ok(repo) = Repository::open(repo_path) else {
+        return Vec::new();
+    };
+    let Ok(head) = repo.head() else {
+        return Vec::new();
+    };
+    let Some(branch_name) = head.shorthand().map(|s| s.to_string()) else {
+        return Vec::new();
+    };
+    // 已有 upstream → 裸 pull 即可
+    if let Ok(local) = repo.find_branch(&branch_name, BranchType::Local) {
+        if local.upstream().is_ok() {
+            return Vec::new();
+        }
+    }
+    // 没有 upstream：选 remote（优先 origin，否则取第一个）
+    let remotes = match repo.remotes() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let remote = remotes
+        .iter()
+        .flatten()
+        .find(|r| *r == "origin")
+        .or_else(|| remotes.iter().flatten().next());
+    match remote {
+        Some(r) => vec![r.to_string(), branch_name],
+        None => Vec::new(),
+    }
+}
+
 #[command]
 async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
@@ -1411,8 +1449,14 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
             return Err(msg);
         }
 
+        // 分支没有 upstream 时显式指定 <remote> <branch>（如首次 push 未带 -u 的仓库），
+        // 避免 git 报 "There is no tracking information for the current branch"
+        let mut pull_args: Vec<String> = vec!["--ff-only".to_string()];
+        pull_args.extend(resolve_pull_target(&repo_path));
+        let pull_args: Vec<&str> = pull_args.iter().map(|s| s.as_str()).collect();
+
         // 再尝试 fast-forward merge（流式执行，实时推送拉取进度）
-        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &["--ff-only"])
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
         if ok2 {
             Ok(())
@@ -1454,7 +1498,11 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
         } else {
             "--no-ff"
         };
-        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &[strategy_arg])
+        // 同 pull_branch：分支没有 upstream 时显式指定 <remote> <branch>
+        let mut pull_args: Vec<String> = vec![strategy_arg.to_string()];
+        pull_args.extend(resolve_pull_target(&repo_path));
+        let pull_args: Vec<&str> = pull_args.iter().map(|s| s.as_str()).collect();
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
 
         if ok2 {
