@@ -99,12 +99,25 @@ jobs:
         with:
           workspaces: 'src-tauri -> target'
 
-      - name: Build dmg (${{ matrix.arch }})
+      # Tauri 内置 DMG 打包（bundle_dmg.sh，内联 create-dmg fork）在 CI runner 上依赖
+      # hdiutil attach 挂载且设备节点解析脆弱，经常 failed to run bundle_dmg.sh。
+      # 改为只产出已签名的 .app，再用 scripts/build-dmg.sh（hdiutil create -srcfolder，免挂载）
+      # 打 dmg，稳定且无需外部工具。自定义 Finder 图标仍由后续 dmg-icon-inject.sh 注入。
+      - name: Build app (${{ matrix.arch }})
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target ${{ matrix.target }} --bundles dmg
+          args: --target ${{ matrix.target }} --bundles app
+
+      - name: Build dmg from app (${{ matrix.arch }})
+        run: |
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/SnapGit.app"
+          OUT="src-tauri/target/${{ matrix.target }}/release/bundle/dmg/SnapGit_${VERSION}_${{ matrix.arch }}.dmg"
+          mkdir -p "$(dirname "$OUT")"
+          chmod +x scripts/build-dmg.sh
+          bash scripts/build-dmg.sh "$APP" "$OUT" "SnapGit"
 
       # 校验 app 是否真的带代码签名。
       # Apple Silicon 内核强制要求所有可执行文件有签名，未签名的 arm64 app 在 M 系列上
