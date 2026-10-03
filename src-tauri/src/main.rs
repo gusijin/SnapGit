@@ -4144,11 +4144,23 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<Che
     )?;
 
     // 编辑菜单（对齐 Windows：配置 + 语言切换）
+    // ⚠️ 必须包含标准粘贴板项（撤销/重做/剪切/复制/粘贴/全选）。
+    // 否则 macOS 上 Cmd+C/Cmd+V/Cmd+X/Cmd+A/Cmd+Z 无法被路由到 WebView 的文本输入，
+    // 在编辑器弹窗等任意窗口里复制/粘贴/全选都会失效（经典 Tauri macOS 坑）。
+    // Windows 走前端 MenuBar.vue，且 WebView2 原生处理 Ctrl+C/V，无需此项。
     let edit_menu = Submenu::with_items(
         app,
         "编辑",
         true,
         &[
+            &PredefinedMenuItem::undo(app, Some("撤销"))?,
+            &PredefinedMenuItem::redo(app, Some("重做"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some("剪切"))?,
+            &PredefinedMenuItem::copy(app, Some("复制"))?,
+            &PredefinedMenuItem::paste(app, Some("粘贴"))?,
+            &PredefinedMenuItem::select_all(app, Some("全选"))?,
+            &PredefinedMenuItem::separator(app)?,
             &repo_config_item,
             &PredefinedMenuItem::separator(app)?,
             &lang_items[0],
