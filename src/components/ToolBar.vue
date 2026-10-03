@@ -30,8 +30,6 @@ interface Props {
   pushState?: 'idle' | 'done'
   /** 拉取中：按钮显示 spinner + "拉取中…" */
   pulling?: boolean
-  /** 拉取进度（后端实时推送的 git 百分比）。visible=true 表示已超过 10 秒阈值，工具栏展示百分比 */
-  pullProgress?: { percent: number; phase: string; detail: string; visible: boolean }
   /** 推送中：按钮显示 spinner + "推送中…" */
   pushing?: boolean
   /** 本地+远程分支列表（用于同步状态与分支切换） */
@@ -54,7 +52,6 @@ const props = withDefaults(defineProps<Props>(), {
   branchListReady: false,
   pushState: 'idle',
   pulling: false,
-  pullProgress: () => ({ percent: 0, phase: '', detail: '', visible: false }),
   pushing: false,
   branches: () => [],
   upstream: null,
@@ -72,14 +69,6 @@ const emit = defineEmits([
 const hasRepo = computed(() => !!props.repositoryPath)
 
 const { t } = useI18n()
-
-// 拉取进度阶段文案：统一显示「拉取中」，完成时短暂显示「完成」。
-// 不再暴露 git 内部阶段名（Receiving/Compressing/Resolving...），避免用户看到「压缩中」这种技术阶段。
-const pullPhaseLabel = computed(() => {
-  const phase = props.pullProgress?.phase
-  if (phase === 'done') return t('toolbar.pullDone')
-  return t('toolbar.pulling')
-})
 
 interface Tool {
   id: string
@@ -213,22 +202,15 @@ onBeforeUnmount(() => {
       <!-- 左：Git 主流程操作组（连接式分段按钮） -->
       <div class="seg-group">
         <template v-for="tool in primaryTools" :key="tool.id">
-          <!-- 拉取中态：按钮显示 spinner + "拉取中…" 并禁用 -->
+          <!-- 拉取中态：按钮固定显示 spinner + "拉取中…" 并禁用；百分比进度改在「变更文件」面板中心展示 -->
           <Button
             v-if="tool.id === 'pull' && pulling"
             variant="ghost"
             class="seg-btn seg-btn-loading"
             disabled
           >
-            <template v-if="pullProgress && pullProgress.visible">
-              <span class="pull-pct">{{ pullProgress.percent }}%</span>
-              <span class="pull-phase">{{ pullPhaseLabel }}</span>
-              <span class="pull-bar" :style="{ width: pullProgress.percent + '%' }"></span>
-            </template>
-            <template v-else>
-              <Loader2 :size="18" class="spin-icon" />
-              <span>{{ t('toolbar.pulling') }}</span>
-            </template>
+            <Loader2 :size="18" class="spin-icon" />
+            <span>{{ t('toolbar.pulling') }}</span>
           </Button>
           <!-- 推送中态：按钮显示 spinner + "推送中…" 并禁用（优先级高于 done 成功态） -->
           <Button
@@ -613,25 +595,6 @@ onBeforeUnmount(() => {
   opacity: 0.85;
   position: relative;
   overflow: hidden;
-}
-
-/* 拉取进度（超过 10 秒后展示）：百分比 + 阶段标签 + 底部细进度条 */
-.pull-pct {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-.pull-phase {
-  font-size: 11px;
-  opacity: 0.7;
-  margin-left: 3px;
-}
-.pull-bar {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 2px;
-  background: var(--brand-primary);
-  transition: width 0.2s ease;
 }
 
 .spin-icon {
