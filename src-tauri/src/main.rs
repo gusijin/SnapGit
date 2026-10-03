@@ -153,6 +153,7 @@ fn run_git_progress(
     repo_path: &str,
     subcmd: &str,
     extra_args: &[&str],
+    ssh_cmd: Option<&str>,
 ) -> std::io::Result<(bool, String)> {
     let mut cmd = git_command();
     cmd.arg("-C").arg(repo_path).arg(subcmd);
@@ -164,6 +165,11 @@ fn run_git_progress(
         cmd.arg("--progress");
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0");
+    // 自动检测到的 SSH 私钥：通过 GIT_SSH_COMMAND 仅本次生效（优先级高于 core.sshCommand），
+    // 拉取成功后再由调用方持久化进仓库 config。
+    if let Some(s) = ssh_cmd {
+        cmd.env("GIT_SSH_COMMAND", s);
+    }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn()?;
@@ -470,8 +476,13 @@ fn open_repository(path: String) -> Result<RepositoryInfo> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let head = repo.head().map_err(|e| e.to_string())?;
-    let current_branch = head.shorthand().unwrap_or("detached").to_string();
+    // HEAD 可能因"空仓库（刚 git init 尚未提交）"而处于 unborn 状态，head() 会报错。
+    // 此时不致命，默认回退到 main，避免打开空仓库时被当作通用错误静默吞掉。
+    let current_branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()))
+        .unwrap_or_else(|| "main".to_string());
 
     Ok(RepositoryInfo {
         path,
@@ -1391,12 +1402,27 @@ fn resolve_pull_target(repo_path: &str) -> Vec<String> {
     let Ok(repo) = Repository::open(repo_path) else {
         return Vec::new();
     };
-    let Ok(head) = repo.head() else {
-        return Vec::new();
-    };
-    let Some(branch_name) = head.shorthand().map(|s| s.to_string()) else {
-        return Vec::new();
-    };
+    // 当前分支名：
+    //  - 正常 HEAD（有提交）→ shorthand；
+    //  - 空仓库（刚 git init 未提交，HEAD 为 unborn）→ head() 会失败，
+    //    改从 HEAD 的 symbolic ref（refs/heads/<name>）取分支名；仍拿不到则默认 main。
+    //  （此前空仓库直接返回空 → 退回裸 `git pull` → 报 "There is no tracking information"）
+    let branch_name = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()))
+        .or_else(|| {
+            repo.find_reference("HEAD")
+                .ok()
+                .and_then(|r| r.symbolic_target().map(|s| s.to_string()))
+                .map(|target| {
+                    target
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(&target)
+                        .to_string()
+                })
+        })
+        .unwrap_or_else(|| "main".to_string());
     // 已有 upstream → 裸 pull 即可
     if let Ok(local) = repo.find_branch(&branch_name, BranchType::Local) {
         if local.upstream().is_ok() {
@@ -1479,6 +1505,73 @@ fn auto_unstash_after_pull(repo_path: &str) -> Option<String> {
     }
 }
 
+/// 从 SSH 默认路径检测第一个存在的私钥文件（跳过 .pub）。
+/// 用于「未配置 SSH 私钥路径时自动兜底」：拉取成功后由调用方持久化进仓库 config。
+fn detect_default_ssh_key() -> Option<String> {
+    let home = dirs::home_dir()?;
+    for name in ["id_ed25519", "id_rsa", "id_ecdsa"] {
+        let p = home.join(".ssh").join(name);
+        if p.is_file() {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// 仓库是否已配置 core.sshCommand（查所有层级：local/global）。
+/// 已配置则不自动检测，尊重用户既有设置。
+fn repo_has_ssh_command(repo_path: &str) -> bool {
+    git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .arg("config")
+        .arg("--get")
+        .arg("core.sshCommand")
+        .output()
+        .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 把 SSH 私钥路径写入仓库本地 config（core.sshCommand）。
+/// 刻意不加 git 锁——供已持锁的调用方（set_ssh_key_path 持读锁、拉取流程持写锁）安全复用。
+fn apply_ssh_key_config(repo_path: &str, key_path: &str) -> Result<String> {
+    // 规范化为正斜杠（Git 风格）：Windows 反斜杠路径在 core.sshCommand 经 git 的
+    // split_cmdline / sh 解析时属于脆弱写法，部分 git/ssh 版本或环境下会被当作转义符吃错，
+    // 导致私钥路径解析失败而拉取报认证错误。正斜杠在 Git for Windows 下始终可用。
+    let key_path = key_path.trim().replace('\\', "/");
+    if key_path.is_empty() {
+        // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
+        let _ = git_command()
+            .arg("-C").arg(repo_path)
+            .arg("config").arg("--local").arg("--unset")
+            .arg("core.sshCommand")
+            .output();
+        return Ok(String::new());
+    }
+    let cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key_path);
+    let status = git_command()
+        .arg("-C").arg(repo_path)
+        .arg("config").arg("--local")
+        .arg("core.sshCommand").arg(&cmd)
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(cmd),
+        Ok(s) => Err(format!("git config 写入失败，退出码: {}", s)),
+        Err(e) => Err(format!("执行 git 失败: {}", e)),
+    }
+}
+
+/// 拉取前的 SSH 私钥自动兜底：未配置 core.sshCommand 且默认路径存在私钥时，
+/// 返回 (本次用的 GIT_SSH_COMMAND, 私钥路径)。已配置或未找到私钥 → None（沿用 git 默认行为）。
+fn auto_ssh_key(repo_path: &str) -> Option<(String, String)> {
+    if repo_has_ssh_command(repo_path) {
+        return None;
+    }
+    let key = detect_default_ssh_key()?;
+    let ssh_cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key.replace('\\', "/"));
+    Some((ssh_cmd, key))
+}
+
 #[command]
 async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
@@ -1499,8 +1592,13 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
         // stash 后工作区干净可正常拉取，还原时若与远端改动重叠则产生冲突，由「变更文件」面板标红展示。
         let stashed = auto_stash_before_pull(&repo_path);
 
+        // SSH 私钥自动兜底：未配置 core.sshCommand 时，从 SSH 默认路径检测存在的私钥，
+        // 本次 fetch/pull 通过 GIT_SSH_COMMAND 使用；拉取成功后自动持久化进仓库 config。
+        let auto_ssh = auto_ssh_key(&repo_path);
+        let ssh_for_run = auto_ssh.as_ref().map(|(c, _)| c.as_str());
+
         // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
-        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
+        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"], ssh_for_run)
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
         if !ok {
             let mut msg = out;
@@ -1524,9 +1622,14 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
         let pull_args: Vec<&str> = pull_args.iter().map(|s| s.as_str()).collect();
 
         // 再尝试 fast-forward merge（流式执行，实时推送拉取进度）
-        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args)
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args, ssh_for_run)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
         if ok2 {
+            // 拉取成功：把自动检测到的 SSH 私钥路径持久化进仓库 config，
+            // 后续 fetch/pull/push 复用该私钥（失败仅忽略，不影响本次拉取结果）。
+            if let Some((_, key)) = &auto_ssh {
+                let _ = apply_ssh_key_config(&repo_path, key);
+            }
             // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
             if stashed {
                 if let Some(conflict) = auto_unstash_after_pull(&repo_path) {
@@ -1564,8 +1667,12 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
         // 拉取前若工作区有未提交改动，先自动 stash（git 在脏工作区直接 pull 会 abort，无法产生真正冲突）。
         let stashed = auto_stash_before_pull(&repo_path);
 
+        // SSH 私钥自动兜底：同 pull_branch
+        let auto_ssh = auto_ssh_key(&repo_path);
+        let ssh_for_run = auto_ssh.as_ref().map(|(c, _)| c.as_str());
+
         // 先 fetch 远程最新代码（流式执行，实时推送拉取进度）
-        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"])
+        let (ok, out) = run_git_progress(&app, &repo_path, "fetch", &["--all"], ssh_for_run)
             .map_err(|e| format!("无法执行 git fetch 命令: {}", e))?;
         if !ok {
             let mut msg = out;
@@ -1588,10 +1695,14 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
         let mut pull_args: Vec<String> = vec![strategy_arg.to_string()];
         pull_args.extend(resolve_pull_target(&repo_path));
         let pull_args: Vec<&str> = pull_args.iter().map(|s| s.as_str()).collect();
-        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args)
+        let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args, ssh_for_run)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
 
         if ok2 {
+            // 拉取成功：持久化自动检测到的 SSH 私钥（同 pull_branch）
+            if let Some((_, key)) = &auto_ssh {
+                let _ = apply_ssh_key_config(&repo_path, key);
+            }
             // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
             if stashed {
                 if let Some(conflict) = auto_unstash_after_pull(&repo_path) {
@@ -2380,31 +2491,7 @@ fn open_in_terminal(repo_path: String) -> Result<()> {
 #[command]
 async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
     let _guard = git_read_guard();
-    // 规范化为正斜杠（Git 风格）：Windows 反斜杠路径在 core.sshCommand 经 git 的
-    // split_cmdline / sh 解析时属于脆弱写法，部分 git/ssh 版本或环境下会被当作转义符吃错，
-    // 导致私钥路径解析失败而拉取报认证错误。正斜杠在 Git for Windows 下始终可用。
-    let key_path = key_path.trim().replace('\\', "/").to_string();
-    if key_path.is_empty() {
-        // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
-        let _ = git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("config").arg("--local").arg("--unset")
-            .arg("core.sshCommand")
-            .output();
-        return Ok(String::new());
-    }
-    // 写入标准 ssh 私钥指定命令：仅用该私钥，避免 ssh-agent 里其他 key 干扰
-    let cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key_path);
-    let status = git_command()
-        .arg("-C").arg(&repo_path)
-        .arg("config").arg("--local")
-        .arg("core.sshCommand").arg(&cmd)
-        .status();
-    match status {
-        Ok(s) if s.success() => Ok(cmd),
-        Ok(s) => Err(format!("git config 写入失败，退出码: {}", s)),
-        Err(e) => Err(format!("执行 git 失败: {}", e)),
-    }
+    apply_ssh_key_config(&repo_path, &key_path)
 }
 
 // 保存仓库用户信息（user.name / user.email）。

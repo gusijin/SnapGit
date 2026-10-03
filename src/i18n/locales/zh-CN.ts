@@ -478,6 +478,7 @@ export default {
     modifiedSingle: '修改: {name}',
     modifiedMultiple: '修改: {n} 个文件',
     noRepoOpen: '请先打开一个仓库',
+    openRepoFailed: '打开仓库失败: {error}',
     noChangesToCommit: '没有需要提交的更改',
     commitFailed: '提交失败: {error}',
     pushSkippedNoBranch: '提交成功，但无法确定当前分支，跳过推送',

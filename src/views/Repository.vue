@@ -570,7 +570,9 @@ async function handleOpenRepo() {
       initing.value = false
       showInitRepoDialog.value = true
     } else {
+      // 其它错误（如打开失败）之前被静默吞掉，用户毫无感知；改为明确 toast 提示。
       console.error('Open error:', e)
+      showToast(t('repository.openRepoFailed', { error: msg }), 'error')
     }
   }
 }
@@ -583,20 +585,10 @@ async function handleOpenRepo() {
  * handleOpenRepo 与"打开普通文件夹后 Initialize"两条路径都复用本函数。
  */
 async function applyRepoInfo(path: string, info: { name: string; current_branch: string }) {
-  await saveRecentRepository({
-    path,
-    name: info.name,
-    current_branch: info.current_branch,
-  } as any)
-  repoPath.value = path
-  selectedFiles.value = []
-  selectedFileDiff.value = null
-  fileViewMode.value = 'working-tree'
-  currentCommitId.value = ''
-  commitFiles.value = []
-  diffRequestSeq++
-  stopDiffLoading()
   const cleanPath = sanitizePath(path)
+  // 先更新本地仓库面板列表（响应式 + localStorage），确保「打开仓库」后侧栏立即显示该仓库，
+  // 不受后续后端持久化 / 数据加载失败影响（之前 saveRecentRepository 排在 unshift 之前，
+  // 一旦后端写文件抛错就会阻断列表更新，表现为"选了文件夹但列表不显示"）。
   if (!scannedProjects.value.some(p => p.path === cleanPath)) {
     scannedProjects.value.unshift({
       path: cleanPath,
@@ -606,7 +598,25 @@ async function applyRepoInfo(path: string, info: { name: string; current_branch:
     })
     localStorage.setItem(SCANNED_PROJECTS_KEY, JSON.stringify(scannedProjects.value))
   }
+  repoPath.value = path
+  selectedFiles.value = []
+  selectedFileDiff.value = null
+  fileViewMode.value = 'working-tree'
+  currentCommitId.value = ''
+  commitFiles.value = []
+  diffRequestSeq++
+  stopDiffLoading()
   localStorage.setItem(LAST_REPO_KEY, path)
+  // 后端"最近仓库"持久化失败不应阻断前端流程（仅影响后端 recent 列表，前端列表已更新）
+  try {
+    await saveRecentRepository({
+      path,
+      name: info.name,
+      current_branch: info.current_branch,
+    } as any)
+  } catch (e) {
+    console.warn('保存最近仓库失败（已忽略，前端列表不受影响）:', e)
+  }
   await loadRepoData()
 }
 

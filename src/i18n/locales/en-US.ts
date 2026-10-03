@@ -477,6 +477,7 @@ export default {
     modifiedSingle: 'Modified: {name}',
     modifiedMultiple: 'Modified: {n} files',
     noRepoOpen: 'Please open a repository first',
+    openRepoFailed: 'Failed to open repository: {error}',
     noChangesToCommit: 'No changes to commit',
     commitFailed: 'Commit failed: {error}',
     pushSkippedNoBranch: 'Commit succeeded, but could not determine the current branch; skipped push',
