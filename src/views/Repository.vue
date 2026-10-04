@@ -1574,7 +1574,8 @@ const isPulling = ref(false)
 const isPushing = ref(false)
 
 // 拉取进度：后端通过 `pull-progress` 事件实时推送 git fetch/pull 百分比（Receiving/Resolving 等阶段）。
-// visible 仅在拉取超过 10 秒后才置 true，避免快速拉取时闪烁打扰。
+// visible 仅在拉取超过 PULL_PROGRESS_DELAY_MS(5s) 后才置 true，避免快速拉取时闪烁打扰。
+const PULL_PROGRESS_DELAY_MS = 5000
 const pullProgress = ref<{ percent: number; phase: string; detail: string; visible: boolean }>({
   percent: 0,
   phase: '',
@@ -1583,13 +1584,13 @@ const pullProgress = ref<{ percent: number; phase: string; detail: string; visib
 })
 let pullProgressTimer: ReturnType<typeof setTimeout> | null = null
 
-// 进入拉取：重置进度并启动 10 秒计时器，超时且仍在拉取则显示百分比
+// 进入拉取：重置进度并启动 5 秒计时器，超时且仍在拉取则显示百分比
 function beginPullProgress() {
   pullProgress.value = { percent: 0, phase: '', detail: '', visible: false }
   if (pullProgressTimer !== null) clearTimeout(pullProgressTimer)
   pullProgressTimer = setTimeout(() => {
     if (isPulling.value) pullProgress.value.visible = true
-  }, 10000)
+  }, PULL_PROGRESS_DELAY_MS)
 }
 
 // 结束拉取：清理计时器；若已展示进度则进入「100% 完成」态，延迟 600ms 淡出，否则立即结束
@@ -2077,7 +2078,7 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
-    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板在超过 10 秒后内联展示
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板在超过 5 秒后内联展示
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
@@ -2798,7 +2799,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-/* ===== 拉取进度（超过 10 秒）：原居中弹窗已弃用，改为 FileList 面板内联展示（见 FileList.vue .pull-progress-banner） ===== */
+/* ===== 拉取进度（超过 5 秒）：原居中弹窗已弃用，改为 FileList 面板内联展示（见 FileList.vue .pull-progress-banner） ===== */
 
 .file-list-area > :deep(.file-list) {
   border-right: none;

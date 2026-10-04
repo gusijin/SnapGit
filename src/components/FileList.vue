@@ -21,7 +21,7 @@ interface Props {
   conflictActive?: boolean
   // 进行中的拉取策略，决定解决条按钮文案（merge → 完成合并 / rebase → 继续变基）
   pullStrategy?: 'merge' | 'rebase' | null
-  // 拉取进度（git fetch/pull 百分比）：超过 10 秒后才 visible，用于面板内联展示
+  // 拉取进度（git fetch/pull 百分比）：超过 5 秒后才 visible，用于面板内联展示
   // 拉取进度，替代原先的居中弹窗。
   pullProgress?: { percent: number; phase: string; detail: string; visible: boolean } | null
 }
@@ -257,7 +257,7 @@ const pullPhaseLabel = computed(() => {
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 
-    <!-- 拉取进度（超过 10 秒才显示，避免快速拉取闪烁）。两种形态，统一样式：
+    <!-- 拉取进度（超过 5 秒才显示，避免快速拉取闪烁）。两种形态，统一样式：
          ① 列表为空 → 替代「工作区干净」空态，居中展示 spinner + 百分比 + 阶段 + 进度条；
          ② 列表非空 → 面板头部下方的单行细进度条，不遮挡文件列表 -->
     <transition name="ppb-fade">
@@ -664,7 +664,7 @@ const pullPhaseLabel = computed(() => {
   background-color: var(--bg-active);
 }
 
-/* ===== 拉取进度（超过 10 秒）：列表为空时替代「工作区干净」空态居中展示；
+/* ===== 拉取进度（超过 5 秒）：列表为空时替代「工作区干净」空态居中展示；
    列表非空时为面板头下方的单行细进度条。低调克制，不抢视觉 ===== */
 .pull-progress-banner {
   flex-shrink: 0;
