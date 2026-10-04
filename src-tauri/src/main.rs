@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::collections::HashMap;
@@ -109,9 +109,15 @@ fn git_command() -> std::process::Command {
     cmd
 }
 
-/// 解析 git 进度行，提取 (百分比, 阶段键, 原始文本)。非进度行返回 None。
-/// 进度行形如 `remote: Receiving objects:  42% (100/238), ...`、`Resolving deltas:  50% (100/200)`。
-fn parse_git_progress(line: &str) -> Option<(u32, &'static str, String)> {
+/// 解析单条 git 进度片段，提取 (阶段键, 该阶段内的百分比)。非进度行返回 None。
+///
+/// 进度片段形如 `remote: Receiving objects:  42% (100/238), 1.2 MiB | 300 KiB/s`。
+///
+/// 【重要】git 的进度是用 `\r`（回车）覆盖**同一行**来刷新的，一个阶段会连续刷新
+/// 上百次。因此调用方必须先按 `\r` 与 `\n` 双重切分，否则整个阶段的上百次刷新会被
+/// 当成一行读入，解析时只取到片段里最后一个 `NN%`（恒为 100%），
+/// 造成「还在压缩对象就显示 100%」的错觉。
+fn parse_git_progress(line: &str) -> Option<(&'static str, u32)> {
     let l = line.trim();
     let phase = if l.contains("Receiving objects") {
         "receiving"
@@ -124,7 +130,7 @@ fn parse_git_progress(line: &str) -> Option<(u32, &'static str, String)> {
     } else {
         return None;
     };
-    // 提取最后一个 "NN%" 前的数字作为百分比
+    // 提取片段中最后一个 "NN%" 前的数字作为该阶段百分比
     let bytes = l.as_bytes();
     let mut pct: Option<u32> = None;
     let mut i = 0;
@@ -143,7 +149,57 @@ fn parse_git_progress(line: &str) -> Option<(u32, &'static str, String)> {
         i += 1;
     }
     let pct = pct?;
-    Some((pct, phase, l.to_string()))
+    Some((phase, pct))
+}
+
+/// 把「阶段 + 阶段内百分比」换算成**整体拉取进度**（0-100）。
+///
+/// 必要性：git 各阶段的百分比是各自独立从 0 重新计的。若直接把阶段百分比透给前端，
+/// 会出现「计数 100% → 压缩 0% → 接收 0%」的来回跳变与「尚未拉取完就显示 100%」。
+/// 这里给每个阶段分配一个互不重叠的进度区间，使整体进度单调递增，
+/// 并且除真正完成（成功回调）外一律封顶 99%，100% 只在确实拉取完成时出现。
+fn overall_progress(phase: &str, phase_pct: u32) -> u32 {
+    let (start, end) = match phase {
+        "counting" => (0u32, 8u32),
+        "compressing" => (8, 20),
+        "receiving" => (20, 80),
+        "resolving" => (80, 99),
+        _ => (0, 99),
+    };
+    let p = phase_pct.min(100);
+    (start + (end - start) * p / 100).min(99)
+}
+
+/// 处理一条 git stderr 片段：能解析成进度就换算整体进度并推送事件（只增不减，避免闪回），
+/// 否则原样收集到 `captured`（用于失败时的错误提示）。
+/// 纯进度片段不进 `captured`，避免失败提示里塞满成百上千行百分比。
+fn handle_progress_segment(
+    seg: &str,
+    app: &AppHandle,
+    captured: &mut String,
+    last_pct: &mut u32,
+) {
+    let t = seg.trim();
+    if t.is_empty() {
+        return;
+    }
+    if let Some((phase, phase_pct)) = parse_git_progress(t) {
+        let overall = overall_progress(phase, phase_pct);
+        if overall > *last_pct {
+            *last_pct = overall;
+            let _ = app.emit(
+                "pull-progress",
+                serde_json::json!({
+                    "percent": overall,
+                    "phase": phase,
+                    "detail": t,
+                }),
+            );
+        }
+        return;
+    }
+    captured.push_str(t);
+    captured.push('\n');
 }
 
 /// 流式执行 git 子命令，把 fetch/pull 的实时进度通过 `pull-progress` 事件推送给前端。
@@ -174,29 +230,42 @@ fn run_git_progress(
 
     let mut child = cmd.spawn()?;
 
-    // stderr：进度信息 + 报错都走这里，逐行读取并解析进度推送前端
+    // stderr：进度信息 + 报错都走这里。
+    // 【关键】git 用 `\r` 回车覆盖同一行来刷新进度（一个阶段可连续刷新上百次），
+    // `BufReader::lines()` 只按 `\n` 切分，会把整个阶段的上百次刷新读成「一行」，
+    // 导致解析时只取到最后一个 NN%（恒为 100%）→ 表现为「还没拉完就显示 100%」。
+    // 因此这里手工读取字节流，并同时以 `\r` 与 `\n` 作为分隔符逐片段处理。
     let stderr = child.stderr.take().expect("stderr 应当可获取");
     let app_stderr = app.clone();
     let stderr_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
+        let mut reader = BufReader::new(stderr);
         let mut captured = String::new();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    captured.push_str(&l);
-                    captured.push('\n');
-                    if let Some((pct, phase, detail)) = parse_git_progress(&l) {
-                        let _ = app_stderr.emit(
-                            "pull-progress",
-                            serde_json::json!({
-                                "percent": pct,
-                                "phase": phase,
-                                "detail": detail,
-                            }),
-                        );
-                    }
-                }
+        let mut last_pct: u32 = 0;
+        let mut chunk = [0u8; 4096];
+        let mut pending: Vec<u8> = Vec::new();
+        loop {
+            let n = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
                 Err(_) => break,
+            };
+            pending.extend_from_slice(&chunk[..n]);
+            // 取出所有完整片段（以 \r 或 \n 结尾），保留末尾残片到下一轮
+            let mut start = 0usize;
+            for i in 0..pending.len() {
+                if pending[i] == b'\r' || pending[i] == b'\n' {
+                    if let Ok(seg) = std::str::from_utf8(&pending[start..i]) {
+                        handle_progress_segment(seg, &app_stderr, &mut captured, &mut last_pct);
+                    }
+                    start = i + 1;
+                }
+            }
+            pending.drain(..start);
+        }
+        // 流结束时处理末尾残片
+        if !pending.is_empty() {
+            if let Ok(seg) = std::str::from_utf8(&pending) {
+                handle_progress_segment(seg, &app_stderr, &mut captured, &mut last_pct);
             }
         }
         captured
