@@ -1583,18 +1583,6 @@ const pullProgress = ref<{ percent: number; phase: string; detail: string; visib
 })
 let pullProgressTimer: ReturnType<typeof setTimeout> | null = null
 
-// 拉取阶段 → 本地化文案（「变更文件」面板中心的下载状态标签）
-const pullPhaseLabel = computed(() => {
-  switch (pullProgress.value.phase) {
-    case 'receiving': return t('repository.pullPhase.receiving')
-    case 'resolving': return t('repository.pullPhase.resolving')
-    case 'counting': return t('repository.pullPhase.counting')
-    case 'compressing': return t('repository.pullPhase.compressing')
-    case 'done': return t('repository.pullPhase.done')
-    default: return t('repository.pullPhase.pulling')
-  }
-})
-
 // 进入拉取：重置进度并启动 10 秒计时器，超时且仍在拉取则显示百分比
 function beginPullProgress() {
   pullProgress.value = { percent: 0, phase: '', detail: '', visible: false }
@@ -2089,7 +2077,7 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
-    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由工具栏在超过 10 秒后展示
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板在超过 10 秒后内联展示
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
@@ -2348,19 +2336,8 @@ onBeforeUnmount(() => {
               @refresh="refreshAll"
               @resolve-conflicts="finishPullResolve"
               @abort-conflicts="abortPullResolve"
+              :pull-progress="pullProgress"
             />
-            <!-- 拉取进度（超过 10 秒才显示，避免快速拉取闪烁）：在「变更文件」面板中心
-                 显示大号百分比 + 下载状态 + 进度条；工具栏拉取按钮此时仍显示「拉取中」 -->
-            <div v-if="pullProgress.visible" class="pull-progress-overlay">
-              <div class="pull-progress-card">
-                <div class="pull-progress-spinner"></div>
-                <div class="pull-progress-pct">{{ pullProgress.percent }}%</div>
-                <div class="pull-progress-status">{{ pullPhaseLabel }}</div>
-                <div class="pull-progress-bar">
-                  <div class="pull-progress-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
-                </div>
-              </div>
-            </div>
           </div>
           <!-- 拖拉分隔条 -->
           <div class="resize-handle" @mousedown="startResizeCenter($event, 'file-diff')"></div>
@@ -2821,66 +2798,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-/* ===== 拉取进度遮罩（超过 10 秒）：变更文件面板中心 ===== */
-.pull-progress-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 轻微压暗底层文件列表，突出进度卡片；pointer-events:none 保证不阻断面板交互 */
-  background: rgba(0, 0, 0, 0.15);
-  z-index: 20;
-  pointer-events: none;
-}
-.pull-progress-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 28px;
-  min-width: 190px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  box-shadow: var(--shadow-dialog);
-}
-.pull-progress-spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--border-medium);
-  border-top-color: var(--accent-text);
-  border-radius: 50%;
-  animation: pull-progress-spin 0.8s linear infinite;
-}
-@keyframes pull-progress-spin {
-  to { transform: rotate(360deg); }
-}
-.pull-progress-pct {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text-bright);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.pull-progress-status {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-/* 进度条 */
-.pull-progress-bar {
-  width: 100%;
-  height: 4px;
-  background: var(--bg-mod);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.pull-progress-bar-fill {
-  height: 100%;
-  background: var(--accent-text);
-  border-radius: 2px;
-  transition: width 0.2s ease;
-}
+/* ===== 拉取进度（超过 10 秒）：原居中弹窗已弃用，改为 FileList 面板内联展示（见 FileList.vue .pull-progress-banner） ===== */
 
 .file-list-area > :deep(.file-list) {
   border-right: none;

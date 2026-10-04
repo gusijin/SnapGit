@@ -202,7 +202,7 @@ onBeforeUnmount(() => {
       <!-- 左：Git 主流程操作组（连接式分段按钮） -->
       <div class="seg-group">
         <template v-for="tool in primaryTools" :key="tool.id">
-          <!-- 拉取中态：按钮固定显示 spinner + "拉取中…" 并禁用；百分比进度改在「变更文件」面板中心展示 -->
+          <!-- 拉取中态：按钮固定显示 spinner + "拉取中…" 并禁用；百分比进度内联展示在「变更文件」面板内（面板头下方），不再用居中弹窗 -->
           <Button
             v-if="tool.id === 'pull' && pulling"
             variant="ghost"

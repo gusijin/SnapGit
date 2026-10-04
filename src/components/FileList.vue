@@ -5,7 +5,7 @@ import type { FileStatus } from '../types'
 // 文件类型图标映射统一从共享工具引入（与仓库面板文件树共用一套，保证风格一致）
 import { getFileIcon } from '../utils/fileIcons'
 import {
-  CheckCircle2, Check, Plus, Trash2, RefreshCw, Files,
+  CheckCircle2, Check, Plus, Trash2, RefreshCw, Files, Loader2,
 } from 'lucide-vue-next'
 
 interface Props {
@@ -21,6 +21,9 @@ interface Props {
   conflictActive?: boolean
   // 进行中的拉取策略，决定解决条按钮文案（merge → 完成合并 / rebase → 继续变基）
   pullStrategy?: 'merge' | 'rebase' | null
+  // 拉取进度（git fetch/pull 百分比）：超过 10 秒后才 visible，用于面板内联展示
+  // 拉取进度，替代原先的居中弹窗。
+  pullProgress?: { percent: number; phase: string; detail: string; visible: boolean } | null
 }
 
 const props = defineProps<Props>()
@@ -220,6 +223,18 @@ const conflictCount = computed(() =>
   props.files.filter(f => f.status === 'conflict' || f.status === 'unmerged').length,
 )
 const hasConflicts = computed(() => conflictCount.value > 0)
+
+// 拉取阶段 → 本地化文案（面板内联进度条的「阶段」标签）
+const pullPhaseLabel = computed(() => {
+  switch (props.pullProgress?.phase) {
+    case 'receiving': return t('repository.pullPhase.receiving')
+    case 'resolving': return t('repository.pullPhase.resolving')
+    case 'counting': return t('repository.pullPhase.counting')
+    case 'compressing': return t('repository.pullPhase.compressing')
+    case 'done': return t('repository.pullPhase.done')
+    default: return t('repository.pullPhase.pulling')
+  }
+})
 </script>
 
 <template>
@@ -241,6 +256,23 @@ const hasConflicts = computed(() => conflictCount.value > 0)
       <span class="count" v-else>0</span>
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
+
+    <!-- 拉取进度（超过 10 秒才显示，避免快速拉取闪烁）：内联展示在「变更文件」面板内，
+         替代原先居中的弹窗；阶段 + 百分比 + 进度条，与面板冲突条视觉统一 -->
+    <transition name="ppb-fade">
+      <div v-if="pullProgress && pullProgress.visible" class="pull-progress-banner">
+        <Loader2 :size="15" class="ppb-spinner" />
+        <div class="ppb-body">
+          <div class="ppb-row">
+            <span class="ppb-phase">{{ pullPhaseLabel }}</span>
+            <span class="ppb-pct">{{ pullProgress.percent }}%</span>
+          </div>
+          <div class="ppb-bar">
+            <div class="ppb-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <div v-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
       <div class="spinner"></div>
@@ -619,6 +651,73 @@ const hasConflicts = computed(() => conflictCount.value > 0)
 .cb-btn.cb-primary:hover:not(:disabled) {
   background-color: var(--bg-active);
 }
+
+/* 面板内拉取进度条：替代原先居中的弹窗，直接内联在「变更文件」面板内（面板头下方），
+   与面板冲突条（.conflict-banner）视觉统一：同样的 flex 布局、padding、边框与圆角语言 */
+.pull-progress-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background-color: var(--brand-bg, rgba(45, 108, 223, 0.1));
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.ppb-spinner {
+  flex-shrink: 0;
+  color: var(--accent-primary, #2d6cdf);
+  animation: file-list-spin 0.8s linear infinite;
+}
+.ppb-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ppb-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ppb-phase {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright, #000000);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ppb-pct {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-primary, #2d6cdf);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.ppb-bar {
+  width: 100%;
+  height: 4px;
+  background-color: var(--border-color, #e2e8f0);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ppb-bar-fill {
+  height: 100%;
+  background-color: var(--accent-primary, #2d6cdf);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+.ppb-fade-enter-active,
+.ppb-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.ppb-fade-enter-from,
+.ppb-fade-leave-to {
+  opacity: 0;
+}
+
 .menu-item.disabled {
   opacity: 0.4;
   cursor: not-allowed;
