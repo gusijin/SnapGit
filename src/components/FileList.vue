@@ -257,24 +257,36 @@ const pullPhaseLabel = computed(() => {
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 
-    <!-- 拉取进度（超过 10 秒才显示，避免快速拉取闪烁）：内联展示在「变更文件」面板内，
-         替代原先居中的弹窗；阶段 + 百分比 + 进度条，与面板冲突条视觉统一 -->
+    <!-- 拉取进度（超过 10 秒才显示，避免快速拉取闪烁）。两种形态，统一样式：
+         ① 列表为空 → 替代「工作区干净」空态，居中展示 spinner + 百分比 + 阶段 + 进度条；
+         ② 列表非空 → 面板头部下方的单行细进度条，不遮挡文件列表 -->
     <transition name="ppb-fade">
-      <div v-if="pullProgress && pullProgress.visible" class="pull-progress-banner">
-        <Loader2 :size="15" class="ppb-spinner" />
-        <div class="ppb-body">
-          <div class="ppb-row">
-            <span class="ppb-phase">{{ pullPhaseLabel }}</span>
-            <span class="ppb-pct">{{ pullProgress.percent }}%</span>
-          </div>
-          <div class="ppb-bar">
-            <div class="ppb-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
-          </div>
+      <div
+        v-if="pullProgress && pullProgress.visible && sortedFiles.length > 0"
+        class="pull-progress-banner"
+      >
+        <Loader2 :size="14" class="pp-spin" />
+        <span class="pp-phase">{{ pullPhaseLabel }}</span>
+        <div class="pp-bar pp-bar-inline">
+          <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
         </div>
+        <span class="pp-pct">{{ pullProgress.percent }}%</span>
       </div>
     </transition>
 
-    <div v-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
+    <div
+      v-if="pullProgress && pullProgress.visible && sortedFiles.length === 0"
+      class="empty pull-empty"
+    >
+      <Loader2 :size="30" class="pp-spin pp-ring" />
+      <div class="pp-pct-large">{{ pullProgress.percent }}<span class="pp-pct-unit">%</span></div>
+      <p class="pp-phase">{{ pullPhaseLabel }}</p>
+      <div class="pp-bar pp-bar-center">
+        <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
+      </div>
+    </div>
+
+    <div v-else-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
       <div class="spinner"></div>
       <p>{{ t('fileList.scanning') }}</p>
     </div>
@@ -652,62 +664,81 @@ const pullPhaseLabel = computed(() => {
   background-color: var(--bg-active);
 }
 
-/* 面板内拉取进度条：替代原先居中的弹窗，直接内联在「变更文件」面板内（面板头下方），
-   与面板冲突条（.conflict-banner）视觉统一：同样的 flex 布局、padding、边框与圆角语言 */
+/* ===== 拉取进度（超过 10 秒）：列表为空时替代「工作区干净」空态居中展示；
+   列表非空时为面板头下方的单行细进度条。低调克制，不抢视觉 ===== */
 .pull-progress-banner {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background-color: var(--brand-bg, rgba(45, 108, 223, 0.1));
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  gap: 8px;
+  padding: 6px 10px;
+  background-color: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-color);
 }
-.ppb-spinner {
+/* 旋转 spinner（复用 file-list-spin，与面板扫描态同节奏） */
+.pp-spin {
   flex-shrink: 0;
-  color: var(--accent-primary, #2d6cdf);
+  color: var(--accent-text);
   animation: file-list-spin 0.8s linear infinite;
 }
-.ppb-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.ppb-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.ppb-phase {
+.pp-phase {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-bright, #000000);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ppb-pct {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--accent-primary, #2d6cdf);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-.ppb-bar {
-  width: 100%;
-  height: 4px;
-  background-color: var(--border-color, #e2e8f0);
+/* 进度条：灰色细轨道 + 品牌色细填充 */
+.pp-bar {
+  height: 3px;
+  background-color: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
 }
-.ppb-bar-fill {
+.pp-bar-inline {
+  flex: 1;
+  min-width: 0;
+}
+.pp-bar-fill {
   height: 100%;
-  background-color: var(--accent-primary, #2d6cdf);
+  background-color: var(--accent-primary);
   border-radius: 2px;
   transition: width 0.2s ease;
+}
+.pp-pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+/* 空列表居中态：替代「工作区干净」空态 */
+.pull-empty {
+  gap: 10px;
+}
+.pp-ring {
+  width: 30px;
+  height: 30px;
+}
+.pp-pct-large {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.pp-pct-unit {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-left: 1px;
+}
+.pull-empty .pp-phase {
+  font-size: 12px;
+  margin: 0;
+}
+.pp-bar-center {
+  width: 220px;
 }
 .ppb-fade-enter-active,
 .ppb-fade-leave-active {
