@@ -675,20 +675,20 @@ const pullPhaseLabel = computed(() => {
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
 }
-/* 旋转 spinner（复用 file-list-spin，与面板扫描态同节奏） */
+/* 旋转 spinner（复用 file-list-spin，与面板扫描态同节奏）；统一走灰色系，不使用品牌蓝 */
 .pp-spin {
   flex-shrink: 0;
-  color: var(--accent-text);
+  color: var(--text-tertiary);
   animation: file-list-spin 0.8s linear infinite;
 }
 .pp-phase {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 进度条：灰色细轨道 + 品牌色细填充 */
+/* 进度条：灰色细轨道 + 灰色细填充 */
 .pp-bar {
   height: 3px;
   background-color: var(--bg-tertiary);
@@ -701,14 +701,14 @@ const pullPhaseLabel = computed(() => {
 }
 .pp-bar-fill {
   height: 100%;
-  background-color: var(--accent-primary);
+  background-color: var(--text-tertiary);
   border-radius: 2px;
   transition: width 0.2s ease;
 }
 .pp-pct {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -723,14 +723,14 @@ const pullPhaseLabel = computed(() => {
 .pp-pct-large {
   font-size: 24px;
   font-weight: 700;
-  color: var(--text-bright);
+  color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .pp-pct-unit {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   margin-left: 1px;
 }
 .pull-empty .pp-phase {
