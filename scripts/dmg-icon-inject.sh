@@ -36,6 +36,35 @@
 #   72 转回 UDZO 失败
 set -euo pipefail
 
+# 卸载所有挂载了指定 dmg 的设备，避免 convert 时源文件被锁 →
+# "Resource temporarily unavailable" (EAGAIN)。上一轮失败/被杀会留下残留挂载。
+detach_if_mounted() {
+  local dmg="$1"
+  [[ -z "$dmg" ]] && return 0
+  hdiutil info 2>/dev/null | awk -v img="$dmg" '
+    $0 == img          { cur = $0; next }      # 记录当前镜像路径
+    /^\/dev\// && cur == img { print $1 }       # 该镜像下的设备节点
+  ' | while read -r dev; do
+    echo "    [cleanup] 卸载残留挂载: $dev" >&2
+    hdiutil detach "$dev" >/dev/null 2>&1 || true
+  done
+}
+
+# hdiutil convert 偶发 "Resource temporarily unavailable"，重试可解。
+retry() {
+  local n=1 max=3 delay=2 rc
+  until "$@"; do
+    rc=$?
+    if (( n >= max )); then
+      return "$rc"
+    fi
+    echo "    (第 ${n} 次失败，重试...)" >&2
+    sleep "$delay"
+    n=$((n + 1))
+  done
+  return 0
+}
+
 if [[ $# -lt 2 ]]; then
   echo "用法: $0 <icon.icns> <dmg> [<dmg>...]" >&2
   exit 64
@@ -92,23 +121,28 @@ for DMG in "$@"; do
 
   # 1. 转 UDRW
   echo "  [1/6] dmg → UDRW ..."
-  if ! hdiutil convert "$DMG" -format UDRW -o "$RW_DMG" >/dev/null; then
+  detach_if_mounted "$DMG"            # 先清残留挂载，规避 EAGAIN
+  if ! retry bash -c 'rm -f "$0"; hdiutil convert "$1" -format UDRW -o "$0" >/dev/null' "$RW_DMG" "$DMG"; then
     echo "  ! UDRW 转换失败" >&2
     exit 71
   fi
 
-  # 2. 挂载
+  # 2. 挂载（显式指定挂载点，兼容 HFS+ 与 APFS，避免解析 hdiutil attach 输出）
   echo "  [2/6] 挂载 read-write ..."
-  # hdiutil attach 输出形如:
-  #   /dev/disk5s1        	Apple_HFS                      	/Volumes/SnapGit Installer
-  ATTACH_OUT=$(hdiutil attach -readwrite -noverify -noautoopen -nobrowse "$RW_DMG" 2>&1) || {
+  # 注意：较新 macOS 上 hdiutil create 默认产出 APFS dmg，attach 后挂载点那行
+  # 第二列是 UUID（形如 41504653-...）而非 "Apple_APFS"，原解析逻辑会漏配。
+  # 用 -mountpoint 固定挂载目录，彻底绕开格式相关的输出解析。
+  MOUNT_DIR="$TMPDIR_ICON/mount"
+  mkdir -p "$MOUNT_DIR"
+  hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true   # 卸掉上轮残留
+  ATTACH_OUT=$(hdiutil attach -readwrite -noverify -noautoopen -nobrowse \
+                -mountpoint "$MOUNT_DIR" "$RW_DMG" 2>&1) || {
     echo "  ! 挂载失败：$ATTACH_OUT" >&2
     exit 70
   }
-  MOUNT_DIR=$(echo "$ATTACH_OUT" | awk '/Apple_HFS|Apple_APFS/ {print $NF; exit}')
 
-  if [[ -z "$MOUNT_DIR" || ! -d "$MOUNT_DIR" ]]; then
-    echo "  ! 解析挂载点失败" >&2
+  if [[ ! -d "$MOUNT_DIR" ]]; then
+    echo "  ! 挂载点未就绪: $MOUNT_DIR" >&2
     echo "$ATTACH_OUT" >&2
     exit 70
   fi
@@ -165,7 +199,7 @@ PY
   hdiutil detach "$MOUNT_DIR" >/dev/null
   MOUNT_DIR=""  # 已卸载，避免 trap 重做
 
-  if ! hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$FINAL_DMG" >/dev/null; then
+  if ! retry bash -c 'rm -f "$0"; hdiutil convert "$1" -format UDZO -imagekey zlib-level=9 -o "$0" >/dev/null' "$FINAL_DMG" "$RW_DMG"; then
     echo "  ! UDZO 转换失败" >&2
     exit 72
   fi
