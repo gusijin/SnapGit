@@ -479,13 +479,15 @@ export default {
     modifiedMultiple: '修改: {n} 个文件',
     noRepoOpen: '请先打开一个仓库',
     openRepoFailed: '打开仓库失败: {error}',
+    // 拉取阶段文案：面向用户的「下载 → 应用」心智，不暴露 git 内部术语
+    // （counting/compressing 是服务端准备，receiving 是真正下载，resolving 是本地应用增量）
     pullPhase: {
-      pulling: '拉取中',
-      receiving: '接收对象',
-      resolving: '解析增量',
-      counting: '计数对象',
-      compressing: '压缩对象',
-      done: '完成',
+      pulling: '正在连接远程仓库',
+      receiving: '正在下载更新',
+      resolving: '正在应用更新',
+      counting: '正在获取更新',
+      compressing: '正在获取更新',
+      done: '拉取完成',
     },
     noChangesToCommit: '没有需要提交的更改',
     commitFailed: '提交失败: {error}',

@@ -278,9 +278,12 @@ const pullPhaseLabel = computed(() => {
       v-if="pullProgress && pullProgress.visible && sortedFiles.length === 0"
       class="empty pull-empty"
     >
-      <Loader2 :size="30" class="pp-spin pp-ring" />
-      <div class="pp-pct-large">{{ pullProgress.percent }}<span class="pp-pct-unit">%</span></div>
-      <p class="pp-phase">{{ pullPhaseLabel }}</p>
+      <Loader2 :size="28" class="pp-spin pp-ring" />
+      <p class="pp-phase pp-phase-main">{{ pullPhaseLabel }}</p>
+      <div class="pp-pct-row">
+        <span class="pp-pct-inline">{{ pullProgress.percent }}</span>
+        <span class="pp-pct-unit">%</span>
+      </div>
       <div class="pp-bar pp-bar-center">
         <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
       </div>
@@ -712,33 +715,43 @@ const pullPhaseLabel = computed(() => {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
-/* 空列表居中态：替代「工作区干净」空态 */
+/* 空列表居中态：替代「工作区干净」空态。
+   视觉主次：状态文案为主（14px 加粗，用户第一眼要知道在干嘛），
+   百分比为辅（小字灰显，仅作精确参考） */
 .pull-empty {
-  gap: 10px;
+  gap: 8px;
 }
 .pp-ring {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
 }
-.pp-pct-large {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-tertiary);
+.pp-phase-main {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.pp-pct-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  color: var(--text-muted);
+}
+.pp-pct-inline {
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .pp-pct-unit {
-  font-size: 14px;
+  font-size: 10px;
   font-weight: 600;
-  color: var(--text-muted);
-  margin-left: 1px;
-}
-.pull-empty .pp-phase {
-  font-size: 12px;
-  margin: 0;
+  line-height: 1;
 }
 .pp-bar-center {
   width: 220px;
+  margin-top: 4px;
 }
 .ppb-fade-enter-active,
 .ppb-fade-leave-active {
