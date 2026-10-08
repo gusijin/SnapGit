@@ -404,6 +404,11 @@ struct ConflictBlock {
     base: Option<Vec<String>>,
     marker_ours: String,
     marker_theirs: String,
+    /// 畸形冲突文件专用：本块内「位置不对的标记行」行号（0-based，相对 working 文档）。
+    /// 例如 `>>>>>>> ` 出现在 `=======` 之前 —— 这些行不属于任何一侧内容，前端渲染时标灰。
+    /// 标准冲突文件此字段为空数组。前端 ConflictSolver 会自行重算，这里保持字段对齐即可。
+    #[serde(default)]
+    stray_marker_lines: Vec<usize>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -3427,65 +3432,126 @@ fn split_lines_keep_newline(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// 从工作区内容中解析标准 Git 冲突块（含可选的 diff3 base 段）。
+/// 从工作区内容中解析 Git 冲突块（含可选的 diff3 base 段）—— **容错版**。
+///
+/// ⚠️ 旧实现「遇到 `>>>>>>> ` 就无条件闭合」，在**畸形冲突文件**上会灾难性失败：
+/// 例如 AI/人工半途编辑过、或多次 merge 叠加后，文件里会出现
+///   `<<<<<<< HEAD`
+///   `>>>>>>> master`      ← 提前出现的结束标记（ours 段为空）
+///   `=======`             ← 真正的分隔符被甩到后面
+///   ... 上百行真实差异内容 ...
+///   `>>>>>>> master`      ← 真正的结束标记成了孤儿
+/// 旧实现会在第 2 行就闭合，产出「1 个空块」，后续真实冲突内容一行都标不出来。
+///
+/// 新规则（与前端 `ConflictSolver.parseConflictBlocks` 保持一致）：
+///  1. `>>>>>>> ` 只有在**已经见过 `=======`**（section==2）时才作为块结束；
+///     否则记为「畸形标记行」stray（不计入 ours 内容）。
+///  2. 扫描中若遇到下一个 `<<<<<<< ` 仍未闭合 → 回退，把当前块作为未闭合块收尾。
+///  3. `=======` / `||||||| ` 只有「第一次出现」才当分隔符；重复出现记为 stray。
 fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
     let lines = split_lines_keep_newline(content);
     let mut result = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
-        if lines[i].starts_with("<<<<<<< ") {
-            let start_line = i;
-            let marker_ours = lines[i][8..].trim_end().to_string();
+        if !lines[i].starts_with("<<<<<<< ") {
             i += 1;
+            continue;
+        }
 
-            let mut ours: Vec<String> = Vec::new();
-            let mut base: Option<Vec<String>> = None;
-            let mut theirs: Vec<String> = Vec::new();
-            let mut separator_line = i;
-            let mut section = 0; // 0 = ours, 1 = base (diff3), 2 = theirs
+        let start_line = i;
+        let marker_ours = lines[i][8..].trim_end().to_string();
+        i += 1;
 
-            while i < lines.len() {
-                let cur = &lines[i];
-                if cur.starts_with("||||||| ") {
+        let mut ours: Vec<String> = Vec::new();
+        let mut base: Option<Vec<String>> = None;
+        let mut theirs: Vec<String> = Vec::new();
+        let mut stray: Vec<usize> = Vec::new();
+        // 占位：真正遇到 `=======` 时更新；未闭合则停留在扫描终止处
+        let mut separator_line = start_line + 1;
+        // 结束标记（`>>>>>>> ` 后的分支名）：仅闭合块会填充，未闭合块保持空串
+        let mut marker_theirs = String::new();
+        let mut section = 0; // 0 = ours, 1 = base (diff3), 2 = theirs
+        let mut closed = false;
+
+        while i < lines.len() {
+            let cur = lines[i].clone();
+
+            // ① 下一个冲突块开始 → 当前块未闭合，回退到该行，交给外层重新解析
+            if cur.starts_with("<<<<<<< ") {
+                break;
+            }
+
+            if cur.starts_with("||||||| ") {
+                if section == 0 {
                     base = Some(Vec::new());
                     section = 1;
                     i += 1;
-                } else if cur.starts_with("=======") {
+                    continue;
+                }
+                // 畸形：分隔符之后又冒出 ||||||| → 记为畸形标记行
+                stray.push(i);
+                i += 1;
+                continue;
+            } else if cur.starts_with("=======") {
+                if section != 2 {
                     separator_line = i;
                     section = 2;
                     i += 1;
-                } else if cur.starts_with(">>>>>>> ") {
-                    let marker_theirs = cur[8..].trim_end().to_string();
-                    result.push(ConflictBlock {
-                        start_line,
-                        separator_line,
-                        end_line: i,
-                        ours,
-                        theirs,
-                        base,
-                        marker_ours,
-                        marker_theirs,
-                    });
-                    i += 1;
-                    break;
-                } else {
-                    match section {
-                        0 => ours.push(cur.clone()),
-                        1 => {
-                            if let Some(ref mut b) = base {
-                                b.push(cur.clone());
-                            }
-                        }
-                        2 => theirs.push(cur.clone()),
-                        _ => {}
-                    }
-                    i += 1;
+                    continue;
                 }
+                // 畸形：theirs 段里又出现分隔符
+                stray.push(i);
+                i += 1;
+                continue;
+            } else if cur.starts_with(">>>>>>> ") {
+                // ② 关键修复：只有「已经见过 =======」才认作结束标记
+                if section == 2 {
+                    marker_theirs = cur[8..].trim_end().to_string();
+                    i += 1;
+                    closed = true;
+                    break;
+                }
+                // 提前出现的结束标记 → 畸形标记行（不计入 ours 内容）
+                stray.push(i);
+                i += 1;
+                continue;
             }
-        } else {
+
+            match section {
+                0 => ours.push(cur),
+                1 => {
+                    if let Some(ref mut b) = base {
+                        b.push(cur);
+                    }
+                }
+                2 => theirs.push(cur),
+                _ => {}
+            }
             i += 1;
         }
+
+        // ③ 统一出口：闭合块用 end_line=i-1（i 已指向结束标记之后）；
+        //    未闭合块（撞到下一个 <<<<<<< 或文件尾）用扫描终止处，至少把范围标出来 ——
+        //    绝不静默丢弃，丢弃 = 用户看到的「有差异但没标记」。
+        let end_line = if closed {
+            i - 1
+        } else if i > start_line {
+            i - 1
+        } else {
+            start_line
+        };
+        result.push(ConflictBlock {
+            start_line,
+            separator_line,
+            end_line,
+            ours,
+            theirs,
+            base,
+            marker_ours,
+            marker_theirs,
+            stray_marker_lines: stray,
+        });
     }
 
     result

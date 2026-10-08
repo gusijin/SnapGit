@@ -77,6 +77,11 @@ export interface ConflictBlock {
   base?: string[]
   marker_ours: string
   marker_theirs: string
+  /** 畸形冲突文件专用：本块内「位置不对的标记行」行号（0-based，相对 working 文档）。
+   *  例如 `>>>>>>> ` 出现在 `=======` 之前、或 ours 段里混入 `=======` —— 这些行既不属于
+   *  ours 也不属于 theirs，渲染时单独标灰，避免被当成真实差异内容染色。
+   *  标准冲突文件此字段为空数组。 */
+  stray_marker_lines?: number[]
 }
 
 export interface ConflictFile {

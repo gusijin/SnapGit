@@ -57,34 +57,86 @@ function splitLinesKeepNewline(content: string): string[] {
   return lines.map((line, index) => (index < lines.length - 1 ? line + '\n' : line))
 }
 
+/**
+ * 解析冲突块（容错版）。
+ *
+ * ⚠️ 旧的实现是「遇到 >>>>>>> 就无条件闭合」，这在**畸形冲突文件**上会灾难性失败：
+ * 例如 AI/人工半途编辑过、或多次 merge 叠加后，文件里会出现
+ *   <<<<<<< HEAD
+ *   >>>>>>> master      ← 提前出现的结束标记（ours 段为空）
+ *   =======             ← 真正的分隔符被甩到后面
+ *   ... 172 行真实差异内容 ...
+ *   >>>>>>> master      ← 真正的结束标记成了孤儿
+ * 旧解析器在第 2 行就 break，产出「1 个空块」，导致后面 172 行真实冲突内容
+ * 一行标记都没有（用户看到「有差异的地方没标记出来」）。
+ *
+ * 新规则：
+ *  1. `>>>>>>> ` 只有在**已经见过 `=======`**（section===2）时才作为块结束；
+ *     否则视为 ours 段的普通内容行（畸形文件里它常是误插的）。
+ *  2. 扫描中若遇到下一个 `<<<<<<< ` 仍未闭合 → 回退到该行，把当前块作为
+ *     「未闭合」块收尾（end=上一行），让它至少还能被标出范围。
+ *  3. `=======` / `>>>>>>> ` / `||||||| ` 只有「在块内」才被当标记；块外的
+ *     `=======` 一律当普通文本（避免 Markdown `---` 分隔线被误吞）。
+ */
 function parseConflictBlocks(content: string): ConflictBlock[] {
   const lines = splitLinesKeepNewline(content)
   const result: ConflictBlock[] = []
   let i = 0
 
   while (i < lines.length) {
-    if (lines[i].startsWith('<<<<<<< ')) {
-      const startLine = i
-      const markerOurs = lines[i].slice(8).trimEnd()
+    if (!lines[i].startsWith('<<<<<<< ')) {
       i++
+      continue
+    }
 
-      const ours: string[] = []
-      let base: string[] | undefined
-      const theirs: string[] = []
-      let separatorLine = i
-      let section = 0
+    const startLine = i
+    const markerOurs = lines[i].slice(8).trimEnd()
+    i++
 
-      while (i < lines.length) {
-        const cur = lines[i]
-        if (cur.startsWith('||||||| ')) {
+    const ours: string[] = []
+    let base: string[] | undefined
+    const theirs: string[] = []
+    // 畸形标记行（位置不对的 `>>>>>>> ` / 重复的 `=======`）：不属于任何一侧内容，
+    // 单独收集、渲染时标灰，避免污染 ours/theirs 的差异染色。
+    const stray: number[] = []
+    // separator_line 初始为 start_line+1（占位）；真正遇到 `=======` 时更新。
+    // end_line 在块闭合时更新；未闭合则停留在扫描终止处（文件尾/下一个 `<<<<<<<` 前）。
+    let separatorLine = startLine + 1
+    let section = 0 // 0 = ours, 1 = base(diff3), 2 = theirs
+    let closed = false
+
+    while (i < lines.length) {
+      const cur = lines[i]
+
+      // ① 下一个冲突块开始 → 当前块未闭合，回退到该行（不消费），交给外层重新解析
+      if (cur.startsWith('<<<<<<< ')) break
+
+      if (cur.startsWith('||||||| ')) {
+        // diff3 祖先段只在 ours 段之后、分隔符之前有意义
+        if (section === 0) {
           base = []
           section = 1
           i++
-        } else if (cur.startsWith('=======')) {
+          continue
+        }
+        // 畸形：分隔符之后又冒出 ||||||| → 记为畸形标记行（不染色、不进内容）
+        stray.push(i)
+        i++
+        continue
+      } else if (cur.startsWith('=======')) {
+        if (section !== 2) {
           separatorLine = i
           section = 2
           i++
-        } else if (cur.startsWith('>>>>>>> ')) {
+          continue
+        }
+        // 畸形：theirs 段里又出现分隔符 → 畸形标记行
+        stray.push(i)
+        i++
+        continue
+      } else if (cur.startsWith('>>>>>>> ')) {
+        // ② 关键修复：只有「已经见过 =======」才认作结束标记，否则记为畸形标记行
+        if (section === 2) {
           const markerTheirs = cur.slice(8).trimEnd()
           result.push({
             start_line: startLine,
@@ -95,18 +147,38 @@ function parseConflictBlocks(content: string): ConflictBlock[] {
             base,
             marker_ours: markerOurs,
             marker_theirs: markerTheirs,
+            stray_marker_lines: stray,
           })
           i++
+          closed = true
           break
-        } else {
-          if (section === 0) ours.push(cur)
-          else if (section === 1 && base) base.push(cur)
-          else if (section === 2) theirs.push(cur)
-          i++
         }
+        // section !== 2 → 提前出现的结束标记，记为畸形标记行（不计入 ours 内容）
+        stray.push(i)
+        i++
+        continue
       }
-    } else {
+
+      if (section === 0) ours.push(cur)
+      else if (section === 1 && base) base.push(cur)
+      else if (section === 2) theirs.push(cur)
       i++
+    }
+
+    // ③ 未闭合（撞到下一个 `<<<<<<<` 或文件尾）：仍产出一个块，至少把范围标出来。
+    //    不该静默丢弃 —— 丢弃 = 用户看到的「有差异但没标记」。
+    if (!closed) {
+      result.push({
+        start_line: startLine,
+        separator_line: separatorLine,
+        end_line: Math.max(startLine, i - 1),
+        ours,
+        theirs,
+        base,
+        marker_ours: markerOurs,
+        marker_theirs: '',
+        stray_marker_lines: stray,
+      })
     }
   }
 
@@ -259,6 +331,9 @@ const middleLines = computed<LineModel[]>(() => {
     mark(b.start_line, `line-confl-marker${cur}`)
     mark(b.separator_line, `line-confl-marker${cur}`)
     mark(b.end_line, `line-confl-marker${cur}`)
+    // 畸形标记行（位置异常的 >>>>>>> / 重复 ======= / 段外 ||||||| ）：不属于任何一侧，
+    // 单独标灰 —— 必须在 ours/theirs 段染色之后执行，覆盖掉误染的差异色。
+    for (const li of b.stray_marker_lines ?? []) mark(li, `line-confl-marker${cur}`)
   })
   return models
 })
@@ -461,11 +536,32 @@ function applyBlock(index: number, side: 'ours' | 'theirs' | 'combine' | 'combin
   }
 
   const lines = splitLinesKeepNewline(workingContent.value)
-  workingContent.value = [
-    ...lines.slice(0, block.start_line),
-    replacement,
-    ...lines.slice(block.end_line + 1),
-  ].join('')
+  // 删除范围必须**同时覆盖块内的畸形标记行**（stray）：它们落在 start..end 内时随块一起删除；
+  // 若落在块外（畸形文件里孤立的 ======= / >>>>>>>），下面 stripOrphanMarkers 兜底清理，
+  // 否则保存后文件里仍残留冲突标记、git 会认为冲突没解决。
+  const drop = new Set<number>()
+  for (let k = block.start_line; k <= block.end_line; k++) drop.add(k)
+  for (const li of block.stray_marker_lines ?? []) drop.add(li)
+
+  const kept: string[] = []
+  let inserted = false
+  for (let k = 0; k < lines.length; k++) {
+    if (drop.has(k)) {
+      // 在块起点处放入替换内容（其余被删行直接跳过）
+      if (!inserted) {
+        if (replacement) {
+          // 替换内容来自 ours/theirs（已带各自行尾换行），末尾若无换行则补一个，
+          // 避免与紧随其后的原文件内容粘成一行
+          kept.push(replacement.endsWith('\n') ? replacement : replacement + '\n')
+        }
+        inserted = true
+      }
+      continue
+    }
+    kept.push(lines[k])
+  }
+
+  workingContent.value = stripOrphanMarkers(kept.join(''))
 
   const newList = parseConflictBlocks(workingContent.value)
   if (newList.length === 0) {
@@ -473,6 +569,39 @@ function applyBlock(index: number, side: 'ours' | 'theirs' | 'combine' | 'combin
   } else if (index >= newList.length) {
     currentBlockIndex.value = newList.length - 1
   }
+}
+
+/**
+ * 清理残留的冲突标记行。
+ *
+ * 畸形冲突文件（AI/人工半途编辑、多次 merge 叠加）里可能存在**块外的孤立标记**：
+ * `=======` 没有配对的 `<<<<<<< `、`>>>>>>> ` 落在所有块之外等。这些行不属于任何冲突块，
+ * 逐块替换时清不掉，会让文件保存后仍带冲突标记 → git 判定「冲突未解决」。
+ * 这里做一次收尾清扫：删掉所有「无法被解析为冲突块组成部分」的裸标记行。
+ * 注意只在 `<<<<<<< / ||||||| / ======= / >>>>>>> ` 且整行仅由这些符号组成时才删，
+ * 避免误删正文里的 Markdown 分隔线（`---` / `===` 标题下划线）。
+ */
+function stripOrphanMarkers(content: string): string {
+  const lines = splitLinesKeepNewline(content)
+  const inBlock = new Set<number>()
+  for (const b of parseConflictBlocks(content)) {
+    for (let k = b.start_line; k <= b.end_line; k++) inBlock.add(k)
+    // 分隔符可能落在块边界之外（畸形文件的 separator_line 早于 start_line+1 的场景）
+    inBlock.add(b.separator_line)
+    inBlock.add(b.end_line)
+  }
+  const isMarkerLine = (s: string) => {
+    const t = stripEol(s).trim()
+    return (
+      /^<{7}($|\s)/.test(t) ||
+      /^\|{7}($|\s)/.test(t) ||
+      /^={7,}$/.test(t) ||
+      /^>{7}($|\s)/.test(t)
+    )
+  }
+  return lines
+    .filter((line, idx) => !(isMarkerLine(line) && !inBlock.has(idx)))
+    .join('')
 }
 
 async function handleSave() {
@@ -1018,20 +1147,12 @@ function lineNumberArray(count: number): number[] {
   background-color: var(--bg-toolbar);
 }
 
-/* 词级差异高亮：在行级底色之上，进一步框出「这一行里到底哪几个词不同」（IDEA / SmartGit 风格）。
-   色相跟随所在侧：ours = 红（--color-del），theirs = 绿（--color-add）。 */
+/* 词级差异高亮：只保留行级底色，**不再叠加文字背景**。
+   古哥 2026-10-08 反馈：行底色（--bg-add 淡绿）之外又叠了一层更深的绿底，
+   两块色压在一起发脏，观感远不如 IDEA —— 去掉 .seg-chg 的背景。
+   （若日后要重新标出「词级差异」，请换用非背景的手段，如下划线/加粗，别再叠底色。） */
 .seg-chg {
   border-radius: 2px;
-}
-
-.line-confl-ours .seg-chg,
-.hl-line.side-ours .seg-chg {
-  background-color: color-mix(in srgb, var(--color-del) 30%, transparent);
-}
-
-.line-confl-theirs .seg-chg,
-.hl-line.side-theirs .seg-chg {
-  background-color: color-mix(in srgb, var(--color-add) 30%, transparent);
 }
 
 /* 两列之间的操作列：与编辑页面(编辑差异)一致，按冲突块行号垂直定位箭头按钮 */
