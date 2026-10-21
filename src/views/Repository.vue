@@ -1298,7 +1298,7 @@ async function handlePull() {
     await pullBranch(repoPath.value)
     await loadRepoData()
     lastPullTime.value = Date.now()
-    showToast(t('repository.pullSuccess'), 'success')
+    // 拉取成功不再弹 toast（古哥 2026-10-21）：进度反馈已在「变更文件」面板内联展示完毕
   } catch (e: any) {
     console.error('Pull error:', e)
     // 没有配置任何远程（刚 init / 还没添加 origin）：弹引导式对话框，引导用户「创建远程」，
@@ -1330,7 +1330,7 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
     await pullWithStrategy(repoPath.value, strategy)
     await loadRepoData()
     lastPullTime.value = Date.now()
-    showToast(t('repository.pullSuccess'), 'success')
+    // 拉取成功不再弹 toast（古哥 2026-10-21）
   } catch (e: any) {
     console.error('Pull strategy error:', e)
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
@@ -1378,7 +1378,8 @@ async function finishPullResolve() {
     }
     await loadRepoData()
     pullConflictActive.value = false
-    showToast(t('repository.pullSuccess'), 'success')
+    // 冲突解决完成合并/变基后不再弹「拉取成功」toast（古哥 2026-10-21）：
+    // 冲突解决条消失 + 列表刷新已是完成反馈
   } catch (e: any) {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
     showToast(t('repository.pullFailed', { error: msg }), 'error')
@@ -2063,20 +2064,17 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
-    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板内联展示（拉取开始即显示，无延迟）
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板内联展示（拉取开始即显示，无延迟）。
+    // done 事件直接忽略（双保险，后端已不再发）：完成态唯一来源是 finishPullProgress，
+    // 否则 fetch/pull 各自的 done 会把「拉取完成」闪现多次、还可能在合并中途藏掉进度面板。
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
         const { percent, phase, detail } = event.payload
+        if (phase === 'done') return
         pullProgress.value.percent = percent
         pullProgress.value.phase = phase
         pullProgress.value.detail = detail
-        if (phase === 'done') {
-          setTimeout(() => {
-            isPulling.value = false
-            pullProgress.value.visible = false
-          }, 600)
-        }
       },
     )
   } catch (e) {

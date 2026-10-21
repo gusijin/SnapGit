@@ -16,7 +16,6 @@ import {
   History,
   GitBranch,
   Check,
-  Loader2,
   Copy,
   CircleAlert,
 } from 'lucide-vue-next'
@@ -28,9 +27,9 @@ interface Props {
   repositoryPath: string
   /** 推送反馈状态：done = 推送成功，按钮短暂显示"已推送"并隐藏 Tooltip */
   pushState?: 'idle' | 'done'
-  /** 拉取中：按钮显示 spinner + "拉取中…" */
+  /** 拉取进行中：工具栏按钮统一禁用（busy），进度反馈只留在「变更文件」面板 */
   pulling?: boolean
-  /** 推送中：按钮显示 spinner + "推送中…" */
+  /** 推送进行中：同上 */
   pushing?: boolean
   /** 本地+远程分支列表（用于同步状态与分支切换） */
   branches?: Branch[]
@@ -67,6 +66,9 @@ const emit = defineEmits([
 ])
 
 const hasRepo = computed(() => !!props.repositoryPath)
+
+// 拉取/推送进行中：工具栏操作按钮统一置为不可用，结束后恢复（古哥 2026-10-21）
+const busy = computed(() => props.pulling || props.pushing)
 
 const { t } = useI18n()
 
@@ -148,6 +150,11 @@ function closeStatus() {
   statusOpen.value = false
 }
 
+// 拉取/推送开始时自动收起状态弹窗（弹窗内快捷操作已随 busy 禁用，这是双保险）
+watch(busy, (b) => {
+  if (b) closeStatus()
+})
+
 function doAction(action: 'pull' | 'push') {
   emit(action)
   closeStatus()
@@ -202,32 +209,13 @@ onBeforeUnmount(() => {
       <!-- 左：Git 主流程操作组（连接式分段按钮） -->
       <div class="seg-group">
         <template v-for="tool in primaryTools" :key="tool.id">
-          <!-- 拉取中态：按钮固定显示 spinner + "拉取中…" 并禁用；百分比进度内联展示在「变更文件」面板内（面板头下方），不再用居中弹窗 -->
-          <Button
-            v-if="tool.id === 'pull' && pulling"
-            variant="ghost"
-            class="seg-btn seg-btn-loading"
-            disabled
-          >
-            <Loader2 :size="18" class="spin-icon" />
-            <span>{{ t('toolbar.pulling') }}</span>
-          </Button>
-          <!-- 推送中态：按钮显示 spinner + "推送中…" 并禁用（优先级高于 done 成功态） -->
-          <Button
-            v-else-if="tool.id === 'push' && pushing"
-            variant="ghost"
-            class="seg-btn seg-btn-loading"
-            disabled
-          >
-            <Loader2 :size="18" class="spin-icon" />
-            <span>{{ t('toolbar.pushing') }}</span>
-          </Button>
+          <!-- 拉取/推送进行中：按钮保持原样仅禁用（busy），进度反馈只留在「变更文件」面板（古哥 2026-10-21：不再变成"拉取中/推送中"态） -->
           <!-- 推送成功态：不渲染 Tooltip（提示彻底消失），按钮短暂显示"已推送"反馈 -->
           <Button
-            v-else-if="tool.id === 'push' && pushState === 'done'"
+            v-if="tool.id === 'push' && pushState === 'done'"
             variant="ghost"
             class="seg-btn seg-pushed"
-            :disabled="!hasRepo"
+            :disabled="!hasRepo || busy"
           >
             <Check :size="18" />
             <span>{{ t('toolbar.pushed') }}</span>
@@ -238,7 +226,7 @@ onBeforeUnmount(() => {
               <Button
                 variant="ghost"
                 :class="tool.emphasis === 'primary' ? 'seg-btn seg-commit' : 'seg-btn'"
-                :disabled="!hasRepo || (tool.action === 'commit' && workingTree.conflict > 0)"
+                :disabled="!hasRepo || busy || (tool.action === 'commit' && workingTree.conflict > 0)"
                 @click="handleAction(tool.action)"
               >
                 <component :is="tool.icon" />
@@ -277,7 +265,7 @@ onBeforeUnmount(() => {
                 :class="{ 'status-active': statusOpen }"
                 :aria-label="t('toolbar.wsStatus')"
                 :aria-expanded="statusOpen"
-                :disabled="!hasRepo"
+                :disabled="!hasRepo || busy"
                 @click="toggleStatus"
               >
                 <FolderGit2 />
@@ -292,7 +280,7 @@ onBeforeUnmount(() => {
             class="h-8 w-8 status-active"
             :aria-label="t('toolbar.wsStatus')"
             :aria-expanded="statusOpen"
-            :disabled="!hasRepo"
+            :disabled="!hasRepo || busy"
             @click="toggleStatus"
           >
             <FolderGit2 />
@@ -346,11 +334,11 @@ onBeforeUnmount(() => {
 
             <!-- ④ 快捷操作 -->
             <div class="sp-actions">
-              <button class="btn-act" :disabled="!hasRepo" @click="doAction('pull')">
+              <button class="btn-act" :disabled="!hasRepo || busy" @click="doAction('pull')">
                 <ArrowDownToLine :size="14" />
                 {{ t('toolbar.pull') }}
               </button>
-              <button class="btn-act" :disabled="!hasRepo" @click="doAction('push')">
+              <button class="btn-act" :disabled="!hasRepo || busy" @click="doAction('push')">
                 <ArrowUpFromLine :size="14" />
                 {{ t('toolbar.push') }}
               </button>
@@ -391,7 +379,7 @@ onBeforeUnmount(() => {
               class="h-8 w-8"
               :class="{ 'view-toggle-active': viewToggleActive }"
               :aria-label="viewToggleLabel"
-              :disabled="!hasRepo"
+              :disabled="!hasRepo || busy"
               @click="handleViewToggle"
             >
               <History />
@@ -407,7 +395,7 @@ onBeforeUnmount(() => {
               size="icon-sm"
               class="h-8 w-8"
               :aria-label="t(tool.labelKey)"
-              :disabled="!hasRepo"
+              :disabled="!hasRepo || busy"
               @click="handleAction(tool.action)"
             >
               <component :is="tool.icon" />
@@ -425,6 +413,7 @@ onBeforeUnmount(() => {
               size="icon-sm"
               class="h-8 w-8"
               :aria-label="t('toolbar.refresh')"
+              :disabled="busy"
               @click="handleAction('refresh')"
             >
               <RefreshCw />
@@ -586,23 +575,6 @@ onBeforeUnmount(() => {
 .seg-group :deep(.seg-pushed:hover):not(:disabled) {
   background: transparent;
   color: var(--brand-primary);
-}
-
-/* 拉取/推送中反馈：禁用按钮 + 图标旋转动画 */
-.seg-group :deep(.seg-btn-loading) {
-  color: var(--text-secondary);
-  cursor: progress;
-  opacity: 0.85;
-  position: relative;
-  overflow: hidden;
-}
-
-.spin-icon {
-  animation: toolbar-spin 0.9s linear infinite;
-}
-
-@keyframes toolbar-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* ===== 工作区状态弹窗 ===== */

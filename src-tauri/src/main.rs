@@ -280,16 +280,9 @@ fn run_git_progress(
     });
 
     let status = child.wait()?;
-    if status.success() {
-        let _ = app.emit(
-            "pull-progress",
-            serde_json::json!({
-                "percent": 100,
-                "phase": "done",
-                "detail": "完成",
-            }),
-        );
-    }
+    // 注意：这里不发 phase:"done" 事件——一次拉取 = fetch+pull 两条命令，每条成功都发
+    // 会造成「拉取完成」在变更文件面板闪现多次，且 fetch 的 done 会把进度面板中途藏掉。
+    // 完成态由前端 finishPullProgress 统一设置（唯一来源）。
     let stderr_out = stderr_thread.join().unwrap_or_default();
     let stdout_out = stdout_thread.join().unwrap_or_default();
     let combined = format!("{}{}", stderr_out, stdout_out);
@@ -1579,17 +1572,19 @@ fn auto_unstash_after_pull(repo_path: &str) -> Option<String> {
     }
 }
 
-/// 从 SSH 默认路径检测第一个存在的私钥文件（跳过 .pub）。
-/// 用于「未配置 SSH 私钥路径时自动兜底」：拉取成功后由调用方持久化进仓库 config。
-fn detect_default_ssh_key() -> Option<String> {
-    let home = dirs::home_dir()?;
-    for name in ["id_ed25519", "id_rsa", "id_ecdsa"] {
-        let p = home.join(".ssh").join(name);
-        if p.is_file() {
-            return Some(p.to_string_lossy().to_string());
-        }
-    }
-    None
+/// 从 SSH 默认路径检测**所有**存在的私钥文件（跳过 .pub），按 id_ed25519 → id_rsa → id_ecdsa 顺序。
+/// 用于「未配置 SSH 私钥路径时自动兜底」：拉取成功后由调用方持久化进仓库 config（仅恰好一把时）。
+fn detect_default_ssh_keys() -> Vec<String> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+    ["id_ed25519", "id_rsa", "id_ecdsa"]
+        .iter()
+        .map(|name| home.join(".ssh").join(name))
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect()
 }
 
 /// 仓库是否已配置 core.sshCommand（查所有层级：local/global）。
@@ -1636,14 +1631,35 @@ fn apply_ssh_key_config(repo_path: &str, key_path: &str) -> Result<String> {
 }
 
 /// 拉取前的 SSH 私钥自动兜底：未配置 core.sshCommand 且默认路径存在私钥时，
-/// 返回 (本次用的 GIT_SSH_COMMAND, 私钥路径)。已配置或未找到私钥 → None（沿用 git 默认行为）。
-fn auto_ssh_key(repo_path: &str) -> Option<(String, String)> {
+/// 返回 (本次用的 GIT_SSH_COMMAND, 可持久化的私钥路径 Option)。
+/// 已配置或未找到私钥 → None（沿用 git 默认行为）。
+///
+/// 【为什么把所有检测到的私钥都列进命令】旧实现只取第一把（id_ed25519 优先）并
+/// `IdentitiesOnly=yes` 屏蔽其余——用户 ~/.ssh 里同时存在已注册的 id_rsa 和未注册的
+/// id_ed25519 时，兜底会钉死在错的 ed25519 上，拉取报 Permission denied (publickey)
+/// （而 git 默认行为把默认身份全试一遍反而是通的，2026-10-21 实测）。
+/// 现改为 `ssh -i key1 -i key2 ... -o IdentitiesOnly=yes`：只提供列出的身份、按顺序
+/// 逐把尝试，服务器认哪把用哪把；既不掺 agent 里的杂 key（避免 Too many authentication
+/// failures），也不会钉死在某一把上。
+///
+/// 持久化策略：恰好一把时写入仓库 config（无歧义）；多把时无法确定服务器认哪把，
+/// 返回 None 不持久化，每次拉取动态生成。
+fn auto_ssh_key(repo_path: &str) -> Option<(String, Option<String>)> {
     if repo_has_ssh_command(repo_path) {
         return None;
     }
-    let key = detect_default_ssh_key()?;
-    let ssh_cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key.replace('\\', "/"));
-    Some((ssh_cmd, key))
+    let keys = detect_default_ssh_keys();
+    if keys.is_empty() {
+        return None;
+    }
+    let identities = keys
+        .iter()
+        .map(|k| format!("-i \"{}\"", k.replace('\\', "/")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let ssh_cmd = format!("ssh {identities} -o IdentitiesOnly=yes");
+    let persist = if keys.len() == 1 { Some(keys[0].clone()) } else { None };
+    Some((ssh_cmd, persist))
 }
 
 #[command]
@@ -1699,9 +1715,9 @@ async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()> {
         let (ok2, out2) = run_git_progress(&app, &repo_path, "pull", &pull_args, ssh_for_run)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
         if ok2 {
-            // 拉取成功：把自动检测到的 SSH 私钥路径持久化进仓库 config，
-            // 后续 fetch/pull/push 复用该私钥（失败仅忽略，不影响本次拉取结果）。
-            if let Some((_, key)) = &auto_ssh {
+            // 拉取成功：把自动检测到的 SSH 私钥路径持久化进仓库 config（仅恰好检测到一把时，
+            // 多把时不写，见 auto_ssh_key 注释），后续 fetch/pull/push 复用（失败仅忽略）。
+            if let Some((_, Some(key))) = &auto_ssh {
                 let _ = apply_ssh_key_config(&repo_path, key);
             }
             // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
@@ -1773,8 +1789,8 @@ async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String)
             .map_err(|e| format!("无法执行 git pull 命令: {}", e))?;
 
         if ok2 {
-            // 拉取成功：持久化自动检测到的 SSH 私钥（同 pull_branch）
-            if let Some((_, key)) = &auto_ssh {
+            // 拉取成功：持久化自动检测到的 SSH 私钥（同 pull_branch，仅恰好一把时）
+            if let Some((_, Some(key))) = &auto_ssh {
                 let _ = apply_ssh_key_config(&repo_path, key);
             }
             // 拉取成功：还原 stash。若与远端改动重叠会产生冲突，交前端在「变更文件」面板标红。
