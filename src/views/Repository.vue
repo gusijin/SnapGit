@@ -1574,41 +1574,26 @@ const isPulling = ref(false)
 const isPushing = ref(false)
 
 // 拉取进度：后端通过 `pull-progress` 事件实时推送 git fetch/pull 百分比（Receiving/Resolving 等阶段）。
-// visible 仅在拉取超过 PULL_PROGRESS_DELAY_MS(5s) 后才置 true，避免快速拉取时闪烁打扰。
-const PULL_PROGRESS_DELAY_MS = 5000
+// 拉取一开始就立即显示（visible 直接置 true），由「变更文件」面板内联/空态展示，无延迟。
 const pullProgress = ref<{ percent: number; phase: string; detail: string; visible: boolean }>({
   percent: 0,
   phase: '',
   detail: '',
   visible: false,
 })
-let pullProgressTimer: ReturnType<typeof setTimeout> | null = null
 
-// 进入拉取：重置进度并启动 5 秒计时器，超时且仍在拉取则显示百分比
+// 进入拉取：重置进度并立即显示
 function beginPullProgress() {
-  pullProgress.value = { percent: 0, phase: '', detail: '', visible: false }
-  if (pullProgressTimer !== null) clearTimeout(pullProgressTimer)
-  pullProgressTimer = setTimeout(() => {
-    if (isPulling.value) pullProgress.value.visible = true
-  }, PULL_PROGRESS_DELAY_MS)
+  pullProgress.value = { percent: 0, phase: '', detail: '', visible: true }
 }
 
-// 结束拉取：清理计时器；若已展示进度则进入「100% 完成」态，延迟 600ms 淡出，否则立即结束
+// 结束拉取：进入「100% 完成」态，延迟 600ms 淡出
 function finishPullProgress() {
-  if (pullProgressTimer !== null) {
-    clearTimeout(pullProgressTimer)
-    pullProgressTimer = null
-  }
-  if (pullProgress.value.visible) {
-    pullProgress.value = { percent: 100, phase: 'done', detail: '完成', visible: true }
-    setTimeout(() => {
-      isPulling.value = false
-      pullProgress.value.visible = false
-    }, 600)
-  } else {
+  pullProgress.value = { percent: 100, phase: 'done', detail: '完成', visible: true }
+  setTimeout(() => {
     isPulling.value = false
     pullProgress.value.visible = false
-  }
+  }, 600)
 }
 
 function handlePush() {
@@ -2078,7 +2063,7 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
-    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板在超过 5 秒后内联展示
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板内联展示（拉取开始即显示，无延迟）
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
@@ -2087,19 +2072,10 @@ async function setupMenuListener() {
         pullProgress.value.phase = phase
         pullProgress.value.detail = detail
         if (phase === 'done') {
-          if (pullProgressTimer !== null) {
-            clearTimeout(pullProgressTimer)
-            pullProgressTimer = null
-          }
-          if (pullProgress.value.visible) {
-            setTimeout(() => {
-              isPulling.value = false
-              pullProgress.value.visible = false
-            }, 600)
-          } else {
+          setTimeout(() => {
             isPulling.value = false
             pullProgress.value.visible = false
-          }
+          }, 600)
         }
       },
     )
