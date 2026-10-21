@@ -488,6 +488,7 @@ export default {
       resolving: 'Applying updates',
       counting: 'Fetching updates',
       compressing: 'Fetching updates',
+      objectsCount: '{done}/{total} objects',
       done: 'Pull complete',
     },
     noChangesToCommit: 'No changes to commit',

@@ -490,6 +490,7 @@ export default {
       resolving: '正在应用更新',
       counting: '正在获取更新',
       compressing: '正在获取更新',
+      objectsCount: '{done}/{total} 个对象',
       done: '拉取完成',
     },
     noChangesToCommit: '没有需要提交的更改',

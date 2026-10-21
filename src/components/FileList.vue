@@ -235,6 +235,23 @@ const pullPhaseLabel = computed(() => {
     default: return t('repository.pullPhase.pulling')
   }
 })
+
+// 从后端透传的 git 原始进度片段解析统计信息。
+// 片段形如 `remote: Receiving objects:  42% (100/238), 1.2 MiB | 300 KiB/s`：
+//   - 数量/总数量 `(100/238)`：counting/compressing/resolving 阶段也有；
+//   - 已下载大小 `1.2 MiB`（`, xx` 且后跟 `|`）与速度 `300 KiB/s`（`|` 之后）：仅 receiving 阶段有。
+// 缺哪段就省哪段，用 ` · ` 拼接；解析不出任何统计返回 null（模板不渲染该行）。
+const pullStats = computed(() => {
+  const d = props.pullProgress?.detail || ''
+  const parts: string[] = []
+  const cnt = d.match(/\((\d+)\/(\d+)\)/)
+  if (cnt) parts.push(t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }))
+  const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
+  if (size) parts.push(size[1])
+  const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
+  if (speed) parts.push(speed[1])
+  return parts.length > 0 ? parts.join(' · ') : null
+})
 </script>
 
 <template>
@@ -258,7 +275,7 @@ const pullPhaseLabel = computed(() => {
     </div>
 
     <!-- 拉取进度（超过 5 秒才显示，避免快速拉取闪烁）。两种形态，统一样式：
-         ① 列表为空 → 替代「工作区干净」空态，居中展示 spinner + 百分比 + 阶段 + 进度条；
+         ① 列表为空 → 替代「工作区干净」空态，居中展示 spinner + 百分比 + 阶段 + 实时统计（数量/大小/速度）；
          ② 列表非空 → 面板头部下方的单行细进度条，不遮挡文件列表 -->
     <transition name="ppb-fade">
       <div
@@ -284,9 +301,8 @@ const pullPhaseLabel = computed(() => {
         <span class="pp-pct-inline">{{ pullProgress.percent }}</span>
         <span class="pp-pct-unit">%</span>
       </div>
-      <div class="pp-bar pp-bar-center">
-        <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
-      </div>
+      <!-- 实时统计（对象数量/总量 · 已下载大小 · 速度），替代原进度条 -->
+      <p class="pp-stats" v-if="pullStats">{{ pullStats }}</p>
     </div>
 
     <div v-else-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
@@ -749,9 +765,17 @@ const pullPhaseLabel = computed(() => {
   font-weight: 600;
   line-height: 1;
 }
-.pp-bar-center {
-  width: 220px;
-  margin-top: 4px;
+/* 空态实时统计行：对象数量/总量 · 已下载大小 · 速度（由 git 原始进度片段解析）。
+   与百分比同级的小字灰显，等宽数字避免计数跳动时抖动 */
+.pp-stats {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90%;
 }
 .ppb-fade-enter-active,
 .ppb-fade-leave-active {
