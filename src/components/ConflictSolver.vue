@@ -31,12 +31,20 @@ const rightTextarea = ref<HTMLTextAreaElement | null>(null)
 const leftLinesRef = ref<HTMLElement | null>(null)
 const middleLinesRef = ref<HTMLElement | null>(null)
 const rightLinesRef = ref<HTMLElement | null>(null)
+// 行号列内层：用 translateY 跟随滚动（与着色层同机制），不用 scrollTop——
+// textarea 的 clientHeight 要扣除常驻横滚条，scrollTop 同步会在滚到底时
+// 提前钳制、行号与文本错开；transform 与文本行坐标严格 1:1，无钳制差
+const leftLinesInnerRef = ref<HTMLElement | null>(null)
+const middleLinesInnerRef = ref<HTMLElement | null>(null)
+const rightLinesInnerRef = ref<HTMLElement | null>(null)
 // 着色层（语法高亮）与两列之间的操作列，随文本滚动同步
 const leftOverlayInner = ref<HTMLElement | null>(null)
 const middleOverlayInner = ref<HTMLElement | null>(null)
 const rightOverlayInner = ref<HTMLElement | null>(null)
-const leftMidColRef = ref<HTMLElement | null>(null)
-const rightMidColRef = ref<HTMLElement | null>(null)
+// 中间列内容层：弧形连接带 + 箭头按钮随滚动 translateY（同理不用 scrollTop，
+// 避免中间列自身滚动高度与 textarea 不一致导致底部错位）
+const leftMidcolInnerRef = ref<HTMLElement | null>(null)
+const rightMidcolInnerRef = ref<HTMLElement | null>(null)
 // 中间列顶部占位高度 = 相邻文本栏 .panel-label 高度（运行时实测），用于把弧形/箭头按钮的
 // 垂直坐标原点对齐到编辑器内容原点（文本栏被 panel-label 整体下压了同样高度，中间列没有，会偏高 ≈L）
 const midcolTopPad = ref(28)
@@ -403,6 +411,30 @@ function blockMidY(idx: number): number {
 
 const bandsTotalHeight = computed(() => allLineCount.value * LINE_HEIGHT + PADDING_TOP)
 
+// ---- 右侧概览标尺（与编辑页 .diff-ruler 同规格）----
+// working 栏每个冲突块：ours 段行标红、theirs 段行标绿（与行底色、连接带同一套
+// 语义色）。连续同色行合并为一个 mark（长冲突块不会炸出几千个 DOM），
+// 长冲突文件里一眼看到冲突分布与当前浏览位置的关系。
+const rulerMarks = computed(() => {
+  const total = allLineCount.value || 1
+  const marks: Array<{ top: string; height: string; cls: string }> = []
+  const push = (first: number, count: number, cls: string) => {
+    if (count <= 0 || first < 0) return
+    marks.push({
+      top: (first / total) * 100 + '%',
+      height: `max(2px, ${(count / total) * 100}%)`,
+      cls,
+    })
+  }
+  blocks.value.forEach((b) => {
+    // ours 段：start_line+1 起（排除 <<<<<<< 标记行）
+    push(b.start_line + 1, b.ours.length, 'ruler-del')
+    // theirs 段：end_line-theirs.length 起（排除 >>>>>>> 标记行）
+    push(b.end_line - b.theirs.length, b.theirs.length, 'ruler-add')
+  })
+  return marks
+})
+
 // 左中列：绿（ours）——左沿接该块 ours 内容的行范围，右沿接整个冲突块的行范围
 const leftBands = computed(() =>
   blocks.value.map((b, idx) => ({
@@ -443,6 +475,9 @@ function scrollToCurrentBlock() {
   if (!block || !ta) return
   const targetTop = PADDING_TOP + block.start_line * LINE_HEIGHT
   ta.scrollTop = Math.max(0, targetTop - ta.clientHeight / 3)
+  // 程序化设 scrollTop 触发的 scroll 事件是异步的，这里主动同步一次，
+  // 避免行号列/着色层/中间列晚一帧才跟上（与编辑页 scrollToRow 同思路）
+  syncScroll('middle')
 }
 
 // 实测相邻文本栏 .panel-label 的高度，作为中间列顶部占位，使弧形/箭头按钮与编辑器内容原点
@@ -458,10 +493,10 @@ function syncScroll(source: 'left' | 'middle' | 'right') {
     middle: middleTextarea.value,
     right: rightTextarea.value,
   }
-  const lineRefs: Record<string, HTMLElement | null> = {
-    left: leftLinesRef.value,
-    middle: middleLinesRef.value,
-    right: rightLinesRef.value,
+  const lineInners: Record<string, HTMLElement | null> = {
+    left: leftLinesInnerRef.value,
+    middle: middleLinesInnerRef.value,
+    right: rightLinesInnerRef.value,
   }
   const overlayInners: Record<string, HTMLElement | null> = {
     left: leftOverlayInner.value,
@@ -475,20 +510,21 @@ function syncScroll(source: 'left' | 'middle' | 'right') {
 
   ;(['left', 'middle', 'right'] as const).forEach((key) => {
     const el = refs[key]
-    const lineEl = lineRefs[key]
+    const lineInner = lineInners[key]
     const ov = overlayInners[key]
     if (el && el !== sourceEl) {
       el.scrollTop = scrollTop
       el.scrollLeft = scrollLeft
     }
-    if (lineEl) lineEl.scrollTop = scrollTop
+    // 行号列内层跟随滚动（translateY 不触发 scroll 事件，安全；与着色层同机制）
+    if (lineInner) lineInner.style.transform = `translateY(${-scrollTop}px)`
     // 着色层跟随滚动（translate 不触发 scroll 事件，安全）
     if (ov) ov.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`
   })
 
-  // 两侧操作列跟随编辑区滚动：按钮按冲突块行号定位，需与文本保持垂直对齐
-  if (leftMidColRef.value) leftMidColRef.value.scrollTop = scrollTop
-  if (rightMidColRef.value) rightMidColRef.value.scrollTop = scrollTop
+  // 两侧操作列内容层跟随编辑区滚动：按钮/弧形按冲突块行号定位，需与文本保持垂直对齐
+  if (leftMidcolInnerRef.value) leftMidcolInnerRef.value.style.transform = `translateY(${-scrollTop}px)`
+  if (rightMidcolInnerRef.value) rightMidcolInnerRef.value.style.transform = `translateY(${-scrollTop}px)`
 }
 
 function goToPreviousBlock() {
@@ -639,6 +675,12 @@ function lineNumberArray(count: number): number[] {
         <span>{{ t('conflictSolver.title') }}</span>
         <span class="file-name">{{ getFileName(conflictFile.path) }}</span>
       </div>
+      <!-- 图例：差异行着色含义（与编辑页 .diff-legend 同规格；窄窗口自动隐藏，见 CSS container query） -->
+      <div class="diff-legend">
+        <span class="legend-item"><i class="legend-dot del" />{{ t('conflictSolver.legendOurs') }}</span>
+        <span class="legend-item"><i class="legend-dot add" />{{ t('conflictSolver.legendTheirs') }}</span>
+        <span class="legend-item"><i class="legend-dot marker" />{{ t('conflictSolver.legendMarker') }}</span>
+      </div>
       <div class="solver-actions">
         <Button variant="outline" size="sm" @click="goToPreviousBlock" :disabled="!hasBlocks" :title="t('conflictSolver.prevBlockTitle')">
           <ChevronUp :size="14" />
@@ -697,7 +739,9 @@ function lineNumberArray(count: number): number[] {
         </div>
         <div class="editor-container">
           <div ref="leftLinesRef" class="line-numbers">
-            <div v-for="n in lineNumberArray(leftLineCount)" :key="n" class="line-num">{{ n }}</div>
+            <div ref="leftLinesInnerRef" class="line-numbers-inner">
+              <div v-for="n in lineNumberArray(leftLineCount)" :key="n" class="line-num">{{ n }}</div>
+            </div>
           </div>
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
@@ -718,9 +762,9 @@ function lineNumberArray(count: number): number[] {
       </div>
 
       <!-- 左中间操作列：ours ↔ working，每个冲突块对应位置一个「接受 ours」箭头 -->
-      <div class="solver-midcol" ref="leftMidColRef">
+      <div class="solver-midcol">
         <div class="midcol-label-spacer" :style="{ height: midcolTopPad + 'px' }"></div>
-        <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
+        <div ref="leftMidcolInnerRef" class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
           <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，绿=ours，当前块高亮 -->
           <svg
             class="diff-bands band-ours"
@@ -759,7 +803,9 @@ function lineNumberArray(count: number): number[] {
         </div>
         <div class="editor-container">
           <div ref="middleLinesRef" class="line-numbers">
-            <div v-for="n in lineNumberArray(allLineCount)" :key="n" class="line-num">{{ n }}</div>
+            <div ref="middleLinesInnerRef" class="line-numbers-inner">
+              <div v-for="n in lineNumberArray(allLineCount)" :key="n" class="line-num">{{ n }}</div>
+            </div>
           </div>
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
@@ -773,6 +819,16 @@ function lineNumberArray(count: number): number[] {
               class="solver-textarea"
               spellcheck="false"
               @scroll="syncScroll('middle')"
+            />
+          </div>
+          <!-- 概览标尺：每个冲突块 ours 段红 / theirs 段绿（与编辑页 .diff-ruler 同规格） -->
+          <div class="diff-ruler" aria-hidden="true">
+            <div
+              v-for="(m, idx) in rulerMarks"
+              :key="idx"
+              class="ruler-mark"
+              :class="m.cls"
+              :style="{ top: m.top, height: m.height }"
             />
           </div>
         </div>
@@ -796,9 +852,9 @@ function lineNumberArray(count: number): number[] {
       </div>
 
       <!-- 右中间操作列：working ↔ theirs，每个冲突块对应位置一个「接受 theirs」箭头 -->
-      <div class="solver-midcol" ref="rightMidColRef">
+      <div class="solver-midcol">
         <div class="midcol-label-spacer" :style="{ height: midcolTopPad + 'px' }"></div>
-        <div class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
+        <div ref="rightMidcolInnerRef" class="midcol-inner" :style="{ minHeight: bandsTotalHeight + 'px' }">
           <!-- 弧形背景色标记：每个冲突块一段 S 曲线漏斗，蓝=theirs，当前块高亮 -->
           <svg
             class="diff-bands band-theirs"
@@ -837,7 +893,9 @@ function lineNumberArray(count: number): number[] {
         </div>
         <div class="editor-container">
           <div ref="rightLinesRef" class="line-numbers">
-            <div v-for="n in lineNumberArray(rightLineCount)" :key="n" class="line-num">{{ n }}</div>
+            <div ref="rightLinesInnerRef" class="line-numbers-inner">
+              <div v-for="n in lineNumberArray(rightLineCount)" :key="n" class="line-num">{{ n }}</div>
+            </div>
           </div>
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
@@ -878,6 +936,11 @@ function lineNumberArray(count: number): number[] {
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
+  /* 容器查询上下文：窄窗口时隐藏图例（见下方 @container）。
+     本元素是 .conflict-solver（flex column）的子项，宽度由 stretch 决定，
+     显式 width:100% 双保险，避免 container-type 的尺寸 containment 引发塌缩 */
+  container-type: inline-size;
+  width: 100%;
 }
 
 .solver-title {
@@ -887,6 +950,8 @@ function lineNumberArray(count: number): number[] {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
+  /* 不收缩：窄窗口时由图例让位（图例 <1160px 整体隐藏） */
+  flex-shrink: 0;
 }
 
 .title-icon {
@@ -903,6 +968,8 @@ function lineNumberArray(count: number): number[] {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 不收缩：窄窗口时由图例让位（图例 <1160px 整体隐藏） */
+  flex-shrink: 0;
 }
 
 .toolbar-divider {
@@ -979,6 +1046,14 @@ function lineNumberArray(count: number): number[] {
   user-select: none;
 }
 
+/* 行号列内层：随滚动 translateY（syncScroll 里设置 transform）。
+   不用 scrollTop 同步的原因：textarea 的 clientHeight 要扣除常驻横滚条，
+   scrollTop 会在滚到底时提前钳制，行号与文本错开；transform 与文本行
+   坐标严格 1:1，任意滚动位置都对齐 */
+.line-numbers-inner {
+  will-change: transform;
+}
+
 .line-num {
   height: 18px;
   line-height: 18px;
@@ -1016,10 +1091,33 @@ function lineNumberArray(count: number): number[] {
   color: transparent;
   caret-color: var(--text-primary);
   white-space: pre;
-  overflow: auto;
+  /* 横向滚动条常驻（与编辑页 .editor-textarea、查看页 .side 一致）：
+     避免某一栏出现长行时独占横滚条、其余两栏没有，导致三栏视口高度差 10px、
+     滚到底部时 scrollTop 钳制值不同而行错位 */
+  overflow-y: auto;
+  overflow-x: scroll;
   box-sizing: border-box;
   position: relative;
   z-index: 1;
+}
+
+/* 滚动条规格与编辑页 .editor-textarea 一致（track 三级面 / thumb 边框灰 / 宽高 10px） */
+.solver-textarea::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.solver-textarea::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+.solver-textarea::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 5px;
+}
+
+.solver-textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 /* 聚焦态：与编辑页一致——只在「编辑区顶部」画 2px accent 线 + 3px 柔光，不留四边框。
@@ -1106,6 +1204,87 @@ function lineNumberArray(count: number): number[] {
 .tok-constant { color: var(--syntax-constant); }
 .tok-plain    { color: var(--text-primary); }
 
+/* ===== 工具栏图例（与编辑页 .diff-legend 同规格）=====
+   冲突页行着色语义：红 = ours 侧内容、绿 = theirs 侧内容、灰 = 冲突标记行 */
+.diff-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 0 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  user-select: none;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.legend-dot.del {
+  background-color: var(--bg-del);
+  border: 1px solid var(--color-del);
+}
+
+.legend-dot.add {
+  background-color: var(--bg-add);
+  border: 1px solid var(--color-add);
+}
+
+.legend-dot.marker {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-medium);
+}
+
+/* 窄窗口（工具栏 <1160px）隐藏图例：操作按钮优先，图例让位，避免挤压/截断 */
+@container (max-width: 1160px) {
+  .diff-legend {
+    display: none;
+  }
+}
+
+/* ===== working 栏概览标尺（与编辑页 .diff-ruler 同规格）=====
+   叠在中间栏垂直滚动条上纯展示：每个冲突块 ours 段红 / theirs 段绿，
+   与行底色、连接带同一套语义色，长冲突文件一眼看到冲突分布 */
+.diff-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  background-color: transparent;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ruler-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.ruler-del {
+  background-color: var(--color-del);
+}
+
+.ruler-add {
+  background-color: var(--color-add);
+}
+
 /* 行级底色（对齐编辑页 .hl-line.hl-del/.hl-add/.hl-mod）：整行底色、无边框。
    标记行灰 / base（diff3 祖先）灰、ours 段红（--bg-del）、theirs 段绿（--bg-add）。 */
 .hl-line.line-confl-marker,
@@ -1147,15 +1326,27 @@ function lineNumberArray(count: number): number[] {
   background-color: var(--bg-toolbar);
 }
 
-/* 词级差异高亮：只保留行级底色，**不再叠加文字背景**。
-   古哥 2026-10-08 反馈：行底色（--bg-add 淡绿）之外又叠了一层更深的绿底，
-   两块色压在一起发脏，观感远不如 IDEA —— 去掉 .seg-chg 的背景。
-   （若日后要重新标出「词级差异」，请换用非背景的手段，如下划线/加粗，别再叠底色。） */
+/* 词级差异高亮：用「下划线」表达，**不叠文字背景**。
+   古哥 2026-10-08 反馈：行底色（--bg-add 淡绿）之外又叠一层更深的绿底，
+   两块色压在一起发脏 —— 背景方案已废弃，改按当时建议的「非背景手段」画下划线。
+   配色与行底色、连接带同一套语义：ours 侧红（--color-del）、theirs 侧绿（--color-add）。
+   下划线不改变字形位置，着色层与 textarea 的光标/选区仍逐字符对齐（加粗会破坏对齐，故不采用）。 */
 .seg-chg {
-  border-radius: 2px;
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-del);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
-/* 两列之间的操作列：与编辑页面(编辑差异)一致，按冲突块行号垂直定位箭头按钮 */
+.hl-line.line-confl-theirs .seg-chg,
+.hl-line.side-theirs .seg-chg {
+  text-decoration-color: var(--color-add);
+}
+
+/* 两列之间的操作列：与编辑页面(编辑差异)一致，按冲突块行号垂直定位箭头按钮。
+   本列自身不滚动：内容层 .midcol-inner 由 syncScroll 做 translateY，与三栏 textarea
+   的滚动严格同步（原生 scrollTop 同步会因滚动高度与 textarea 不一致，在滚到底时
+   错位 ~20px），故容器直接裁剪即可 */
 .solver-midcol {
   width: 36px;
   flex-shrink: 0;
@@ -1163,24 +1354,15 @@ function lineNumberArray(count: number): number[] {
   flex-direction: column;
   background-color: var(--bg-toolbar);
   border-right: 1px solid var(--border-color);
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.solver-midcol::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+  overflow: hidden;
 }
 
 /* 中间列顶部占位：高度 = 相邻文本栏 .panel-label（运行时实测，midcolTopPad）。
    文本栏的编辑器被 panel-label 整体下压了 L，中间列没有 label，故补一个等高的
-   非滚动占位（sticky 不随滚动移走），把弧形/箭头按钮的垂直原点对齐到编辑器内容原点，
-   修正原「弧形整体偏高 ≈L」的错位。占位用与 panel-label 一致的灰底+下边框，滚动时
-   与文本栏一样把上方内容遮在条带之下，保证三栏顶部视觉对齐。 */
+   占位，把弧形/箭头按钮的垂直原点对齐到编辑器内容原点，修正原「弧形整体偏高 ≈L」
+   的错位。占位用与 panel-label 一致的灰底+下边框，内容层上移时与文本栏一样把
+   上方内容遮在条带之下，保证三栏顶部视觉对齐。 */
 .midcol-label-spacer {
-  position: sticky;
-  top: 0;
   flex-shrink: 0;
   z-index: 2;
   box-sizing: border-box;
@@ -1192,6 +1374,8 @@ function lineNumberArray(count: number): number[] {
   position: relative;
   /* 顶部 8px：与 textarea 内容起点一致（行 0 上沿对齐） */
   padding-top: 8px;
+  /* 随滚动 translateY（syncScroll 里设置 transform），见 .solver-midcol 注释 */
+  will-change: transform;
 }
 
 .solver-action-group {
