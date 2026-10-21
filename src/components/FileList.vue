@@ -240,18 +240,33 @@ const pullPhaseLabel = computed(() => {
 // 片段形如 `remote: Receiving objects:  42% (100/238), 1.2 MiB | 300 KiB/s`：
 //   - 数量/总数量 `(100/238)`：counting/compressing/resolving 阶段也有；
 //   - 已下载大小 `1.2 MiB`（`, xx` 且后跟 `|`）与速度 `300 KiB/s`（`|` 之后）：仅 receiving 阶段有。
-// 缺哪段就省哪段，用 ` · ` 拼接；解析不出任何统计返回 null（模板不渲染该行）。
-const pullStats = computed(() => {
-  const d = props.pullProgress?.detail || ''
-  const parts: string[] = []
-  const cnt = d.match(/\((\d+)\/(\d+)\)/)
-  if (cnt) parts.push(t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }))
-  const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
-  if (size) parts.push(size[1])
-  const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
-  if (speed) parts.push(speed[1])
-  return parts.length > 0 ? parts.join(' · ') : null
-})
+// 阶段策略：
+//   - counting/compressing（服务端准备，无大小/速度）→ 显示数量（若前一状态有统计则清掉）；
+//   - receiving（真正下载）→ 实时更新 数量/总量 · 大小 · 速度（缺哪段省哪段）；
+//   - resolving（本地应用增量）→ **冻结**：保留 receiving 的最终统计——
+//     delta 计数 `(5/15)` 不是对象下载数，混进来会让四个数字对不上（古哥 2026-10-21）。
+const pullStats = ref<string | null>(null)
+watch(() => props.pullProgress, (p) => {
+  const phase = p?.phase || ''
+  const d = p?.detail || ''
+  if (phase === 'counting' || phase === 'compressing' || !d) {
+    // 服务端准备阶段：只显示数量（重置掉上一轮的大小/速度）
+    const cnt = d.match(/\((\d+)\/(\d+)\)/)
+    pullStats.value = cnt ? t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }) : null
+    return
+  }
+  if (phase === 'receiving') {
+    const parts: string[] = []
+    const cnt = d.match(/\((\d+)\/(\d+)\)/)
+    if (cnt) parts.push(t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }))
+    const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
+    if (size) parts.push(size[1])
+    const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
+    if (speed) parts.push(speed[1])
+    pullStats.value = parts.length > 0 ? parts.join(' · ') : null
+  }
+  // resolving/done：不改 pullStats，冻结 receiving 的最终统计
+}, { immediate: true })
 </script>
 
 <template>

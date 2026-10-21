@@ -185,12 +185,18 @@ fn handle_progress_segment(
     }
     if let Some((phase, phase_pct)) = parse_git_progress(t) {
         let overall = overall_progress(phase, phase_pct);
-        if overall > *last_pct {
+        let increased = overall > *last_pct;
+        if increased {
             *last_pct = overall;
+        }
+        // receiving（真正下载对象）阶段**每个片段都发**：前端统计行的大小/速度依赖
+        // detail 实时刷新，只按整体百分比节流会让统计卡在旧值甚至错过不显示
+        // （古哥 2026-10-21）。其余阶段数量已够用且不带大小，仍按百分比节流避免事件洪水。
+        if increased || phase == "receiving" {
             let _ = app.emit(
                 "pull-progress",
                 serde_json::json!({
-                    "percent": overall,
+                    "percent": *last_pct,
                     "phase": phase,
                     "detail": t,
                 }),
