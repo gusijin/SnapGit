@@ -639,6 +639,8 @@ export default {
   logView: {
     backToWorkspace: '返回工作区',
     logTitle: '提交日志',
+    collapse: '折叠',
+    expand: '展开',
     searchPlaceholder: '搜索提交信息 / 作者 / ID',
     search: '搜索',
     collapseSearch: '收起搜索',

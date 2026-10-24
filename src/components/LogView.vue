@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, X, GitCommitVertical, History, ArrowLeft } from 'lucide-vue-next'
+import { Search, X, GitCommitVertical, History, ArrowLeft, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Commit } from '../types'
 
@@ -13,11 +13,23 @@ interface Props {
   noMore?: boolean
   // 是否在面板头部显示「返回工作区」按钮（仅历史视图需要，工作视图底部的日志小面板不需要）
   showExitButton?: boolean
+  // 折叠时是否收成竖向窄条（侧边栏）：仅历史视图左侧日志面板用，
+  // 让出宽度给右侧提交详情；工作区视图底部面板为纵向折叠，不需要。
+  collapseToSide?: boolean
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits(['select-commit', 'show-commit-files', 'exit-log', 'load-more'])
 const { t } = useI18n()
+
+// 折叠状态：父组件通过 v-model:collapsed 接管（用于同步调整外层 flex 分配），
+// 组件内点击标题栏切换。默认展开——提交日志是主内容面板，不应默认藏起来。
+const collapsed = defineModel<boolean>('collapsed', { default: false })
+
+// 点击标题栏：切换折叠/展开（与子模块面板一致）
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+}
 
 // 历史视图头部「返回工作区」按钮触发，交父组件收尾（Repository.exitLogView）
 function exitLog() {
@@ -165,12 +177,18 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="log-viewer">
-    <div class="panel-header">
+  <div class="log-viewer" :class="{ collapsed, 'side-collapsed': collapsed && collapseToSide }">
+    <!-- 标题栏：点击整栏切换折叠/展开（与子模块面板一致）；箭头指示当前状态 -->
+    <div class="panel-header" :class="{ 'side-collapsed': collapsed && collapseToSide }" @click="toggleCollapsed">
+      <!-- 折叠/展开指示箭头：展开 ChevronDown / 折叠 ChevronRight，与子模块面板一致 -->
+      <button class="header-collapse" :title="collapsed ? t('logView.expand') : t('logView.collapse')">
+        <ChevronDown v-if="!collapsed" :size="13" />
+        <ChevronRight v-else :size="13" />
+      </button>
       <TooltipProvider v-if="showExitButton" :delay-duration="260">
         <Tooltip>
           <TooltipTrigger as-child>
-            <button class="header-exit-btn" :aria-label="t('logView.backToWorkspace')" @click="exitLog">
+            <button class="header-exit-btn" :aria-label="t('logView.backToWorkspace')" @click.stop="exitLog">
               <ArrowLeft :size="13" />
             </button>
           </TooltipTrigger>
@@ -178,10 +196,11 @@ onMounted(() => {
         </Tooltip>
       </TooltipProvider>
       <History :size="13" class="header-icon" />
-      <span>{{ t('logView.logTitle') }}</span>
+      <span class="log-title-text">{{ t('logView.logTitle') }}</span>
       <span class="count">{{ filteredCommits.length }}</span>
-      <!-- 搜索：图标按钮与输入框同处 .search-area，常驻 DOM，靠容器宽度 + 透明度过渡平滑切换 -->
-      <div class="search-area" :class="{ 'is-open': searchOpen }">
+      <!-- 搜索：图标按钮与输入框同处 .search-area，常驻 DOM，靠容器宽度 + 透明度过渡平滑切换。
+           @click.stop 防止点击搜索区域（含展开后的输入框）误触发整栏折叠 -->
+      <div class="search-area" :class="{ 'is-open': searchOpen }" @click.stop>
         <TooltipProvider :delay-duration="260">
           <Tooltip>
             <TooltipTrigger as-child>
@@ -216,6 +235,7 @@ onMounted(() => {
       </div>
     </div>
 
+    <div v-show="!collapsed" class="log-body">
     <div v-if="filteredCommits.length === 0" class="empty">
       <GitCommitVertical :size="42" class="empty-icon" />
       <p>{{ filterText ? t('logView.noMatch') : t('logView.noCommits') }}</p>
@@ -261,6 +281,7 @@ onMounted(() => {
         <div v-if="loadingMore" class="log-more">{{ t('logView.loadingMore') }}</div>
         <div v-else-if="noMore && commits.length > 0" class="log-more end">{{ t('logView.allLoaded') }}</div>
       </div>
+    </div>
     </div>
   </div>
 </template>
@@ -314,6 +335,28 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+/* 折叠/展开指示箭头按钮（与 .header-exit-btn 视觉统一，必配 title 提示） */
+.header-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.header-collapse:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+}
+
 /* 历史视图头部「返回工作区」按钮（icon-only，必配 Tooltip） */
 .header-exit-btn {
   display: inline-flex;
@@ -335,6 +378,35 @@ onMounted(() => {
 .header-exit-btn:hover {
   background-color: var(--bg-hover);
   color: var(--text-bright);
+}
+
+/* 折叠态内容区：撑满标题栏以外的剩余高度，内部空态/列表各自 flex:1 填充 */
+.log-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 历史视图折叠成竖向窄条（侧边栏）：只留箭头 + 竖排标题，让出宽度给右侧详情。
+   仅 .log-viewer.side-collapsed（即 collapsed && collapseToSide）时生效。 */
+.log-viewer.side-collapsed .panel-header {
+  flex-direction: column;
+  height: 100%;
+  padding: 8px 0;
+  gap: 12px;
+  justify-content: flex-start;
+}
+.log-viewer.side-collapsed .header-icon,
+.log-viewer.side-collapsed .count,
+.log-viewer.side-collapsed .search-area,
+.log-viewer.side-collapsed .header-exit-btn {
+  display: none;
+}
+.log-viewer.side-collapsed .log-title-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 2px;
 }
 
 /* 搜索收起态：icon-only 按钮，视觉与交互统一于 .header-exit-btn；

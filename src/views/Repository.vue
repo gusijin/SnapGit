@@ -165,6 +165,9 @@ const isResizingCenter = ref(false)
 const isResizingLeftPanel = ref(false)
 const isResizingLogView = ref(false)
 const isResizingLogDetail = ref(false)
+// 提交日志面板折叠状态：工作区视图（底部纵向）收成标题栏高度、历史视图（左侧）收成竖向窄条，
+// 分别让出纵向 / 横向空间。两处 LogView 共用同一状态，切换视图时折叠偏好保持一致。
+const logCollapsed = ref(false)
 
 // 对话框
 const showCommitDialog = ref(false)
@@ -2329,8 +2332,9 @@ onBeforeUnmount(() => {
           <!-- 拖拉分隔条 -->
           <div class="resize-handle" @mousedown="startResizeCenter($event, 'diff-log')"></div>
           <!-- 下部：提交日志 -->
-          <div class="log-area" :style="{ flex: logAreaFlex }">
+          <div class="log-area" :style="{ flex: logCollapsed ? '0 0 30px' : logAreaFlex }">
             <LogView 
+              v-model:collapsed="logCollapsed"
               :commits="commits"
               :selected-id="currentCommitId"
               :loading-more="loadingMoreCommits"
@@ -2345,8 +2349,10 @@ onBeforeUnmount(() => {
         <!-- 提交历史视图：左侧日志 / 右侧提交详情（文件 + 差异） -->
         <template v-else>
           <div class="log-view-layout">
-            <div class="log-pane" :style="{ flex: logPaneFlex }">
+            <div class="log-pane" :style="{ flex: logCollapsed ? '0 0 32px' : logPaneFlex }">
               <LogView 
+                v-model:collapsed="logCollapsed"
+                :collapse-to-side="true"
                 :commits="commits"
                 :selected-id="currentCommitId"
                 :loading-more="loadingMoreCommits"

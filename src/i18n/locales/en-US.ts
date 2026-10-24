@@ -638,6 +638,8 @@ export default {
   logView: {
     backToWorkspace: 'Back to working tree',
     logTitle: 'Commit Log',
+    collapse: 'Collapse',
+    expand: 'Expand',
     searchPlaceholder: 'Search message / author / ID',
     search: 'Search',
     collapseSearch: 'Collapse search',
