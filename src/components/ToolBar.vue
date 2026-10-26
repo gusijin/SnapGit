@@ -18,6 +18,8 @@ import {
   Check,
   Copy,
   CircleAlert,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-vue-next'
 
 interface Props {
@@ -45,6 +47,8 @@ interface Props {
   lastPullTime?: number | null
   /** 当前主视图：用于工具栏「切换工作/历史视图」按钮的激活态与提示 */
   currentView?: 'worktree' | 'log'
+  /** 左侧侧边栏（仓库/分支/子模块整列）是否已折叠：用于工具栏最左「隐藏/显示侧边栏」按钮的图标与高亮态 */
+  sidebarCollapsed?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -59,10 +63,12 @@ const props = withDefaults(defineProps<Props>(), {
   repoName: '',
   lastPullTime: null,
   currentView: 'worktree',
+  sidebarCollapsed: false,
 })
 const emit = defineEmits([
   'open-repo', 'commit', 'push', 'pull', 'branch', 'refresh',
   'show-working-tree', 'show-log', 'stash', 'checkout-branch',
+  'toggle-sidebar',
 ])
 
 const hasRepo = computed(() => !!props.repositoryPath)
@@ -108,6 +114,14 @@ const viewToggleHint = computed(() =>
 )
 function handleViewToggle() {
   emit(viewToggleActive.value ? 'show-working-tree' : 'show-log')
+}
+
+// 工具栏最左「隐藏/显示侧边栏」按钮：图标与提示随折叠态切换（对齐 VS Code / GitKraken）
+const sidebarHint = computed(() =>
+  props.sidebarCollapsed ? t('sidebar.show') : t('sidebar.hide'),
+)
+function handleToggleSidebar() {
+  emit('toggle-sidebar')
 }
 
 // ===== 工作区状态弹窗 =====
@@ -206,6 +220,25 @@ onBeforeUnmount(() => {
 <template>
   <TooltipProvider :delay-duration="260">
     <div class="toolbar">
+      <!-- 最左：隐藏/显示侧边栏（仓库 / 分支 / 子模块整列）。折叠态高亮，提示可一键展开 -->
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="h-8 w-8 sidebar-toggle-btn"
+            :class="{ 'sidebar-toggle-active': sidebarCollapsed }"
+            :aria-label="sidebarHint"
+            :aria-pressed="sidebarCollapsed"
+            @click="handleToggleSidebar"
+          >
+            <PanelLeftOpen v-if="sidebarCollapsed" :size="18" />
+            <PanelLeftClose v-else :size="18" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{{ sidebarHint }}</TooltipContent>
+      </Tooltip>
+
       <!-- 左：Git 主流程操作组（连接式分段按钮） -->
       <div class="seg-group">
         <template v-for="tool in primaryTools" :key="tool.id">
@@ -500,6 +533,17 @@ onBeforeUnmount(() => {
 }
 
 .view-toggle-active:hover:not(:disabled) {
+  background-color: var(--bg-active);
+  color: var(--text-bright);
+}
+
+/* 工具栏最左「隐藏/显示侧边栏」按钮：折叠态高亮，提示可一键展开 */
+.sidebar-toggle-active {
+  background-color: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.sidebar-toggle-active:hover:not(:disabled) {
   background-color: var(--bg-active);
   color: var(--text-bright);
 }

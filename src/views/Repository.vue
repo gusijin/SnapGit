@@ -157,7 +157,7 @@ const repoName = computed(() => {
 // 面板尺寸：从持久化 store 读取（首次启动用默认值，之后恢复上次拖拽的位置）
 const {
   leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex,
-  logPaneFlex, logDetailFlex,
+  logPaneFlex, logDetailFlex, leftPanelCollapsed,
 } = useLayout()
 const isResizingBranchPanel = ref(false)
 const REPO_LIST_FLEX = 1
@@ -2038,6 +2038,9 @@ function handleMenuAction(payload: any) {
     case 'toggle-submodules':
       showSubmodulePanel.value = !showSubmodulePanel.value
       break
+    case 'toggle-sidebar':
+      leftPanelCollapsed.value = !leftPanelCollapsed.value
+      break
     case 'repo-config':
       configRepoPath.value = repoPath.value
       showRepoConfig.value = true
@@ -2095,8 +2098,25 @@ watch(repoPath, (path) => {
   }
 })
 
+// 侧边栏快捷键：Ctrl/⌘+B 折叠/展开（与 VS Code 一致）。不拦截普通输入态的 B，仅组合键生效。
+function onSidebarShortcut(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B')) {
+    e.preventDefault()
+    leftPanelCollapsed.value = !leftPanelCollapsed.value
+  }
+}
+
+// 把折叠态回传 macOS 原生菜单（Windows/Linux 无原生菜单，事件无监听者，无害）
+function syncSidebarMenu(collapsed: boolean) {
+  import('@tauri-apps/api/event').then(({ emit }) => emit('sidebar-toggled', { collapsed }))
+}
+watch(leftPanelCollapsed, (v) => syncSidebarMenu(v))
+
 onMounted(() => {
   setupMenuListener()
+  window.addEventListener('keydown', onSidebarShortcut)
+  // 初始同步一次侧边栏折叠态到 macOS 原生菜单勾选态
+  syncSidebarMenu(leftPanelCollapsed.value)
   // 通知后端当前语言（含启动时恢复的语言偏好），同步 macOS 原生菜单勾选态
   import('@tauri-apps/api/event').then(({ emit }) =>
     emit('locale-changed', { locale: locale.value })
@@ -2147,6 +2167,7 @@ onBeforeUnmount(() => {
   stopResizeCenter()
   stopResizeLeftPanel()
   window.removeEventListener('focus', onWindowFocus)
+  window.removeEventListener('keydown', onSidebarShortcut)
   stopFileWatcher()
   if (diffLoadingTimer) {
     clearTimeout(diffLoadingTimer)
@@ -2195,14 +2216,17 @@ onBeforeUnmount(() => {
       @merge="handleMenuAction('merge')"
       @repo-config="handleMenuAction('repo-config')"
       :submodule-visible="showSubmodulePanel"
+      :sidebar-collapsed="leftPanelCollapsed"
       :current-view="mainView"
       @toggle-submodules="handleMenuAction('toggle-submodules')"
+      @toggle-sidebar="handleMenuAction('toggle-sidebar')"
       @show-working-tree="handleMenuAction('show-working-tree')"
       @show-log="handleMenuAction('show-log')"
     />
 
     <!-- 工具栏 -->
     <ToolBar
+      :sidebar-collapsed="leftPanelCollapsed"
       :current-branch="currentBranch"
       :branch-list-ready="branchListReady"
       :repository-path="repoPath"
@@ -2226,12 +2250,13 @@ onBeforeUnmount(() => {
       @stash="handleMenuAction('stash')"
       @show-working-tree="handleMenuAction('show-working-tree')"
       @show-log="handleMenuAction('show-log')"
+      @toggle-sidebar="handleMenuAction('toggle-sidebar')"
     />
 
     <!-- 主布局 -->
     <div class="main-layout">
-      <!-- 左侧面板 -->
-      <aside class="left-panel" :style="{ width: leftPanelWidth + 'px' }">
+      <!-- 左侧面板（折叠时宽度切 0，中间面板自动撑满，参考 VS Code / GitKraken 侧边栏） -->
+      <aside class="left-panel" :class="{ 'is-collapsed': leftPanelCollapsed }" :style="{ width: leftPanelCollapsed ? '0px' : leftPanelWidth + 'px' }">
         <RepositoryList 
           :projects="scannedProjects"
           :current-path="repoPath"
@@ -2290,8 +2315,8 @@ onBeforeUnmount(() => {
         />
       </aside>
 
-      <!-- 仓库面板与变更文件面板之间的左右拖拽分隔条 -->
-      <div class="resize-handle-col" @mousedown="startResizeLeftPanel"></div>
+      <!-- 仓库面板与变更文件面板之间的左右拖拽分隔条（折叠时一并隐藏，避免孤立拖拽条） -->
+      <div v-show="!leftPanelCollapsed" class="resize-handle-col" @mousedown="startResizeLeftPanel"></div>
 
       <!-- 中间面板 -->
       <section class="center-panel">
@@ -2736,6 +2761,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   gap: 0;
+  position: relative;
 }
 
 /* 左侧面板 */
@@ -2745,6 +2771,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background-color: var(--bg-secondary);
   min-height: 0;
+  overflow: hidden;
 }
 
 .left-panel > :deep(.repository-list) {

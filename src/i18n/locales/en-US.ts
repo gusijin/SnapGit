@@ -75,9 +75,14 @@ export default {
     checkoutBranch: 'Switch Branch',
     toggleTheme: 'Toggle Theme',
     submodules: 'Submodules',
+    sidebar: 'Sidebar',
     worktreeView: 'Working Tree',
     logView: 'History',
     aboutSnapGit: 'About SnapGit',
+  },
+  sidebar: {
+    show: 'Show Sidebar',
+    hide: 'Hide Sidebar',
   },
   about: {
     title: 'About SnapGit',

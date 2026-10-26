@@ -35,13 +35,14 @@ import {
 // 父组件传入的面板显隐状态与当前主视图，分别用于「视图 → 子模块」「视图 → 工作视图/历史视图」的勾选态显示
 const props = defineProps<{
   submoduleVisible?: boolean
+  sidebarCollapsed?: boolean
   currentView?: 'worktree' | 'log'
 }>()
 
 const emit = defineEmits([
   'open-repo', 'clone-repo', 'commit', 'push', 'pull',
   'branch', 'checkout-branch', 'merge', 'refresh',
-  'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules',
+  'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules', 'toggle-sidebar',
   'show-working-tree', 'show-log'
 ])
 
@@ -139,6 +140,12 @@ const menuItems = computed<MenuEntry[]>(() => [
         labelKey: 'menu.submodules',
         action: 'toggle-submodules',
         checked: props.submoduleVisible !== false
+      },
+      {
+        type: 'check',
+        labelKey: 'menu.sidebar',
+        action: 'toggle-sidebar',
+        checked: !props.sidebarCollapsed
       },
       { type: 'separator' },
       { labelKey: 'menu.toggleTheme', action: 'toggle-theme', icon: Palette }

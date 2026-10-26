@@ -387,7 +387,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  /* 右侧留出空间，避免被常驻在左栏右边缘的「折叠侧边栏」按钮遮挡（见 Repository.vue .sidebar-toggle） */
+  padding: 6px 28px 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;

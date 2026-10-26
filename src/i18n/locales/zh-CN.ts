@@ -76,9 +76,14 @@ export default {
     checkoutBranch: '切换分支',
     toggleTheme: '切换主题',
     submodules: '子模块',
+    sidebar: '侧边栏',
     worktreeView: '工作视图',
     logView: '历史视图',
     aboutSnapGit: '关于 SnapGit',
+  },
+  sidebar: {
+    show: '显示侧边栏',
+    hide: '隐藏侧边栏',
   },
   about: {
     title: '关于 SnapGit',

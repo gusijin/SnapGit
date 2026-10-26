@@ -14,6 +14,8 @@ export interface LayoutState {
   logAreaFlex: number
   logPaneFlex: number
   logDetailFlex: number
+  /** 左侧仓库面板（仓库/分支/子模块列）是否折叠收起 */
+  leftPanelCollapsed: boolean
 }
 
 const STORAGE_KEY = 'snapgit-layout'
@@ -34,6 +36,7 @@ const DEFAULTS: LayoutState = {
   logAreaFlex: 1,
   logPaneFlex: 4,
   logDetailFlex: 6,
+  leftPanelCollapsed: false,
 }
 
 function clampNum(v: unknown, min: number, max: number, fallback: number): number {
@@ -54,6 +57,7 @@ function loadLayout(): LayoutState {
       logAreaFlex: clampNum(p.logAreaFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logAreaFlex),
       logPaneFlex: clampNum(p.logPaneFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logPaneFlex),
       logDetailFlex: clampNum(p.logDetailFlex, CENTER_MIN_FLEX, CENTER_MAX_FLEX, DEFAULTS.logDetailFlex),
+      leftPanelCollapsed: typeof p.leftPanelCollapsed === 'boolean' ? p.leftPanelCollapsed : DEFAULTS.leftPanelCollapsed,
     }
   } catch {
     return { ...DEFAULTS }
@@ -69,6 +73,7 @@ const diffAreaFlex = ref(saved.diffAreaFlex)
 const logAreaFlex = ref(saved.logAreaFlex)
 const logPaneFlex = ref(saved.logPaneFlex)
 const logDetailFlex = ref(saved.logDetailFlex)
+const leftPanelCollapsed = ref(saved.leftPanelCollapsed)
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -81,6 +86,7 @@ function persist() {
       logAreaFlex: logAreaFlex.value,
       logPaneFlex: logPaneFlex.value,
       logDetailFlex: logDetailFlex.value,
+      leftPanelCollapsed: leftPanelCollapsed.value,
     }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -106,7 +112,7 @@ function scheduleSave() {
   }, 250)
 }
 
-watch([leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex], scheduleSave)
+watch([leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex, leftPanelCollapsed], scheduleSave)
 
 // 窗口关闭/刷新前兜底落盘
 window.addEventListener('beforeunload', flushLayout)
@@ -120,9 +126,10 @@ export function resetLayout() {
   logAreaFlex.value = DEFAULTS.logAreaFlex
   logPaneFlex.value = DEFAULTS.logPaneFlex
   logDetailFlex.value = DEFAULTS.logDetailFlex
+  leftPanelCollapsed.value = DEFAULTS.leftPanelCollapsed
   flushLayout()
 }
 
 export function useLayout() {
-  return { leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex, resetLayout, flushLayout }
+  return { leftPanelWidth, branchPanelFlex, fileListFlex, diffAreaFlex, logAreaFlex, logPaneFlex, logDetailFlex, leftPanelCollapsed, resetLayout, flushLayout }
 }
