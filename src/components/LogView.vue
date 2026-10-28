@@ -19,7 +19,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['select-commit', 'show-commit-files', 'exit-log', 'load-more'])
+const emit = defineEmits(['select-commit', 'open-history', 'exit-log', 'load-more'])
 const { t } = useI18n()
 
 // 折叠状态：父组件通过 v-model:collapsed 接管（用于同步调整外层 flex 分配），
@@ -250,7 +250,7 @@ onMounted(() => {
           class="log-item"
           :class="{ selected: commit.id === selectedId }"
           @click="handleSelect(commit.id)"
-          @dblclick="emit('show-commit-files', commit.id)"
+          @dblclick="emit('open-history', commit.id)"
         >
           <!-- 图形列：ID + 分支点 -->
           <div class="col col-id">

@@ -923,27 +923,11 @@ async function handleOpenFile(file: FileStatus) {
   }
 }
 
-async function handleShowCommitFiles(commitId: string) {
-  if (!repoPath.value) return
-  // 重复双击同一提交：返回工作树模式
-  if (fileViewMode.value === 'commit' && currentCommitId.value === commitId) {
-    fileViewMode.value = 'working-tree'
-    currentCommitId.value = ''
-    commitFiles.value = []
-    selectedFiles.value = []
-    selectedFileDiff.value = null
-    return
-  }
-  try {
-    const files = await getCommitFiles(repoPath.value, commitId)
-    commitFiles.value = files
-    currentCommitId.value = commitId
-    fileViewMode.value = 'commit'
-    // 双击进入提交详情：同样自动展示第一个文件的差异，与单点击行为一致
-    await selectFirstCommitFile(files)
-  } catch (e) {
-    console.error('Get commit files error:', e)
-  }
+// 提交日志面板双击行 → 打开提交历史记录（等同工具栏「查看提交历史记录」按钮）：
+// 切到历史视图并选中所双击的提交，右侧详情即时展示其文件与差异
+async function openCommitHistory(commitId: string) {
+  mainView.value = 'log'
+  await handleSelectCommit(commitId)
 }
 
 // 提取文件名（与 FileList.sortedFiles 的排序口径一致），用于确定「列表第一个文件」
@@ -2365,7 +2349,7 @@ onBeforeUnmount(() => {
               :loading-more="loadingMoreCommits"
               :no-more="noMoreCommits"
               @select-commit="handleSelectCommit"
-              @show-commit-files="handleShowCommitFiles"
+              @open-history="openCommitHistory"
               @load-more="loadMoreCommits"
             />
           </div>
@@ -2383,7 +2367,7 @@ onBeforeUnmount(() => {
                 :loading-more="loadingMoreCommits"
                 :no-more="noMoreCommits"
               @select-commit="handleSelectCommit"
-              @show-commit-files="handleShowCommitFiles"
+              @open-history="handleSelectCommit"
               @load-more="loadMoreCommits"
               :show-exit-button="true"
               @exit-log="exitLogView"
