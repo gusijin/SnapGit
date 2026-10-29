@@ -3,21 +3,19 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Branch } from '../types'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
   GitCommitVertical,
   RefreshCw,
-  FolderGit2,
   Archive,
   History,
   GitBranch,
   Check,
   Copy,
   CircleAlert,
+  ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-vue-next'
@@ -84,7 +82,7 @@ interface Tool {
   hintKey: string
   icon: Component
   action: string
-  /** 主操作视觉权重：primary 为实心主色 */
+  /** 主操作视觉权重：primary 为主色实心按钮 */
   emphasis?: 'primary'
 }
 
@@ -95,7 +93,7 @@ const primaryTools: Tool[] = [
   { id: 'push', labelKey: 'toolbar.push', hintKey: 'toolbar.pushHint', icon: ArrowUpFromLine, action: 'push' },
 ]
 
-/** 右侧：辅助操作，仅图标 + 悬浮提示（工作区状态单独渲染为弹窗） */
+/** 左侧：紧邻主流程的常用辅助操作（图标 + 悬浮提示） */
 const iconTools: Tool[] = [
   { id: 'stash', labelKey: 'toolbar.stash', hintKey: 'toolbar.stashHint', icon: Archive, action: 'stash' },
 ]
@@ -220,106 +218,149 @@ onBeforeUnmount(() => {
 <template>
   <TooltipProvider :delay-duration="260">
     <div class="toolbar">
-      <!-- 最左：隐藏/显示侧边栏（仓库 / 分支 / 子模块整列）。折叠态高亮，提示可一键展开 -->
-      <Tooltip>
-        <TooltipTrigger as-child>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="h-8 w-8 sidebar-toggle-btn"
-            :class="{ 'sidebar-toggle-active': sidebarCollapsed }"
-            :aria-label="sidebarHint"
-            :aria-pressed="sidebarCollapsed"
-            @click="handleToggleSidebar"
-          >
-            <PanelLeftOpen v-if="sidebarCollapsed" :size="18" />
-            <PanelLeftClose v-else :size="18" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{{ sidebarHint }}</TooltipContent>
-      </Tooltip>
+      <!-- 左区：Git 主流程 + 布局控制与常用辅助操作 -->
+      <div class="tb-left">
+        <!-- Git 主流程：连接式分段按钮（拉取 | 提交 | 推送） -->
+        <div class="seg-group">
+          <template v-for="tool in primaryTools" :key="tool.id">
+            <!-- 推送成功态：不渲染 Tooltip（提示彻底消失），按钮短暂显示"已推送"反馈 -->
+            <button
+              v-if="tool.id === 'push' && pushState === 'done'"
+              type="button"
+              class="seg-btn seg-pushed"
+              disabled
+            >
+              <Check :size="15" />
+              <span>{{ t('toolbar.pushed') }}</span>
+            </button>
+            <!-- 常规态：Tooltip 悬浮提示 -->
+            <Tooltip v-else>
+              <TooltipTrigger as-child>
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ 'is-primary': tool.emphasis === 'primary' }"
+                  :disabled="!hasRepo || busy || (tool.action === 'commit' && workingTree.conflict > 0)"
+                  @click="handleAction(tool.action)"
+                >
+                  <component :is="tool.icon" :size="15" />
+                  <span>{{ t(tool.labelKey) }}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{{ t(tool.hintKey) }}</TooltipContent>
+            </Tooltip>
+          </template>
+        </div>
 
-      <!-- 左：Git 主流程操作组（连接式分段按钮） -->
-      <div class="seg-group">
-        <template v-for="tool in primaryTools" :key="tool.id">
-          <!-- 拉取/推送进行中：按钮保持原样仅禁用（busy），进度反馈只留在「变更文件」面板（古哥 2026-10-21：不再变成"拉取中/推送中"态） -->
-          <!-- 推送成功态：不渲染 Tooltip（提示彻底消失），按钮短暂显示"已推送"反馈 -->
-          <Button
-            v-if="tool.id === 'push' && pushState === 'done'"
-            variant="ghost"
-            class="seg-btn seg-pushed"
-            :disabled="!hasRepo || busy"
-          >
-            <Check :size="18" />
-            <span>{{ t('toolbar.pushed') }}</span>
-          </Button>
-          <!-- 常规态：Tooltip 悬浮提示 -->
-          <Tooltip v-else>
+        <!-- 常用辅助操作：隐藏/显示侧边栏 · 储藏 · 工作·历史视图切换 · 刷新 -->
+        <div class="tb-quick">
+          <!-- 隐藏/显示侧边栏（仓库 / 分支 / 子模块整列）。折叠态高亮，提示可一键展开 -->
+          <Tooltip>
             <TooltipTrigger as-child>
-              <Button
-                variant="ghost"
-                :class="tool.emphasis === 'primary' ? 'seg-btn seg-commit' : 'seg-btn'"
-                :disabled="!hasRepo || busy || (tool.action === 'commit' && workingTree.conflict > 0)"
+              <button
+                type="button"
+                class="icon-btn"
+                :class="{ 'is-active': sidebarCollapsed }"
+                :aria-label="sidebarHint"
+                :aria-pressed="sidebarCollapsed"
+                @click="handleToggleSidebar"
+              >
+                <PanelLeftOpen v-if="sidebarCollapsed" :size="17" />
+                <PanelLeftClose v-else :size="17" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ sidebarHint }}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip v-for="tool in iconTools" :key="tool.id">
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="icon-btn"
+                :aria-label="t(tool.labelKey)"
+                :disabled="!hasRepo || busy"
                 @click="handleAction(tool.action)"
               >
-                <component :is="tool.icon" />
-                <span>{{ t(tool.labelKey) }}</span>
-              </Button>
+                <component :is="tool.icon" :size="16" />
+              </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">{{ t(tool.hintKey) }}</TooltipContent>
           </Tooltip>
-        </template>
+
+          <!-- 切换工作视图 / 历史视图（根据当前视图 toggle） -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="icon-btn"
+                :class="{ 'is-active': viewToggleActive }"
+                :aria-label="viewToggleLabel"
+                :aria-pressed="viewToggleActive"
+                :disabled="!hasRepo || busy"
+                @click="handleViewToggle"
+              >
+                <History :size="16" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ viewToggleHint }}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="icon-btn"
+                :aria-label="t('toolbar.refresh')"
+                :disabled="busy"
+                @click="handleAction('refresh')"
+              >
+                <RefreshCw :size="16" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ t('toolbar.refreshHint') }}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
-      <!-- 中：当前分支徽章（仅展示，不可点击） -->
-      <div class="toolbar-center">
-        <Tooltip v-if="hasRepo">
-          <TooltipTrigger as-child>
-            <span class="branch-chip" role="status">
-              <GitBranch :size="13" class="branch-chip-icon" />
-              <span class="branch-chip-name">{{ displayBranch }}</span>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{{ t('toolbar.currentBranch') }}</TooltipContent>
-        </Tooltip>
-        <span v-else class="no-repo-hint">{{ t('toolbar.noRepo') }}</span>
-      </div>
+      <div class="tb-spacer" />
 
-      <!-- 右：辅助操作 -->
-      <div class="tool-cluster">
-        <!-- 工作区状态：按钮 + 状态弹窗 -->
-        <div class="status-wrap" ref="statusWrap">
+      <!-- 右区：仓库上下文（当前分支 + 同步状态 / 工作区变更 / 视图切换） -->
+      <div class="tb-right">
+        <div v-if="hasRepo" class="branch-wrap" ref="statusWrap">
           <Tooltip v-if="!statusOpen">
             <TooltipTrigger as-child>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="h-8 w-8"
-                :class="{ 'status-active': statusOpen }"
+              <button
+                type="button"
+                class="branch-btn"
                 :aria-label="t('toolbar.wsStatus')"
                 :aria-expanded="statusOpen"
-                :disabled="!hasRepo || busy"
                 @click="toggleStatus"
               >
-                <FolderGit2 />
-              </Button>
+                <GitBranch :size="14" class="branch-icon" />
+                <span class="branch-name">{{ displayBranch }}</span>
+                <span v-if="ahead > 0" class="sync-pill ahead">↑{{ ahead }}</span>
+                <span v-if="behind > 0" class="sync-pill behind">↓{{ behind }}</span>
+                <ChevronDown :size="12" class="branch-chevron" />
+              </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">{{ t('toolbar.wsStatus') }}</TooltipContent>
           </Tooltip>
-          <Button
+          <button
             v-else
-            variant="ghost"
-            size="icon-sm"
-            class="h-8 w-8 status-active"
+            type="button"
+            class="branch-btn is-open"
             :aria-label="t('toolbar.wsStatus')"
             :aria-expanded="statusOpen"
-            :disabled="!hasRepo || busy"
             @click="toggleStatus"
           >
-            <FolderGit2 />
-          </Button>
+            <GitBranch :size="14" class="branch-icon" />
+            <span class="branch-name">{{ displayBranch }}</span>
+            <span v-if="ahead > 0" class="sync-pill ahead">↑{{ ahead }}</span>
+            <span v-if="behind > 0" class="sync-pill behind">↓{{ behind }}</span>
+            <ChevronDown :size="12" class="branch-chevron is-open" />
+          </button>
 
-          <!-- 状态弹窗 ① 分支与同步 / ② 工作区 / ③ 仓库身份 / ④ 快捷操作 -->
+          <!-- 状态弹窗 ① 分支与同步 / ② 工作区 / ③ 仓库身份 / ④ 快捷操作 / ⑤ 切换分支 -->
           <div v-if="statusOpen" class="status-popover">
             <!-- ① 分支与同步 -->
             <div class="sp-section sp-header">
@@ -381,7 +422,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <!-- ④ 切换分支 -->
+            <!-- ⑤ 切换分支 -->
             <div class="sp-section sp-branches">
               <div class="sp-branches-title">{{ t('toolbar.switchBranch') }}</div>
               <div class="sp-branch-list">
@@ -403,57 +444,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 切换工作视图 / 历史视图（根据当前视图 toggle） -->
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              class="h-8 w-8"
-              :class="{ 'view-toggle-active': viewToggleActive }"
-              :aria-label="viewToggleLabel"
-              :disabled="!hasRepo || busy"
-              @click="handleViewToggle"
-            >
-              <History />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{{ viewToggleHint }}</TooltipContent>
-        </Tooltip>
-
-        <Tooltip v-for="tool in iconTools" :key="tool.id">
-          <TooltipTrigger as-child>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              class="h-8 w-8"
-              :aria-label="t(tool.labelKey)"
-              :disabled="!hasRepo || busy"
-              @click="handleAction(tool.action)"
-            >
-              <component :is="tool.icon" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{{ t(tool.hintKey) }}</TooltipContent>
-        </Tooltip>
-
-        <Separator orientation="vertical" class="mx-1 h-5" />
-
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              class="h-8 w-8"
-              :aria-label="t('toolbar.refresh')"
-              :disabled="busy"
-              @click="handleAction('refresh')"
-            >
-              <RefreshCw />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{{ t('toolbar.refreshHint') }}</TooltipContent>
-        </Tooltip>
+        <span v-else class="no-repo-chip">
+          <GitBranch :size="13" />
+          {{ t('toolbar.noRepo') }}
+        </span>
       </div>
     </div>
   </TooltipProvider>
@@ -466,7 +460,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   height: 44px;
   flex-shrink: 0;
-  padding: 0 10px;
+  padding: 0 12px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   -webkit-user-select: none;
@@ -474,179 +468,258 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-/* 操作分组容器：深色下呈凹陷、浅色下呈白色凸起药丸 */
-.tool-cluster {
+/* 左右分区：左侧动作、右侧上下文，中间弹性留白 */
+.tb-left,
+.tb-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tb-left {
+  flex-shrink: 0;
+}
+
+.tb-right {
+  flex-shrink: 0;
+}
+
+.tb-spacer {
+  flex: 1;
+  min-width: 12px;
+}
+
+.tb-quick {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ===== 通用图标按钮 ===== */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.icon-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.icon-btn.is-active {
+  background-color: var(--bg-active);
+  color: var(--accent-text);
+}
+
+.toolbar button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+/* ===== 左侧主流程分段按钮（拉取 | 提交 | 推送）：无边框的凹陷胶囊 ===== */
+.seg-group {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border-radius: 9px;
+  border-radius: 10px;
   background-color: var(--bg-primary);
-  border: 1px solid var(--border-light);
 }
 
-.toolbar-center {
-  flex: 1;
-  display: flex;
+.seg-btn {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+
+.seg-btn svg {
+  flex-shrink: 0;
+}
+
+.seg-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.seg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 提交：保持透明底，仅用主色文字/图标区分主操作 */
+.seg-btn.is-primary {
+  color: var(--brand-primary);
+}
+
+.seg-btn.is-primary:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--brand-primary);
+}
+
+/* 推送成功反馈：绿色勾 + "已推送"，不响应点击 */
+.seg-pushed,
+.seg-pushed:disabled {
+  color: var(--color-add);
+  opacity: 1;
+  cursor: default;
+}
+
+/* ===== 右侧：当前分支徽章 ===== */
+.branch-wrap {
+  position: relative;
+  display: inline-flex;
   min-width: 0;
 }
 
-.branch-chip {
+.branch-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  max-width: 320px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  gap: 7px;
+  height: 32px;
+  min-width: 0;
+  max-width: 300px;
+  padding: 0 9px 0 11px;
+  border: 0;
+  border-radius: 9px;
   background-color: var(--brand-bg);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
-  cursor: default;
+  cursor: pointer;
+  transition: background-color 0.13s ease;
 }
 
-.branch-chip-icon {
+.branch-btn:hover:not(:disabled),
+.branch-btn.is-open {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.branch-icon {
   color: var(--accent-text);
   flex-shrink: 0;
 }
 
-.branch-chip-name {
+.branch-name {
+  min-width: 0;
   font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.no-repo-hint {
+.branch-chevron {
+  margin-left: 1px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.branch-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  flex-shrink: 0;
+}
+
+.sync-pill.ahead {
+  background-color: var(--bg-add);
+  color: var(--color-add);
+}
+
+.sync-pill.behind {
+  background-color: var(--bg-mod);
+  color: var(--color-mod);
+}
+
+.no-repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px;
   font-size: 12px;
   color: var(--text-muted);
 }
 
-/* 视图切换按钮激活态：当前处于历史视图时高亮，提示「再点一下回到工作视图」 */
-.view-toggle-active {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
-}
+/* 窄窗口：分段按钮只留图标，把空间让给右侧仓库上下文 */
+@media (max-width: 960px) {
+  .seg-btn span {
+    display: none;
+  }
 
-.view-toggle-active:hover:not(:disabled) {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
-}
+  .seg-btn {
+    padding: 0 10px;
+  }
 
-/* 工具栏最左「隐藏/显示侧边栏」按钮：折叠态高亮，提示可一键展开 */
-.sidebar-toggle-active {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
-}
-
-.sidebar-toggle-active:hover:not(:disabled) {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
-}
-
-/* 左侧 Git 主流程：连接式分段按钮（拉取 | 提交 | 推送）
-   三个按钮连成一个胶囊、相邻用分隔线，提交用 tinted 主色柔和强调（非实心亮蓝） */
-.seg-group {
-  display: flex;
-  align-items: stretch;
-  padding: 3px;
-  border-radius: 9px;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-light);
-  overflow: hidden;
-}
-
-.seg-group :deep(.seg-btn) {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 11px;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  font-size: 12px;
-  font-weight: 500;
-  background: transparent;
-  color: var(--text-secondary);
-  transition: background-color 0.13s ease, color 0.13s ease;
-}
-
-.seg-group :deep(.seg-btn:hover):not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.seg-group :deep(.seg-btn:disabled) {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* 相邻按钮间 1px 分隔线（首个除外） */
-.seg-group :deep(.seg-btn + .seg-btn)::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 16px;
-  width: 1px;
-  background: var(--border-medium);
-}
-
-/* 提交：背景与拉取一致（透明），仅文字/图标保留主色以区分主操作 */
-.seg-group :deep(.seg-commit) {
-  color: var(--brand-primary);
-}
-
-.seg-group :deep(.seg-commit:hover):not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--brand-primary);
-}
-
-/* 推送成功反馈：主题主色"已推送" */
-.seg-group :deep(.seg-pushed) {
-  color: var(--brand-primary);
-  cursor: default;
-}
-
-.seg-group :deep(.seg-pushed:hover):not(:disabled) {
-  background: transparent;
-  color: var(--brand-primary);
+  .branch-btn {
+    max-width: 200px;
+  }
 }
 
 /* ===== 工作区状态弹窗 ===== */
-.status-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.status-wrap :deep(.status-active) {
-  background-color: var(--bg-active);
-  color: var(--text-bright);
-}
-
 .status-popover {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  width: 300px;
+  width: 312px;
   max-width: 86vw;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-medium);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow-dialog);
   z-index: 9999;
   padding: 0;
   overflow: hidden;
   text-align: left;
-  animation: fadeIn 0.1s ease-out;
+  animation: popover-in 0.12s ease-out;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .sp-section {
