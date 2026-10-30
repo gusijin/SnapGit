@@ -1584,15 +1584,71 @@ function finishPullProgress() {
   }, 600)
 }
 
-function handlePush() {
+// 工具栏/菜单「推送」：不弹窗，直接把当前分支推到远程
+// 有上游 → 推到上游分支；无上游 → 推到 origin（或第一个远程）的同名分支，
+// 后端带 -u，推送成功后自动建立跟踪关系。
+async function handlePush() {
   if (!repoPath.value) {
     showToast(t('repository.noRepoOpen'), 'error')
     return
   }
-  pushDialogBranch.value = ''
-  pushDialogAuthMode.value = false
-  pushDialogError.value = ''
-  showPushDialog.value = true
+  if (isPushing.value) return
+
+  const branch = currentBranch.value
+  if (!branch) {
+    showToast(t('repository.pushNoBranch'), 'error')
+    return
+  }
+
+  isPushing.value = true
+  try {
+    const upstream = await getUpstream(repoPath.value, branch)
+    let remote: string
+    let remoteBranch: string
+    if (upstream) {
+      remote = upstream.remote
+      remoteBranch = upstream.remote_branch
+    } else {
+      const remotes = await getRemotes(repoPath.value)
+      if (remotes.length === 0) {
+        showToast(t('repository.pushNoRemote'), 'error')
+        return
+      }
+      remote = remotes.includes('origin') ? 'origin' : remotes[0]
+      remoteBranch = branch
+    }
+
+    await pushChanges(repoPath.value, remote, branch, remoteBranch)
+    // 触发工具栏"已推送"反馈
+    pushState.value = 'done'
+    if (pushStateTimer) clearTimeout(pushStateTimer)
+    pushStateTimer = setTimeout(() => {
+      pushState.value = 'idle'
+    }, 2000)
+    showToast(t('repository.pushSuccess'), 'success')
+    loadRepoData()
+  } catch (e: any) {
+    console.error('Push error:', e)
+    const info = classifyPushError(typeof e === 'string' ? e : (e?.toString?.() || String(e)))
+    // 只有必须人工介入时才回退到推送窗口：认证失败 / 非快进被拒
+    if (info.kind === 'credential') {
+      pushDialogBranch.value = branch
+      pushDialogAuthMode.value = true
+      pushDialogError.value = ''
+      showPushDialog.value = true
+      showToast(t('repository.pushAuthRequired'), 'error')
+    } else if (info.kind === 'non-ff') {
+      pushDialogBranch.value = branch
+      pushDialogAuthMode.value = false
+      pushDialogError.value = info.detail
+      showPushDialog.value = true
+      showToast(t('repository.pushRejectedHint'), 'error')
+    } else {
+      showToast(t('repository.pushFailed', { error: info.detail }), 'error')
+    }
+  } finally {
+    isPushing.value = false
+  }
 }
 
 // 右键分支菜单：推送指定分支
