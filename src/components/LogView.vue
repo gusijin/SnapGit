@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, X, GitCommitVertical, History, ArrowLeft, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { Search, X, GitCommitVertical, GitBranch, Tag, History, ArrowLeft, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { computeCommitGraph, GRAPH_ROW_HEIGHT, GRAPH_LANE_WIDTH, type GraphCurve } from '../utils/commitGraph'
 import type { Commit } from '../types'
 
 interface Props {
@@ -66,6 +67,24 @@ const filteredCommits = computed(() => {
     c.id.toLowerCase().includes(q)
   )
 })
+
+// 提交流水线：按当前可见列表推导泳道布局（分页追加后整体重算，结果稳定）
+const graph = computed(() => computeCommitGraph(filteredCommits.value))
+const graphWidth = computed(() => graph.value.lanes * GRAPH_LANE_WIDTH)
+
+function laneX(lane: number): number {
+  return lane * GRAPH_LANE_WIDTH + GRAPH_LANE_WIDTH / 2
+}
+
+// 合并线：从节点平滑弯到目标泳道下方
+function curvePath(curve: GraphCurve): string {
+  const x1 = laneX(curve.fromLane)
+  const y1 = GRAPH_ROW_HEIGHT / 2
+  const x2 = laneX(curve.toLane)
+  const y2 = GRAPH_ROW_HEIGHT
+  const bend = GRAPH_ROW_HEIGHT * 0.42
+  return `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}`
+}
 
 function formatDate(dateStr: string): string {
   const timestamp = parseInt(dateStr) * 1000
@@ -244,22 +263,65 @@ onMounted(() => {
     <div v-else class="log-list">
       <!-- @contextmenu.prevent.stop：日志列表禁用右键，不弹出任何菜单（搜索框不在本容器内，仍可正常右键粘贴） -->
       <div class="log-items" ref="logItemsRef" @scroll="onLogScroll" @contextmenu.prevent.stop>
-        <div 
-          v-for="commit in filteredCommits" 
+        <div
+          v-for="(commit, index) in filteredCommits"
           :key="commit.id"
           class="log-item"
           :class="{ selected: commit.id === selectedId }"
           @click="handleSelect(commit.id)"
           @dblclick="emit('open-history', commit.id)"
         >
-          <!-- 图形列：ID + 分支点 -->
-          <div class="col col-id">
-            <span class="commit-dot"></span>
-            <span class="commit-id">{{ commit.id.slice(0, 7) }}</span>
+          <!-- 图谱列：SourceTree 风格的泳道/节点/合并连线 -->
+          <div class="col-graph" :style="{ width: graphWidth + 'px' }">
+            <svg
+              :width="graphWidth"
+              :height="GRAPH_ROW_HEIGHT"
+              class="graph-svg"
+              aria-hidden="true"
+            >
+              <line
+                v-for="(line, i) in graph.rows[index].lines"
+                :key="'l' + i"
+                :x1="laneX(line.lane)"
+                :x2="laneX(line.lane)"
+                :y1="line.y1"
+                :y2="line.y2"
+                :stroke="line.color"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+              <path
+                v-for="(curve, i) in graph.rows[index].curves"
+                :key="'c' + i"
+                :d="curvePath(curve)"
+                :stroke="curve.color"
+                stroke-width="1.6"
+                fill="none"
+                stroke-linecap="round"
+              />
+              <circle
+                :cx="laneX(graph.rows[index].lane)"
+                :cy="GRAPH_ROW_HEIGHT / 2"
+                r="4"
+                :fill="graph.rows[index].color"
+                class="graph-node"
+              />
+            </svg>
           </div>
 
-          <!-- 信息列 -->
+          <!-- 信息列：分支/标签标记 + 提交信息 -->
           <div class="col col-msg">
+            <span
+              v-for="ref in commit.refs ?? []"
+              :key="ref.type + ':' + ref.name"
+              class="ref-chip"
+              :class="'ref-' + ref.type"
+              :title="ref.name"
+            >
+              <Tag v-if="ref.type === 'tag'" :size="10" />
+              <GitBranch v-else :size="10" />
+              <span class="ref-name">{{ ref.name }}</span>
+            </span>
             <span class="commit-message" v-html="highlight(commit.message.split('\n')[0], filterText)"></span>
           </div>
 
@@ -599,15 +661,18 @@ onMounted(() => {
 
 .log-item {
   display: grid;
-  /* 列序：ID / 提交信息 / 作者 / 日期。作者列收窄至 110px（原 150px），
-     avatar 20px + gap 8px + 名字约 82px，足够显示常见用户名；过长的截断省略 */
-  grid-template-columns: 110px 1fr 110px 150px;
-  gap: 12px;
-  padding: 8px 12px;
-  min-height: 38px;
+  /* 列序：图谱 / 提交信息 / 作者 / 日期。作者列收窄至 110px（原 150px），
+     avatar 20px + gap 8px + 名字约 82px，足够显示常见用户名；过长的截断省略。
+     高度固定 38px，与 commitGraph.ts 的 GRAPH_ROW_HEIGHT 保持一致（SVG 按此绘制）。
+     分隔线用 inset box-shadow 而非 border，保证每行可用高度也是 38px。 */
+  grid-template-columns: auto minmax(0, 1fr) 110px 150px;
+  gap: 10px;
+  padding: 0 12px;
+  height: 38px;
+  box-sizing: border-box;
   line-height: 1.4;
   align-items: center;
-  border-bottom: 1px solid var(--border-light);
+  box-shadow: inset 0 -1px 0 var(--border-light);
   cursor: pointer;
   transition: background-color 0.15s;
   font-size: 13px;
@@ -634,40 +699,84 @@ onMounted(() => {
   gap: 8px;
 }
 
-.col-id {
+/* 图谱列：svg 定宽（泳道数 × 14px），垂直居中铺满行高 */
+.col-graph {
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.commit-dot {
-  width: 10px;
-  height: 10px;
+  height: 38px;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  border: 2px solid var(--bg-secondary);
-  box-shadow: 0 0 0 1px var(--border-medium);
+  overflow: hidden;
 }
 
-.commit-id {
-  font-family: Consolas, Monaco, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  color: #111111;
-  background-color: #e5e7eb;
-  padding: 1px 7px;
-  border-radius: 10px;
-  white-space: nowrap;
+.graph-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* 节点描边用面板底色「挖」一圈，连线穿点时保持清晰 */
+.graph-node {
+  stroke: var(--bg-secondary);
+  stroke-width: 2;
+}
+
+.col-msg {
+  gap: 6px;
+  overflow: hidden;
 }
 
 .commit-message {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   color: var(--text-primary);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 分支 / 远程分支 / 标签标记（SourceTree 风格的内联胶囊） */
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  max-width: 180px;
+  min-width: 0;
+  padding: 0 6px;
+  /* 与 SourceTree 一致：分支/标签保持完整，提交信息让位并省略 */
+  flex: 0 0 auto;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ref-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref-branch {
+  color: var(--accent-text);
+  background-color: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 38%, transparent);
+}
+
+.ref-remote {
+  color: var(--text-secondary);
+  background-color: var(--bg-tertiary);
+  border-color: var(--border-light);
+}
+
+.ref-tag {
+  color: var(--color-mod);
+  background-color: var(--bg-mod);
+  border-color: color-mix(in srgb, var(--color-mod) 38%, transparent);
 }
 
 .avatar {
@@ -705,19 +814,25 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
-/* 面板较窄时（如历史视图左侧日志面板在窗口缩小时）：隐藏 ID 与日期列，
-   仅保留「提交信息 + 作者」两列，grid 重排为 [1fr 作者]，确保窄屏下核心信息优先展示 */
-@container (max-width: 460px) {
+/* 面板较窄时（如历史视图左侧日志面板在窗口缩小时）：隐藏日期列，
+   保留「图谱 + 提交信息 + 作者」，图谱是提交历史的骨架，窄屏也优先展示 */
+@container (max-width: 560px) {
   .log-item {
-    grid-template-columns: 1fr 100px;
+    grid-template-columns: auto minmax(0, 1fr) 100px;
   }
-  .col-id,
   .col-date {
     display: none;
   }
   /* 窄面板下展开态输入框收敛，避免挤压标题文字 */
   .search-area.is-open {
     width: 110px;
+  }
+}
+
+/* 极窄面板：远程分支标记让位给提交信息，本地分支与标签仍然保留 */
+@container (max-width: 460px) {
+  .ref-remote {
+    display: none;
   }
 }
 </style>

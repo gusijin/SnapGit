@@ -300,12 +300,23 @@ fn run_git_progress(
 static EDIT_ARGS_MAP: std::sync::LazyLock<Mutex<std::collections::HashMap<String, serde_json::Value>>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
+// 挂在某个提交上的引用（分支/远程分支/标签），供日志面板像 SourceTree 那样内联显示
+#[derive(Debug, serde::Serialize)]
+struct CommitRef {
+    name: String,
+    #[serde(rename = "type")]
+    ref_type: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 struct Commit {
     id: String,
     message: String,
     author: String,
     date: String,
+    // 父提交 id 列表（合并提交有多个），前端据此绘制提交图谱
+    parents: Vec<String>,
+    refs: Vec<CommitRef>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -620,6 +631,51 @@ async fn get_commits(repo_path: String, limit: usize, skip: Option<usize>) -> Re
         let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
         revwalk.push_head().map_err(|e| e.to_string())?;
 
+        // 预先建好「提交 id → 引用列表」映射：本地分支优先，其次远程分支，最后标签。
+        // 每次分页都重新扫一遍引用（引用数量远少于提交，开销可忽略），
+        // 这样即使期间切分支/拉取，下一页的标记也是最新的。
+        let mut refs_by_oid: HashMap<git2::Oid, Vec<CommitRef>> = HashMap::new();
+        if let Ok(references) = repo.references() {
+            for reference in references.flatten() {
+                if reference.symbolic_target().is_some() {
+                    continue;
+                }
+                let Some(full_name) = reference.name() else { continue };
+                let (name, ref_type) = if let Some(n) = full_name.strip_prefix("refs/heads/") {
+                    (n, "branch")
+                } else if let Some(n) = full_name.strip_prefix("refs/remotes/") {
+                    // origin/HEAD 只是默认分支的符号引用，不展示
+                    if n.ends_with("/HEAD") {
+                        continue;
+                    }
+                    (n, "remote")
+                } else if let Some(n) = full_name.strip_prefix("refs/tags/") {
+                    (n, "tag")
+                } else {
+                    continue;
+                };
+                if let Ok(commit) = reference.peel_to_commit() {
+                    refs_by_oid.entry(commit.id()).or_default().push(CommitRef {
+                        name: name.to_string(),
+                        ref_type: ref_type.to_string(),
+                    });
+                }
+            }
+        }
+        // 稳定排序：分支 → 远程 → 标签，同类按名称
+        for refs in refs_by_oid.values_mut() {
+            refs.sort_by(|a, b| {
+                let rank = |t: &str| match t {
+                    "branch" => 0,
+                    "remote" => 1,
+                    _ => 2,
+                };
+                rank(&a.ref_type)
+                    .cmp(&rank(&b.ref_type))
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+        }
+
         // 分页：skip 跳过最新的 N 条（LogView 滚动到底时加载更早的历史）
         let skip_n = skip.unwrap_or(0);
         let mut commits = Vec::new();
@@ -632,6 +688,8 @@ async fn get_commits(repo_path: String, limit: usize, skip: Option<usize>) -> Re
                 message: commit.message().unwrap_or("").trim().to_string(),
                 author: commit.author().name().unwrap_or("").to_string(),
                 date: commit.time().seconds().to_string(),
+                parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+                refs: refs_by_oid.remove(&id).unwrap_or_default(),
             });
         }
 

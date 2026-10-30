@@ -1,8 +1,19 @@
+export type CommitRefType = 'branch' | 'remote' | 'tag'
+
+export interface CommitRef {
+  name: string
+  type: CommitRefType
+}
+
 export interface Commit {
   id: string
   message: string
   author: string
   date: string
+  // 父提交 id（合并提交有多个），用于绘制提交图谱
+  parents?: string[]
+  // 指向该提交的分支/标签标记
+  refs?: CommitRef[]
 }
 
 export interface Branch {
