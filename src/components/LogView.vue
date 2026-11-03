@@ -17,6 +17,9 @@ interface Props {
   // 折叠时是否收成竖向窄条（侧边栏）：仅历史视图左侧日志面板用，
   // 让出宽度给右侧提交详情；工作区视图底部面板为纵向折叠，不需要。
   collapseToSide?: boolean
+  // 工作视图下日志列表禁止单击（单击不选中/不加载提交详情），仅双击进入历史视图生效；
+  // 历史视图下允许单击。默认 false（历史视图行为）。
+  disableSingleClick?: boolean
 }
 
 const props = defineProps<Props>()
@@ -163,6 +166,8 @@ function highlight(text: string, query: string): string {
 }
 
 function handleSelect(id: string) {
+  // 工作视图下禁用单击：单击日志行不触发选中/加载提交详情，仅双击进入历史视图生效
+  if (props.disableSingleClick) return
   emit('select-commit', id)
 }
 

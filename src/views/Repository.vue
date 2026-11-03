@@ -2404,6 +2404,7 @@ onBeforeUnmount(() => {
               :selected-id="currentCommitId"
               :loading-more="loadingMoreCommits"
               :no-more="noMoreCommits"
+              :disable-single-click="true"
               @select-commit="handleSelectCommit"
               @open-history="openCommitHistory"
               @load-more="loadMoreCommits"
