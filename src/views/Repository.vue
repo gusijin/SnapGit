@@ -2152,6 +2152,12 @@ function syncSidebarMenu(collapsed: boolean) {
 }
 watch(leftPanelCollapsed, (v) => syncSidebarMenu(v))
 
+// 视图切换联动侧边栏：历史视图的日志面板已在左侧，再显示侧边栏会挤占提交详情区，
+// 所以进历史视图自动折叠、回工作视图自动展开（覆盖双击进历史、退出按钮、工具栏/菜单切换四条路径）
+watch(mainView, (view) => {
+  leftPanelCollapsed.value = view === 'log'
+})
+
 onMounted(() => {
   setupMenuListener()
   window.addEventListener('keydown', onSidebarShortcut)
