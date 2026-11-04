@@ -980,29 +980,57 @@ async fn get_file_status(repo_path: String, cached: Option<bool>) -> Result<Vec<
     .map_err(|e| format!("加载文件状态失败: {}", e))?
 }
 
+// 暂存单个路径，返回是否真的有内容可暂存。
+// 用 git add -A 一次性处理新增、修改、删除等所有变更。
+// 当路径在工作区和索引里都不存在时（删除已被暂存、文件被外部改名/删除、
+// 前端列表来自旧快照），git 会报 "pathspec ... did not match any files"。
+// 这只代表「该路径无事可做」，不是失败：若当成错误抛出，一个幽灵路径会让整批提交中止。
+fn stage_one_path(repo_path: &str, file_path: &str) -> Result<bool> {
+    let output = git_command()
+        .arg("-C")
+        .arg(repo_path)
+        .arg("add")
+        .arg("-A")
+        .arg("--")
+        .arg(file_path)
+        .output()
+        .map_err(|e| format!("无法执行 git add 命令: {}", e))?;
+
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let msg = format!("{}{}", stderr, stdout);
+    if msg.contains("did not match any files") {
+        return Ok(false);
+    }
+    Err(if msg.trim().is_empty() { "暂存失败".to_string() } else { msg })
+}
+
 #[command]
 async fn stage_file(repo_path: String, file_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
-        // 使用 git add -A 一次性处理新增、修改、删除等所有变更
-        let output = git_command()
-            .arg("-C")
-            .arg(&repo_path)
-            .arg("add")
-            .arg("-A")
-            .arg("--")
-            .arg(&file_path)
-            .output()
-            .map_err(|e| format!("无法执行 git add 命令: {}", e))?;
+        stage_one_path(&repo_path, &file_path).map(|_| ())
+    })
+    .await
+    .map_err(|e| format!("暂存文件失败: {}", e))?
+}
 
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = format!("{}{}", stderr, stdout);
-            Err(if msg.trim().is_empty() { "暂存失败".to_string() } else { msg })
+/// 批量暂存：一次拿写锁、一次 IPC，避免前端逐个 invoke。
+/// 返回被跳过的路径（已无内容可暂存），供前端判断「全部消失」而不是报错。
+#[command]
+async fn stage_files(repo_path: String, file_paths: Vec<String>) -> Result<Vec<String>> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        let mut skipped = Vec::new();
+        for file_path in &file_paths {
+            if !stage_one_path(&repo_path, file_path)? {
+                skipped.push(file_path.clone());
+            }
         }
+        Ok(skipped)
     })
     .await
     .map_err(|e| format!("暂存文件失败: {}", e))?
@@ -3692,8 +3720,32 @@ async fn write_file_content(repo_path: String, file_path: String, content: Strin
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
+        // 按【原文件的行尾形态】写回。前端两个编辑入口（编辑差异 / 解决冲突）传回的
+        // 都是 LF 分隔的文本，直接落盘会把 CRLF 文件（Windows autocrlf 仓库的常态）
+        // 整体改成 LF —— 用户只动一行，git 里却是全文件每行都有差异。
+        // 文件末尾「有无换行」同理：读入时 `str::lines()` 丢掉了这个信息，只有这里能补回，
+        // 否则保存后必然多出 "\ No newline at end of file"。
+        let original = fs::read(&full_path).ok();
+        let ends_with_newline = original
+            .as_deref()
+            .map(|b| b.last() == Some(&b'\n'))
+            .unwrap_or(false);
+        let use_crlf = original
+            .as_deref()
+            .map(|b| detect_eol(b).as_deref() == Some("CRLF"))
+            .unwrap_or(false);
+
+        // 只归一 CRLF→LF（孤立 \r 属正文，不动），再按原形态重建；冲突页原文自带 \r\n 也走同一条路
+        let mut out = content.replace("\r\n", "\n");
+        if ends_with_newline && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if use_crlf {
+            out = out.replace('\n', "\r\n");
+        }
+
         let mut file = File::create(&full_path).map_err(|e| e.to_string())?;
-        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(out.as_bytes()).map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -4655,6 +4707,7 @@ fn main() {
             get_upstream,
             get_file_status,
             stage_file,
+            stage_files,
             discard_file,
             commit,
             push,

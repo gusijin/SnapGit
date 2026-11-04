@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ConflictFile, ConflictBlock } from '../types'
 import { fileLang } from '../syntaxHighlight'
@@ -15,15 +15,30 @@ import { writeFileContent, stageFile } from '../api/git'
 interface Props {
   conflictFile: ConflictFile
   repoPath: string
+  /** 冲突文件队列 + 当前下标：用于「上一个/下一个冲突文件」（IDEA 合并窗口的文件队列）。
+   *  单文件时不传，按钮自动隐藏 */
+  filesList?: string[]
+  currentIndex?: number
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['save', 'close'])
+const emit = defineEmits(['save', 'close', 'navigate-file', 'dirty-change'])
 const { t } = useI18n()
 
 const workingContent = ref(props.conflictFile.working_content.join('\n'))
 const currentBlockIndex = ref(0)
 const isSaving = ref(false)
+
+// 未保存保护：与本次装载的初始内容比对得出 dirty，父窗口据此拦截关闭/切文件。
+// 冲突页的中间栏是手工合并结果，关掉就没了，比编辑差异更经不起误关。
+const pristine = ref(workingContent.value)
+const isDirty = computed(() => workingContent.value !== pristine.value)
+watch(isDirty, (v) => emit('dirty-change', v), { immediate: true })
+
+// 逐块「取左/取右」应用后 blocks 会变少，所以另存本次装载时的总数，
+// 才能像 IDEA 那样报「已解决 n / 共 m」而不是只剩一个不断缩小的分母
+const initialBlockCount = ref(parseConflictBlocks(workingContent.value).length)
+const resolvedCount = computed(() => Math.max(0, initialBlockCount.value - blocks.value.length))
 
 const leftTextarea = ref<HTMLTextAreaElement | null>(null)
 const middleTextarea = ref<HTMLTextAreaElement | null>(null)
@@ -56,6 +71,8 @@ watch(
   () => props.conflictFile,
   (cf) => {
     workingContent.value = cf.working_content.join('\n')
+    pristine.value = workingContent.value
+    initialBlockCount.value = parseConflictBlocks(workingContent.value).length
     currentBlockIndex.value = 0
   }
 )
@@ -467,6 +484,11 @@ watch(currentBlock, async () => {
 onMounted(() => {
   measureLabelHeight()
   scrollToCurrentBlock()
+  window.addEventListener('keydown', onSolverKey)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onSolverKey)
 })
 
 function scrollToCurrentBlock() {
@@ -543,6 +565,48 @@ function applyCurrentBlock(side: 'ours' | 'theirs' | 'combine' | 'combine-revers
   applyBlock(currentBlockIndex.value, side)
 }
 
+// ---- 「上一个/下一个冲突文件」：IDEA 合并窗口是文件队列，处理完一个自动下一个 ----
+const totalConflictFiles = computed(() => (Array.isArray(props.filesList) ? props.filesList.length : 0))
+const hasFilesNav = computed(() => totalConflictFiles.value > 1)
+const currentIdx = computed(() =>
+  typeof props.currentIndex === 'number' && props.currentIndex >= 0 ? props.currentIndex : -1,
+)
+const canPrevFile = computed(() => hasFilesNav.value && currentIdx.value > 0)
+const canNextFile = computed(() => hasFilesNav.value && currentIdx.value >= 0 && currentIdx.value < totalConflictFiles.value - 1)
+const filePosition = computed(() =>
+  hasFilesNav.value && currentIdx.value >= 0 ? `${currentIdx.value + 1} / ${totalConflictFiles.value}` : '',
+)
+
+function navigateFile(delta: number) {
+  const target = currentIdx.value + delta
+  if (target < 0 || target >= totalConflictFiles.value) return
+  emit('navigate-file', target)
+}
+
+// 键盘操作（IDEA 合并窗口习惯）：Alt+↑/↓ 上下一处冲突，Alt+←/→ 取左(ours)/取右(theirs)，
+// Ctrl/⌘+S 保存。三栏里只有中间栏可输入，Alt 组合与 Ctrl+S 都不与打字冲突，故不做输入态豁免。
+function onSolverKey(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault()
+    handleSave()
+    return
+  }
+  if (!e.altKey) return
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    goToNextBlock()
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    goToPreviousBlock()
+  } else if (e.key === 'ArrowLeft' && currentBlock.value) {
+    e.preventDefault()
+    applyCurrentBlock('ours')
+  } else if (e.key === 'ArrowRight' && currentBlock.value) {
+    e.preventDefault()
+    applyCurrentBlock('theirs')
+  }
+}
+
 function applyAllBlocks(side: 'ours' | 'theirs' | 'combine' | 'combine-reverse') {
   const list = blocks.value
   for (let i = list.length - 1; i >= 0; i--) {
@@ -603,7 +667,9 @@ function applyBlock(index: number, side: 'ours' | 'theirs' | 'combine' | 'combin
   if (newList.length === 0) {
     currentBlockIndex.value = 0
   } else if (index >= newList.length) {
-    currentBlockIndex.value = newList.length - 1
+    // 应用的是最后一块 → 回到第一处形成循环。停在 newList.length-1 会让「连续取右」
+    // 在末尾两块之间来回跳（前移一块的位移刚好被回拉抵消）
+    currentBlockIndex.value = 0
   }
 }
 
@@ -647,6 +713,8 @@ async function handleSave() {
     await writeFileContent(props.repoPath, props.conflictFile.path, workingContent.value)
     // 解决冲突 = 写回内容后 git add 标记冲突已解决，刷新后该文件不再列为冲突
     await stageFile(props.repoPath, props.conflictFile.path)
+    // 落盘即视为干净：保存后父窗口要关窗，若仍 dirty 会触发「未保存确认」卡住自动关闭
+    pristine.value = workingContent.value
     emit('save')
   } catch (e) {
     console.error('Save conflict file error:', e)
@@ -674,6 +742,21 @@ function lineNumberArray(count: number): number[] {
         <GitMerge :size="14" class="title-icon" />
         <span>{{ t('conflictSolver.title') }}</span>
         <span class="file-name">{{ getFileName(conflictFile.path) }}</span>
+        <span v-if="initialBlockCount > 0" class="progress-chip">
+          {{ t('conflictSolver.resolvedProgress', { resolved: resolvedCount, total: initialBlockCount }) }}
+        </span>
+        <span v-if="isDirty" class="dirty-chip">{{ t('conflictSolver.unsaved') }}</span>
+      </div>
+
+      <!-- 冲突文件队列导航（多文件冲突时才出现） -->
+      <div v-if="hasFilesNav" class="solver-nav">
+        <Button variant="ghost" size="icon-sm" class="h-8 w-8" :title="t('conflictSolver.prevFile')" :disabled="!canPrevFile" @click="navigateFile(-1)">
+          <ArrowLeft :size="15" />
+        </Button>
+        <span class="position-label">{{ filePosition }}</span>
+        <Button variant="ghost" size="icon-sm" class="h-8 w-8" :title="t('conflictSolver.nextFile')" :disabled="!canNextFile" @click="navigateFile(1)">
+          <ArrowRight :size="15" />
+        </Button>
       </div>
       <!-- 图例：差异行着色含义（与编辑页 .diff-legend 同规格；窄窗口自动隐藏，见 CSS container query） -->
       <div class="diff-legend">
@@ -956,6 +1039,37 @@ function lineNumberArray(count: number): number[] {
 
 .title-icon {
   color: var(--accent-text);
+}
+
+/* 冲突进度 / 未保存：标题栏内的纯文字提示，不做按钮盒（与工具栏扁平视觉一致） */
+.progress-chip {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.dirty-chip {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-mod);
+  white-space: nowrap;
+}
+
+/* 冲突文件队列导航 */
+.solver-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.solver-nav .position-label {
+  min-width: 34px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .file-name {

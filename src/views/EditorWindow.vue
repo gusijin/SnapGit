@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import ConflictSolver from '../components/ConflictSolver.vue'
@@ -46,6 +46,17 @@ function getWindowLabel(): string {
 }
 const windowLabel = getWindowLabel()
 
+// 未保存状态由子组件（DiffEditor / ConflictSolver）上报，用于关闭守卫与标题栏标记
+const dirty = ref(false)
+let unlistenClose: (() => void) | null = null
+
+// 标题栏副标题：文件名 +（未保存时）标记，让「有改动没落盘」在窗口层面也看得见
+const subtitle = computed(() => {
+  const base = filePath.value || repoPath.value
+  if (!base) return ''
+  return dirty.value ? `${base} · ${t('editorWindow.unsavedBadge')}` : base
+})
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -83,6 +94,21 @@ async function resolveArgs(): Promise<boolean> {
 }
 
 onMounted(async () => {
+  // 关闭守卫：工具栏 X、保存后的自动关窗、标题栏 X、Alt+F4、macOS 红点都会走 CloseRequested
+  // （Rust 的 close_edit_window 用的也是 window.close()），所以在这一处统一拦截即可覆盖所有入口。
+  // 确认丢弃后用 destroy() 收尾：destroy 不再触发本事件，避免自己把自己反复拦住。
+  try {
+    unlistenClose = await getCurrentWindow().onCloseRequested(async (event) => {
+      if (!dirty.value) return
+      event.preventDefault()
+      if (!confirm(t('editorWindow.unsavedConfirm'))) return
+      dirty.value = false
+      await getCurrentWindow().destroy()
+    })
+  } catch (e) {
+    console.error('[EditorWindow] 注册关闭守卫失败:', e)
+  }
+
   const ok = await resolveArgs()
   if (!ok) {
     loading.value = false
@@ -114,12 +140,13 @@ async function handleSaved() {
 
 // 「上一个/下一个文件」：Tauri 没有"修改当前窗口文件"的 API，
 // 关闭当前窗口 + 重新打开目标文件，新窗口的 args 由 Rust 重新注入。
+// mode 跟随当前窗口：冲突队列里跳的还是冲突文件，不能退回 diff。
 async function handleNavigateFile(nextIndex: number) {
   const list = filesList.value
   if (nextIndex < 0 || nextIndex >= list.length) return
   const targetPath = list[nextIndex]
   try {
-    await openEditWindow(repoPath.value, targetPath, 'diff', list, nextIndex)
+    await openEditWindow(repoPath.value, targetPath, mode.value, list, nextIndex)
     await closeEditWindow()
   } catch (e) {
     console.error('Navigate file error:', e)
@@ -142,12 +169,17 @@ async function handleReloadDiff() {
   }
 }
 
+onBeforeUnmount(() => {
+  unlistenClose?.()
+  unlistenClose = null
+})
+
 </script>
 
 <template>
   <div class="editor-window">
     <!-- 顶部自定义标题栏（Windows/Linux 跟随主题，macOS 保留系统标题栏） -->
-    <TitleBar :subtitle="filePath || repoPath" />
+    <TitleBar :subtitle="subtitle" />
 
     <div v-if="error" class="editor-error">
       <p>{{ t('editorWindow.loadFailed') }}</p>
@@ -160,8 +192,12 @@ async function handleReloadDiff() {
         v-if="mode === 'conflict' && conflictFile"
         :conflict-file="conflictFile"
         :repo-path="repoPath"
+        :files-list="filesList"
+        :current-index="currentIndex"
         @save="handleSaved"
         @close="closeEditWindow"
+        @navigate-file="handleNavigateFile"
+        @dirty-change="dirty = $event"
       />
       <DiffEditor
         v-else-if="mode === 'diff' && diff"
@@ -174,6 +210,7 @@ async function handleReloadDiff() {
         @close="closeEditWindow"
         @navigate-file="handleNavigateFile"
         @reload="handleReloadDiff"
+        @dirty-change="dirty = $event"
       />
       <div v-else class="editor-loading">{{ t('editorWindow.loading') }}</div>
     </template>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FileDiff, DiffLine } from '../types'
-import { fileLang, tokenizeLine, type Token } from '../syntaxHighlight'
-import { computeAnchoredScrollTop } from '../diffScrollSync'
+import { fileLang, tokenizeLine } from '../syntaxHighlight'
+import { changedRanges, markChangedTokens, type StyledToken } from '../diffTokens'
 import {
   Save, Pencil, History,
   RotateCcw, ChevronUp, ChevronDown,
@@ -24,7 +24,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits(['save', 'close', 'navigate-file', 'reload'])
+const emit = defineEmits(['save', 'close', 'navigate-file', 'reload', 'dirty-change'])
 const { t } = useI18n()
 
 // 语法高亮语言（按文件路径扩展名推断），用于编辑窗口逐行关键字着色
@@ -91,6 +91,12 @@ const content = ref(
 )
 const isSaving = ref(false)
 
+// 未保存保护：与「本次装载的初始内容」比对得出 dirty，父窗口据此拦截关闭/重载/切文件。
+// 编辑窗是独立 webview，改动未落盘就关窗会直接丢失，没有任何撤销余地。
+const pristine = ref(content.value)
+const isDirty = computed(() => content.value !== pristine.value)
+watch(isDirty, (v) => emit('dirty-change', v), { immediate: true })
+
 const leftTextarea = ref<HTMLTextAreaElement | null>(null)
 const rightTextarea = ref<HTMLTextAreaElement | null>(null)
 const leftLinesRef = ref<HTMLElement | null>(null)
@@ -107,12 +113,11 @@ watch(content, (val) => {
   }, 50)
 })
 
-// 字符级差异着色已移除：差异仅用行级底色表达，文字改为按代码关键字着色（见 tokenizeLine）。
-
 // 逐行渲染模型：左/右文本、行号(old/new)、底色、字符级分段
 const rowModel = computed(() => {
   const oldL = props.diff.old_content
   const newL = newLinesRef.value
+  const srcLines = props.diff.lines
   return alignment.value.map((r, i) => {
     const oldText = r.oldIdx !== null ? (oldL[r.oldIdx] ?? '') : ''
     // 右栏文本按对齐行 index 取（content/newLinesRef 与 alignment 等长、一一对应），
@@ -136,11 +141,27 @@ const rowModel = computed(() => {
       // 原新增行（含新增空行）：保持 add
       type = 'add'
     }
-    // 语法高亮：按关键字着色（IDEA 风格），不再做字符级差异着色
-    let leftSegs: Token[] = []
-    let rightSegs: Token[] = []
-    if (r.oldIdx !== null) leftSegs = tokenizeLine(oldText, lang.value)
-    if (r.newIdx !== null) rightSegs = tokenizeLine(newText, lang.value)
+    // 语法高亮（IDEA 风格按关键字着色）+ 词级差异下划线。
+    // 后端 diff_chars 的分段直接复用：alignment 由 diff.lines 逐行构造，下标 i 一一对应。
+    // 右侧一旦被用户改过就放弃词级标注 —— 逐键重算字符级 LCS 是 O(m*n)，
+    // 且整行已有「修改」底色，词级信息此时不再有价值（与查看面板的观感仍一致）。
+    const src = srcLines[i]
+    const pristineNew = r.newIdx !== null ? (props.diff.new_content[r.newIdx] ?? '') : null
+    const rightUnedited = pristineNew !== null && newText === pristineNew
+    let leftSegs: StyledToken[] = []
+    let rightSegs: StyledToken[] = []
+    if (r.oldIdx !== null) {
+      leftSegs = markChangedTokens(
+        tokenizeLine(oldText, lang.value),
+        type === 'mod' && src ? changedRanges(src.old_segments) : [],
+      )
+    }
+    if (r.newIdx !== null) {
+      rightSegs = markChangedTokens(
+        tokenizeLine(newText, lang.value),
+        type === 'mod' && src && rightUnedited ? changedRanges(src.new_segments) : [],
+      )
+    }
     // eq 行无底色；del/add/mod 行按差异类型上底色（与差异面板一致：删红·加绿·改黄）
     const leftCls = type === 'eq' ? '' : 'hl-' + type
     const rightCls = type === 'eq' ? '' : 'hl-' + type
@@ -159,12 +180,6 @@ const rowModel = computed(() => {
     }
   })
 })
-
-// 智能锚定滚动同步用的「锚点行」：两侧都有内容的行（eq / mod）才作对齐锚点，
-// 新增行（左空）/ 删除行（右空）不是锚点 —— 与 DiffViewer 共用 src/diffScrollSync.ts。
-const anchorFlags = computed(() =>
-  rowModel.value.map((r) => r.type === 'eq' || r.type === 'mod'),
-)
 
 // 左栏只读文本（新增行处留空行，与右栏对齐）
 const leftAlignedText = computed(() => rowModel.value.map((r) => r.oldText).join('\n'))
@@ -306,13 +321,16 @@ watch(
     alignment.value = a
     content.value = a.map((r) => (r.newIdx !== null ? (d.new_content[r.newIdx] ?? '') : '')).join('\n')
     newLinesRef.value = content.value.split('\n')
+    pristine.value = content.value
     scrollToFirstDiff()
   },
 )
 
-// 智能锚定滚动同步（Beyond Compare 风格），与 DiffViewer 共用 src/diffScrollSync.ts。
-// 程序化回写会引发对端 textarea 的 scroll 回响，用「最近一次程序化写入的目标元素 + 120ms 窗口」
-// 吞掉，避免非 1:1 锚定映射下的反向改写 / 乒乓错位。
+// 左右两栏渲染同一份 rowModel：两侧 textarea 的行数都严格等于 alignment.length、每行固定 18px，
+// 所以相同对齐行永远该在同一水平线 —— scrollTop 直接 1:1 拷贝即可。
+// ⚠️ 勿改用「锚定同步」（滚到上一处相同行才对齐）：锚点只认 eq/mod，落在连续 add/del 段里时
+// 对端会被钳回「上一锚点」，整段期间两侧固定差 1~N 行（拖动滚动条即现，古哥 2026-11-03 反馈）。
+// 程序化回写会引发对端 textarea 的 scroll 回响，用「最近一次写入的目标元素 + 120ms 窗口」吞掉。
 let programmaticTarget: HTMLTextAreaElement | null = null
 let programmaticTime = 0
 
@@ -340,13 +358,12 @@ function syncScroll(source: 'left' | 'right') {
 
   const sourceTop = sourceEl.scrollTop
   const sourceLeft = sourceEl.scrollLeft
-  const targetTop = computeAnchoredScrollTop(sourceTop, anchorFlags.value, 18)
 
   ;(Object.keys(refs) as Array<keyof typeof refs>).forEach((key) => {
     const el = refs[key]
     const lineEl = lineRefs[key]
     const ov = overlayInners[key]
-    const top = key === source ? sourceTop : targetTop
+    const top = sourceTop
     if (el && el !== sourceEl) {
       if (el.scrollTop !== top) {
         programmaticTarget = el
@@ -412,6 +429,8 @@ async function handleSave() {
       if (r.newIdx !== null || line !== '') saved.push(line)
     })
     await writeFileContent(props.repoPath, props.filePath, saved.join('\n'))
+    // 落盘即视为干净：保存后父窗口要关窗，若仍标记 dirty 会触发「未保存确认」把自动关闭卡住
+    pristine.value = content.value
     emit('save')
   } catch (e) {
     console.error('Save file error:', e)
@@ -643,8 +662,35 @@ function scrollToFirstDiff() {
   nextTick(apply)
 }
 
+// 键盘导航（IDEA 习惯）：F6 / Alt+↓ 下一处差异，Shift+F6 / Alt+↑ 上一处，Ctrl/⌘+S 保存。
+// 本窗口只有左右两个编辑区，不存在「在别处打字被抢键」，故不做输入态豁免。
+function onEditorKey(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault()
+    handleSave()
+    return
+  }
+  if (!rightTextarea.value || diffLineCount.value === 0) return
+  if (e.key === 'F6') {
+    e.preventDefault()
+    if (e.shiftKey) jumpToPrevDiff()
+    else jumpToNextDiff()
+  } else if (e.altKey && e.key === 'ArrowDown') {
+    e.preventDefault()
+    jumpToNextDiff()
+  } else if (e.altKey && e.key === 'ArrowUp') {
+    e.preventDefault()
+    jumpToPrevDiff()
+  }
+}
+
 onMounted(() => {
   scrollToFirstDiff()
+  window.addEventListener('keydown', onEditorKey)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onEditorKey)
 })
 </script>
 
@@ -730,6 +776,9 @@ onMounted(() => {
             <TooltipContent side="bottom">{{ t('diffEditor.rightAddTip') }}</TooltipContent>
           </Tooltip>
 
+          <!-- 未保存标记：改动落盘前常驻，避免用户以为已写入 -->
+          <span v-if="isDirty" class="dirty-chip">{{ t('diffEditor.unsaved') }}</span>
+
           <Button variant="ghost" size="sm" class="save-btn" @click="handleSave" :disabled="isSaving">
             <Save :size="14" />
             {{ isSaving ? t('diffEditor.saving') : t('diffEditor.save') }}
@@ -739,7 +788,6 @@ onMounted(() => {
 
       <!-- 轻量本地通知（无外部 toast 依赖） -->
       <div v-if="localToast" class="local-toast" role="status">{{ localToast }}</div>
-    </TooltipProvider>
 
     <div class="editor-panels">
       <div class="editor-panel">
@@ -762,7 +810,7 @@ onMounted(() => {
                 ><span
                     v-for="(seg, si) in row.leftSegs"
                     :key="si"
-                    :class="'tok-' + seg.type"
+                    :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]"
                   >{{ seg.text }}</span></div>
               </div>
             </div>
@@ -893,7 +941,7 @@ onMounted(() => {
                 ><span
                     v-for="(seg, si) in row.rightSegs"
                     :key="si"
-                    :class="'tok-' + seg.type"
+                    :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]"
                   >{{ seg.text }}</span></div>
               </div>
             </div>
@@ -919,6 +967,7 @@ onMounted(() => {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   </div>
 </template>
 
@@ -1012,6 +1061,14 @@ onMounted(() => {
 .editor-actions :deep(.save-btn:disabled) {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 未保存标记：纯文字提示，不额外做按钮/底色（与工具栏的扁平视觉一致） */
+.dirty-chip {
+  font-size: 11px;
+  color: var(--color-mod);
+  white-space: nowrap;
+  padding: 0 4px;
 }
 
 .editor-panels {
@@ -1230,6 +1287,20 @@ onMounted(() => {
 .tok-type     { color: var(--syntax-type); }
 .tok-constant { color: var(--syntax-constant); }
 .tok-plain    { color: var(--text-primary); }
+
+/* 词级差异：只画下划线，不在行底色上再叠一层背景（两层色压在一起发脏），
+   左=HEAD 侧红、右=工作区侧绿，与查看面板、冲突页同一套视觉。
+   下划线不改变字形位置，着色层与 textarea 的光标/选区仍逐字符对齐。 */
+.seg-chg {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-del);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.editor-panel:last-child .seg-chg {
+  text-decoration-color: var(--color-add);
+}
 
 
 /* 图例 */

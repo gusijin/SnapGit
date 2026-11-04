@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  getCommits, getCurrentBranch, getBranches, getFileStatus, stageFile, discardFile, commitChanges,
+  getCommits, getCurrentBranch, getBranches, getFileStatus, stageFiles, discardFile, commitChanges,
   checkoutBranch, pullBranch, pullWithStrategy, openRepository, initRepository, saveRecentRepository, openFolderDialog,
   scanProjects, getFileTree, getFileDiff, getCommitFiles,
   createBranch, mergeBranch, renameBranch, checkoutRemoteBranch,
@@ -910,11 +910,18 @@ async function handleSelectFiles(paths: string[]) {
 
 async function handleOpenFile(file: FileStatus) {
   if (!repoPath.value) return
-  const mode = file.status === 'conflict' || file.status === 'unmerged' ? 'conflict' : 'diff'
+  const isConflict = file.status === 'conflict' || file.status === 'unmerged'
+  const mode = isConflict ? 'conflict' : 'diff'
   try {
     // 取当前可见的修改文件列表（working tree 或 commit 视图下都是它），
-    // 传入编辑窗口以支持「上一个/下一个文件」导航按钮
-    const filesList = displayedFiles.value.map((f) => f.path)
+    // 传入编辑窗口以支持「上一个/下一个文件」导航按钮。
+    // 冲突窗口只收窄到「仍是冲突的文件」——IDEA 的合并窗口同样是冲突文件队列，
+    // 混入普通修改文件会让上下一个跳到无需合并的文件上。
+    const filesList = isConflict
+      ? displayedFiles.value
+          .filter((f) => f.status === 'conflict' || f.status === 'unmerged')
+          .map((f) => f.path)
+      : displayedFiles.value.map((f) => f.path)
     const currentIndex = filesList.indexOf(file.path)
     await openEditWindow(repoPath.value, file.path, mode, filesList, currentIndex >= 0 ? currentIndex : undefined)
   } catch (e) {
@@ -985,12 +992,10 @@ function exitLogView() {
 async function handleStageFiles(paths: string[]) {
   if (!repoPath.value || paths.length === 0) return
   try {
-    const results = await Promise.allSettled(
-      paths.map(filePath => stageFile(repoPath.value!, filePath))
-    )
-    const failed = results.filter(r => r.status === 'rejected')
-    if (failed.length > 0) {
-      console.warn(`${failed.length} 个文件暂存失败`)
+    // 一次 IPC 批量暂存，避免每个文件一个 git 进程 + 一次写锁
+    const skipped = await stageFiles(repoPath.value, paths)
+    if (skipped.length > 0) {
+      console.warn(`${skipped.length} 个文件已无内容可暂存，跳过:`, skipped)
     }
     await loadRepoData()
   } catch (e) {
@@ -1057,6 +1062,64 @@ function handleCommitFromToolbar() {
   showCommitDialog.value = true
 }
 
+// 提交前校验：刷新工作区状态，剔除已不存在（被改名/删除、残留于旧列表）的幽灵路径，
+// 让这些路径静默跳过而不是拖慢整批暂存（后端 stage_files 同样容忍 pathspec 不匹配，
+// 覆盖「删除已暂存」这类状态里仍在、但 git add 无内容可加的情况）。
+// committingFiles 为空时返回空，沿用「提交全部已暂存」旧逻辑；否则返回 { valid, skipped }。
+async function resolveCommitFiles(): Promise<{ valid: string[]; skipped: string[] }> {
+  const wanted = committingFiles.value
+  if (wanted.length === 0) return { valid: [], skipped: [] }
+  // 绕过缓存取实时状态，确保剔除已消失的文件
+  const statuses = await getFileStatus(repoPath.value!, false)
+  const validSet = new Set(statuses.map(s => s.path))
+  const valid: string[] = []
+  const skipped: string[] = []
+  for (const p of wanted) {
+    if (validSet.has(p)) valid.push(p)
+    else skipped.push(p)
+  }
+  return { valid, skipped }
+}
+
+// 暂存所选文件并提交，「提交」与「提交并推送」共用同一条链路。
+// 返回 false 表示已给出提示、本次未提交（调用方据此不再推送）。
+async function stageAndCommit(): Promise<boolean> {
+  // 提交前刷新状态并剔除已不存在的幽灵路径；全部消失则中止
+  const { valid } = await resolveCommitFiles()
+  if (committingFiles.value.length > 0 && valid.length === 0) {
+    showToast(t('repository.filesVanished'), 'error')
+    return false
+  }
+  // 一次 IPC 批量暂存（committingFiles 为空时沿用「提交全部已暂存」旧逻辑）
+  const filesToStage = valid.length > 0 ? valid : committingFiles.value
+  if (filesToStage.length > 0) {
+    await stageFiles(repoPath.value!, filesToStage)
+  }
+  await commitChanges(repoPath.value!, commitMessage.value.trim())
+  commitMessage.value = ''
+  showCommitDialog.value = false
+  committingFiles.value = []
+  await loadRepoData()
+  selectedFiles.value = []
+  selectedFileDiff.value = null
+  return true
+}
+
+// git 的「没有可提交内容」属于正常结果，不该走错误弹窗
+function isNothingToCommit(msg: string) {
+  return msg.includes('nothing to commit') || msg.includes('no changes added to commit')
+}
+
+function handleCommitError(e: any) {
+  const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
+  console.error('Commit error:', msg)
+  if (isNothingToCommit(msg)) {
+    alert(t('repository.noChangesToCommit'))
+    return
+  }
+  showToast(t('repository.commitFailed', { error: msg }), 'error')
+}
+
 async function handleCommit() {
   if (!repoPath.value || !commitMessage.value.trim() || isCommitting.value) return
   // 提交守卫：存在未解决的冲突文件时禁止提交
@@ -1066,22 +1129,9 @@ async function handleCommit() {
   }
   isCommitting.value = true
   try {
-    // 如果指定了文件，先暂存
-    if (committingFiles.value.length > 0) {
-      for (const f of committingFiles.value) {
-        await stageFile(repoPath.value, f)
-      }
-    }
-    await commitChanges(repoPath.value, commitMessage.value.trim())
-    commitMessage.value = ''
-    showCommitDialog.value = false
-    committingFiles.value = []
-    await loadRepoData()
-    selectedFiles.value = []
-    selectedFileDiff.value = null
+    await stageAndCommit()
   } catch (e: any) {
-    console.error('Commit error:', e)
-    showToast(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
+    handleCommitError(e)
   } finally {
     isCommitting.value = false
   }
@@ -1099,21 +1149,9 @@ async function handleCommitAndPush() {
   const committedBranch = currentBranch.value
   try {
     // 1. 提交
-    if (committingFiles.value.length > 0) {
-      for (const f of committingFiles.value) {
-        await stageFile(repoPath.value, f)
-      }
-    }
-    await commitChanges(repoPath.value, commitMessage.value.trim())
-    commitMessage.value = ''
-    showCommitDialog.value = false
-    committingFiles.value = []
-    await loadRepoData()
-    selectedFiles.value = []
-    selectedFileDiff.value = null
+    if (!(await stageAndCommit())) return
   } catch (e: any) {
-    console.error('Commit error:', e)
-    showToast(t('repository.commitFailed', { error: (typeof e === 'string' ? e : e?.toString?.() || String(e)) }), 'error')
+    handleCommitError(e)
     return
   } finally {
     isCommitting.value = false

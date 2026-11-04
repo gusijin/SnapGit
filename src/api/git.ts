@@ -57,6 +57,11 @@ export async function stageFile(repoPath: string, filePath: string): Promise<voi
   await invoke('stage_file', { repoPath, filePath })
 }
 
+/** 批量暂存，返回被跳过的路径（工作区与索引都已无此内容，无需暂存） */
+export async function stageFiles(repoPath: string, filePaths: string[]): Promise<string[]> {
+  return await invoke('stage_files', { repoPath, filePaths })
+}
+
 export async function discardFile(repoPath: string, filePath: string): Promise<void> {
   await invoke('discard_file', { repoPath, filePath })
 }

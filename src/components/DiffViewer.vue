@@ -3,8 +3,10 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FileDiff, DiffLine, DiffSegment } from '../types'
 import { fileLang, tokenizeLine } from '../syntaxHighlight'
+import { changedRanges, markChangedTokens, type StyledToken } from '../diffTokens'
 import {
   FileQuestion, CheckCircle2, GitCompare, History, Pencil, FileArchive, FileX,
+  ChevronUp, ChevronDown,
 } from 'lucide-vue-next'
 
 interface Props {
@@ -72,9 +74,9 @@ function syncScroll(source: 'left' | 'right') {
   // 查看面板左右两栏渲染同一份 renderLines（行数严格一致、每行固定 18px）。
   // equalizeScrollHeights() 已在 diff 渲染后补齐两侧可滚动高度，使 scrollHeight 一致，
   // 因此直接 1:1 拷贝 scrollTop 即可保证相同代码行永远在同一水平线。
-  // ⚠️ 勿改用 computeAnchoredScrollTop 锚定：那是给「两侧行数可能不等」的编辑窗口设计的；
-  // 在连续 add/delete（一侧空白 stretch）处锚点钳制会把对端停在「上一锚点 + 半行」，
-  // 导致左右相同行错开数行（古哥 2026-09-04 反馈过，已改 1:1 + 高度补齐，勿回退）。
+  // ⚠️ 勿改用「锚定同步」（滚到上一处相同行才对齐）：两栏既然是同一份行模型，锚点钳制只会
+  // 把对端停在上一锚点，在连续 add/delete 处让左右相同行错开数行
+  // （古哥 2026-09-04 反馈过，已改 1:1 + 高度补齐，勿回退）。
   if (targetEl.scrollTop !== sourceEl.scrollTop) {
     programmaticTarget = targetEl
     programmaticTime = performance.now()
@@ -168,6 +170,7 @@ watch(
   () => props.diff,
   async (newDiff) => {
     firstChangeIdx.value = -1
+    currentHunkIdx.value = -1
     // 切换文件：重置虚拟窗口到顶部，避免旧 scrollTop 残留导致 spacer 高度错乱
     scrollTop.value = 0
     measureViewport()
@@ -210,12 +213,14 @@ watch(
 
 onMounted(() => {
   window.addEventListener('resize', onResize)
+  window.addEventListener('keydown', onDiffKey)
   measureViewport()
   equalizeScrollHeights()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('keydown', onDiffKey)
 })
 
 function onResize() {
@@ -250,6 +255,10 @@ const totalLines = computed(() => (props.diff?.lines ?? []).length)
 interface DiffHunk {
   kind: 'del' | 'add' | 'mod'
   path: string
+  /** 块首行（含）在 diff.lines 中的下标，用于「上一处/下一处」跳转与当前块标注 */
+  start: number
+  /** 块尾行（不含） */
+  end: number
 }
 
 const GUTTER_W = 26 // 中间 gutter 宽度（与 .middle-gutter CSS 一致）
@@ -287,6 +296,8 @@ const hunks = computed<DiffHunk[]>(() => {
     const kind: DiffHunk['kind'] = hasMod ? 'mod' : hasDel ? 'del' : 'add'
     result.push({
       kind,
+      start: i,
+      end: j,
       path: [
         `M ${x0} ${lTop}`,
         `C ${c} ${lTop} ${c} ${rTop} ${x1} ${rTop}`,
@@ -298,6 +309,79 @@ const hunks = computed<DiffHunk[]>(() => {
     i = j
   }
   return result
+})
+
+// ---- 差异导航（IDEA 的 F6 / Shift+F6 逐处跳转）----
+// 跳转位置只由「当前滚动到的顶部行」推导，不依赖 currentHunkIdx 状态：
+// 落点故意在目标块上方留 JUMP_PAD_LINES 行（看得见上下文），若用状态推进，
+// 连按「下一处」会因 topLine = start - JUMP_PAD 而再次命中同一块（原地不动）。
+const JUMP_PAD_LINES = 3
+const currentHunkIdx = ref(-1)
+
+function gotoHunk(idx: number) {
+  const list = hunks.value
+  if (list.length === 0) return
+  const target = Math.max(0, Math.min(list.length - 1, idx))
+  currentHunkIdx.value = target
+  const top = Math.max(0, list[target].start * ROW_HEIGHT - JUMP_PAD_LINES * ROW_HEIGHT)
+  const leftEl = leftScrollRef.value
+  const rightEl = rightScrollRef.value
+  if (rightEl) rightEl.scrollTop = top
+  if (leftEl) leftEl.scrollTop = top
+  if (midBandsRef.value) midBandsRef.value.style.transform = `translateY(${-top}px)`
+  scrollTop.value = top
+}
+
+function stepHunk(dir: 1 | -1) {
+  const list = hunks.value
+  if (list.length === 0) return
+  const topLine = Math.floor(scrollTop.value / ROW_HEIGHT)
+  let idx = -1
+  if (dir === 1) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].start > topLine + JUMP_PAD_LINES) { idx = i; break }
+    }
+  } else {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].start < topLine - JUMP_PAD_LINES) { idx = i; break }
+    }
+  }
+  // 已到首/末边界则回绕，连按可循环遍历（与 IDEA 一致）
+  gotoHunk(idx < 0 ? (dir === 1 ? 0 : list.length - 1) : idx)
+}
+
+// 概览标尺改为可点：按点击位置换算目标行，跳到该行起第一处差异（IDEA 的 changes view）
+function onRulerClick(e: MouseEvent) {
+  const list = hunks.value
+  if (list.length === 0) return
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  if (rect.height <= 0) return
+  const targetLine = Math.round(((e.clientY - rect.top) / rect.height) * totalLines.value)
+  const idx = list.findIndex((h) => h.start >= targetLine)
+  gotoHunk(idx < 0 ? list.length - 1 : idx)
+}
+
+// 快捷键只在差异面板之外无输入焦点时接管：主窗口的搜索框/提交框正在输入时不能抢键
+function onDiffKey(e: KeyboardEvent) {
+  const el = e.target as HTMLElement | null
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+  if (hunks.value.length === 0) return
+  if (e.key === 'F6') {
+    e.preventDefault()
+    stepHunk(e.shiftKey ? -1 : 1)
+  } else if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault()
+    stepHunk(e.key === 'ArrowDown' ? 1 : -1)
+  }
+}
+
+// 计数文案：未跳转过时只报总数，跳过后报「第几处 / 总数」
+const navLabel = computed(() => {
+  const total = hunks.value.length
+  if (total === 0) return ''
+  return currentHunkIdx.value >= 0
+    ? t('diffViewer.changesPosition', { current: currentHunkIdx.value + 1, total })
+    : t('diffViewer.changesTotal', { total })
 })
 
 function markerClass(type: string): string {
@@ -353,15 +437,23 @@ function leftDisplay(line: DiffLine): string {
   return line.content
 }
 
-// 右栏（新版本）展示文本：delete 行右侧为空占位；modified 取 new_segments 拼接
+// 右栏（新版本）展示文本：delete 行右侧为空占位；modified 取 new_segments 拼接。
+// 兜底用 new_content（=新版本整行），不能用 content（那是旧版本整行，兜底时左右会显示同一句）
 function rightDisplay(line: DiffLine): string {
   if (line.line_type === 'delete') return ''
-  if (line.line_type === 'modified') return segText(line.new_segments, line.content)
+  if (line.line_type === 'modified') return segText(line.new_segments, line.new_content)
   return line.content
 }
 
-function lineTokens(text: string) {
-  return tokenizeLine(text, lang.value)
+// 词级差异：Rust 的 diff_chars 已给出 old/new_segments（changed 标记真正改动的那几段），
+// 投影到语法 token 的逻辑与编辑窗口共用 src/diffTokens.ts。
+function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
+  const text = side === 'left' ? leftDisplay(line) : rightDisplay(line)
+  if (text === '') return []
+  const ranges = line.line_type === 'modified'
+    ? changedRanges(side === 'left' ? line.old_segments : line.new_segments)
+    : []
+  return markChangedTokens(tokenizeLine(text, lang.value), ranges)
 }
 </script>
 
@@ -373,6 +465,16 @@ function lineTokens(text: string) {
       <span>{{ t('diffViewer.title') }}</span>
       <span v-if="filePath" class="file-title">{{ fileName() }}</span>
       <span v-if="eolLabel" class="file-eol">{{ eolLabel }}</span>
+      <!-- 差异导航：逐处跳转 + 当前处计数（F6 / Shift+F6 / Alt+↑↓，也可点右侧标尺） -->
+      <div v-if="hunks.length > 0" class="diff-nav">
+        <button type="button" class="nav-btn" :title="t('diffViewer.prevChange')" @click="stepHunk(-1)">
+          <ChevronUp :size="14" />
+        </button>
+        <span class="nav-count">{{ navLabel }}</span>
+        <button type="button" class="nav-btn" :title="t('diffViewer.nextChange')" @click="stepHunk(1)">
+          <ChevronDown :size="14" />
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="empty">
@@ -442,13 +544,11 @@ function lineTokens(text: string) {
               >
                 <span class="line-num">{{ line.old_line ?? '' }}</span>
                 <span class="line-content">
-                  <template v-if="leftDisplay(line) !== ''">
-                    <span
-                      v-for="(tk, ti) in lineTokens(leftDisplay(line))"
-                      :key="ti"
-                      :class="'tok-' + tk.type"
-                    >{{ tk.text }}</span>
-                  </template>
+                  <span
+                    v-for="(tk, ti) in sideTokens(line, 'left')"
+                    :key="ti"
+                    :class="['tok-' + tk.type, { 'seg-chg': tk.changed }]"
+                  >{{ tk.text }}</span>
                 </span>
               </div>
               <div :style="{ height: bottomPad + 'px' }"></div>
@@ -470,7 +570,7 @@ function lineTokens(text: string) {
               v-for="(h, hi) in hunks"
               :key="'hb' + hi"
               class="band"
-              :class="'band-' + h.kind"
+              :class="['band-' + h.kind, { 'band-current': hi === currentHunkIdx }]"
               :d="h.path"
               vector-effect="non-scaling-stroke"
             />
@@ -499,20 +599,18 @@ function lineTokens(text: string) {
               >
                 <span class="line-num">{{ line.new_line ?? '' }}</span>
                 <span class="line-content">
-                  <template v-if="rightDisplay(line) !== ''">
-                    <span
-                      v-for="(tk, ti) in lineTokens(rightDisplay(line))"
-                      :key="ti"
-                      :class="'tok-' + tk.type"
-                    >{{ tk.text }}</span>
-                  </template>
+                  <span
+                    v-for="(tk, ti) in sideTokens(line, 'right')"
+                    :key="ti"
+                    :class="['tok-' + tk.type, { 'seg-chg': tk.changed }]"
+                  >{{ tk.text }}</span>
                 </span>
               </div>
               <div :style="{ height: bottomPad + 'px' }"></div>
             </div>
           </div>
-          <!-- 差异位置标记条（固定，不随滚动移动） -->
-          <div class="overview-ruler">
+          <!-- 差异位置标记条（固定，不随滚动移动）：点击跳到该位置起第一处差异 -->
+          <div class="overview-ruler" @click="onRulerClick">
             <div
               v-for="m in diffMarkers"
               :key="m.idx"
@@ -577,6 +675,44 @@ function lineTokens(text: string) {
 .header-icon {
   color: var(--accent-text);
   flex-shrink: 0;
+}
+
+/* 差异导航：贴到标题栏最右，扁平无边框（与工具栏同一视觉，不引入按钮盒子） */
+.diff-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.nav-count {
+  min-width: 42px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.nav-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-bright);
 }
 
 .side-icon {
@@ -716,6 +852,12 @@ function lineTokens(text: string) {
   stroke: var(--color-mod);
 }
 
+/* 当前所在差异块：连接带加粗描边，替代「叠一层更深的行底色」（与词级高亮同一套配色逻辑） */
+.diff-bands .band-current {
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+
 .side {
   flex: 1;
   overflow-y: auto;
@@ -834,6 +976,19 @@ function lineTokens(text: string) {
 .tok-constant { color: var(--syntax-constant); }
 .tok-plain    { color: var(--text-primary); }
 
+/* 词级差异：只画下划线，不在行底色上再叠一层背景（与 ConflictSolver 的 .seg-chg 同一套视觉，
+   两层底色压在一起发脏）。左=旧版本侧用删除色，右=新版本侧用新增色。 */
+.seg-chg {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-del);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.right-side .seg-chg {
+  text-decoration-color: var(--color-add);
+}
+
 .line-context:hover {
   background-color: var(--bg-hover);
 }
@@ -849,14 +1004,14 @@ function lineTokens(text: string) {
   100% { box-shadow: none; }
 }
 
-/* 差异位置标记条（紧贴垂直滚动条左侧） */
+/* 差异位置标记条（紧贴垂直滚动条左侧）：可点，按位置跳到对应差异块 */
 .overview-ruler {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   width: 5px;
-  pointer-events: none;
+  cursor: pointer;
   overflow: hidden;
 }
 
