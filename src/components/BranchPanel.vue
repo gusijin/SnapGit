@@ -748,6 +748,8 @@ defineExpose({ openCreateDialog })
 .panel-content {
   flex: 1;
   overflow: auto;
+  /* 常驻滚动条槽：分支多少都不改变内容宽度，分组数量徽标右边缘固定，与仓库面板数量徽标同列 */
+  scrollbar-gutter: stable;
   padding: 0;
   min-height: 0;
 }
@@ -764,7 +766,8 @@ defineExpose({ openCreateDialog })
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 5px 10px 5px 12px;
+  margin-right: -8px;
+  padding: 5px 18px 5px 12px;
   font-size: 10px;
   color: var(--text-secondary);
   font-weight: 700;
@@ -813,11 +816,14 @@ defineExpose({ openCreateDialog })
   color: var(--text-tertiary);
 }
 
+/* .panel-content 用 scrollbar-gutter: stable 预留了 8px 滚动条槽，行背景默认只到内容边缘，
+   右侧会露出一条轨道。负 margin 让背景铺满整行（含槽位），补回等量 padding 保持内容位置不变。 */
 .branch-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px 5px 22px;
+  margin-right: -8px;
+  padding: 5px 18px 5px 22px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
@@ -834,8 +840,9 @@ defineExpose({ openCreateDialog })
   font-weight: 600;
 }
 
+/* 远程分支比本地淡一级（--text-tertiary），不再用 --text-muted：浅色主题下几乎看不清 */
 .branch-item.remote {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .branch-item.remote:hover {
@@ -1231,7 +1238,7 @@ defineExpose({ openCreateDialog })
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 6px 18px 6px 10px;
   border-radius: 6px;
   transition: background-color 0.15s;
 }

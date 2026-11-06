@@ -387,8 +387,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 右侧留出空间，避免被常驻在左栏右边缘的「折叠侧边栏」按钮遮挡（见 Repository.vue .sidebar-toggle） */
-  padding: 6px 28px 6px 10px;
+  /* 右边缘 18px = 分支面板分组数量的 10px 内边距 + 8px 滚动条槽，两处数量徽标同列 */
+  padding: 6px 18px 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;
