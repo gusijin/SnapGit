@@ -236,15 +236,16 @@ const pullPhaseLabel = computed(() => {
   }
 })
 
-// 从后端透传的 git 原始进度片段解析统计信息。
+// 从后端透传的 git 原始进度片段解析统计信息（banner 尾部统计位）。
 // 片段形如 `remote: Receiving objects:  42% (100/238), 1.2 MiB | 300 KiB/s`：
-//   - 数量/总数量 `(100/238)`：counting/compressing/resolving 阶段也有；
+//   - 数量/总数量 `(100/238)`；
 //   - 已下载大小 `1.2 MiB`（`, xx` 且后跟 `|`）与速度 `300 KiB/s`（`|` 之后）：仅 receiving 阶段有。
-// 阶段策略：
-//   - counting/compressing（服务端准备，无大小/速度）→ 显示数量（若前一状态有统计则清掉）；
-//   - receiving（真正下载）→ 实时更新 数量/总量 · 大小 · 速度（缺哪段省哪段）；
+// 阶段策略（统计位要窄，三段全放要 174px，会把进度条挤到 82px，主次颠倒）：
+//   - counting/compressing（服务端准备，无大小/速度）→ 只显示数量；
+//   - receiving（真正下载）→ 只显示 大小 · 速度。此处不重复数量：进度条 + 百分比已经表达了
+//     「进行到哪」，对象数与之信息重叠，大小和速度才是新增信息；
 //   - resolving（本地应用增量）→ **冻结**：保留 receiving 的最终统计——
-//     delta 计数 `(5/15)` 不是对象下载数，混进来会让四个数字对不上（古哥 2026-10-21）。
+//     delta 计数 `(5/15)` 不是对象下载数，混进来会让数字对不上（古哥 2026-10-21）。
 const pullStats = ref<string | null>(null)
 watch(() => props.pullProgress, (p) => {
   const phase = p?.phase || ''
@@ -257,8 +258,6 @@ watch(() => props.pullProgress, (p) => {
   }
   if (phase === 'receiving') {
     const parts: string[] = []
-    const cnt = d.match(/\((\d+)\/(\d+)\)/)
-    if (cnt) parts.push(t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }))
     const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
     if (size) parts.push(size[1])
     const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
@@ -289,12 +288,11 @@ watch(() => props.pullProgress, (p) => {
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 
-    <!-- 拉取进度（拉取开始即显示，无延迟）。两种形态，统一样式：
-         ① 列表为空 → 替代「工作区干净」空态，居中展示 spinner + 百分比 + 阶段 + 实时统计（数量/大小/速度）；
-         ② 列表非空 → 面板头部下方的单行细进度条，不遮挡文件列表 -->
+    <!-- 拉取进度（拉取开始即显示，无延迟）：面板头部下方的单行细进度条，
+         有无变更文件都用这一种形态，不遮挡文件列表 -->
     <transition name="ppb-fade">
       <div
-        v-if="pullProgress && pullProgress.visible && sortedFiles.length > 0"
+        v-if="pullProgress && pullProgress.visible"
         class="pull-progress-banner"
       >
         <Loader2 :size="14" class="pp-spin" />
@@ -303,24 +301,13 @@ watch(() => props.pullProgress, (p) => {
           <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
         </div>
         <span class="pp-pct">{{ pullProgress.percent }}%</span>
+        <!-- 尾部统计位：receiving 显示 大小 · 速度，counting/compressing 显示对象数量；
+             banner 窄到放不下时整体隐藏（见 .pp-stats 的 @container ppb） -->
+        <span class="pp-stats" v-if="pullStats">{{ pullStats }}</span>
       </div>
     </transition>
 
-    <div
-      v-if="pullProgress && pullProgress.visible && sortedFiles.length === 0"
-      class="empty pull-empty"
-    >
-      <Loader2 :size="28" class="pp-spin pp-ring" />
-      <p class="pp-phase pp-phase-main">{{ pullPhaseLabel }}</p>
-      <div class="pp-pct-row">
-        <span class="pp-pct-inline">{{ pullProgress.percent }}</span>
-        <span class="pp-pct-unit">%</span>
-      </div>
-      <!-- 实时统计（对象数量/总量 · 已下载大小 · 速度），替代原进度条 -->
-      <p class="pp-stats" v-if="pullStats">{{ pullStats }}</p>
-    </div>
-
-    <div v-else-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
+    <div v-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
       <div class="spinner"></div>
       <p>{{ t('fileList.scanning') }}</p>
     </div>
@@ -698,8 +685,7 @@ watch(() => props.pullProgress, (p) => {
   background-color: var(--bg-active);
 }
 
-/* ===== 拉取进度（超过 5 秒）：列表为空时替代「工作区干净」空态居中展示；
-   列表非空时为面板头下方的单行细进度条。低调克制，不抢视觉 ===== */
+/* ===== 拉取进度：面板头下方的单行细进度条，有无变更文件都用这一种形态。低调克制，不抢视觉 ===== */
 .pull-progress-banner {
   flex-shrink: 0;
   display: flex;
@@ -708,6 +694,9 @@ watch(() => props.pullProgress, (p) => {
   padding: 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
+  /* 统计位的显隐按 banner 实际宽度判断（面板可拖拽变窄），见下方 @container ppb */
+  container-type: inline-size;
+  container-name: ppb;
 }
 /* 旋转 spinner（复用 file-list-spin，与面板扫描态同节奏）；统一走灰色系，不使用品牌蓝 */
 .pp-spin {
@@ -731,7 +720,7 @@ watch(() => props.pullProgress, (p) => {
 }
 .pp-bar-inline {
   flex: 1;
-  min-width: 0;
+  min-width: 60px;
 }
 .pp-bar-fill {
   height: 100%;
@@ -746,51 +735,24 @@ watch(() => props.pullProgress, (p) => {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
-/* 空列表居中态：替代「工作区干净」空态。
-   视觉主次：状态文案为主（14px 加粗，用户第一眼要知道在干嘛），
-   百分比为辅（小字灰显，仅作精确参考） */
-.pull-empty {
-  gap: 8px;
-}
-.pp-ring {
-  width: 28px;
-  height: 28px;
-  margin-bottom: 2px;
-}
-.pp-phase-main {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin: 0;
-}
-.pp-pct-row {
-  display: flex;
-  align-items: baseline;
-  gap: 1px;
-  color: var(--text-muted);
-}
-.pp-pct-inline {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.pp-pct-unit {
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-}
-/* 空态实时统计行：对象数量/总量 · 已下载大小 · 速度（由 git 原始进度片段解析）。
-   与百分比同级的小字灰显，等宽数字避免计数跳动时抖动 */
+/* banner 尾部统计位：比阶段文案更小更淡，等宽数字避免计数跳动时抖动。
+   上限 120px 兜住最长文案（`1.2 MiB · 300 KiB/s` 约 95px） */
 .pp-stats {
-  margin: 2px 0 0;
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 90%;
+  min-width: 0;
+  max-width: 120px;
+}
+/* 空间不足以同时放下「阶段 + 进度条 + 百分比 + 统计」时，整体隐藏统计位：
+   半截的统计比没有统计更吵，阶段文案和百分比才是主体 */
+@container ppb (max-width: 320px) {
+  .pp-stats {
+    display: none;
+  }
 }
 .ppb-fade-enter-active,
 .ppb-fade-leave-active {

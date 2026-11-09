@@ -1600,7 +1600,7 @@ const isPulling = ref(false)
 const isPushing = ref(false)
 
 // 拉取进度：后端通过 `pull-progress` 事件实时推送 git fetch/pull 百分比（Receiving/Resolving 等阶段）。
-// 拉取一开始就立即显示（visible 直接置 true），由「变更文件」面板内联/空态展示，无延迟。
+// 拉取一开始就立即显示（visible 直接置 true），由「变更文件」面板顶部的单行进度条展示，无延迟。
 const pullProgress = ref<{ percent: number; phase: string; detail: string; visible: boolean }>({
   percent: 0,
   phase: '',
