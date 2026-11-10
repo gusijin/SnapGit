@@ -492,10 +492,10 @@ export default {
     modifiedMultiple: 'Modified: {n} files',
     noRepoOpen: 'Please open a repository first',
     openRepoFailed: 'Failed to open repository: {error}',
-    // User-facing "download → apply" wording; hides git's internal phase names
+    // "Receiving objects" stays literal per product spec; other phases keep the "fetch → apply" wording
     pullPhase: {
       pulling: 'Connecting to remote',
-      receiving: 'Downloading updates',
+      receiving: 'Receiving objects',
       resolving: 'Applying updates',
       counting: 'Fetching updates',
       compressing: 'Fetching updates',

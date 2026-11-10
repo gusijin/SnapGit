@@ -5,7 +5,7 @@ import type { FileStatus } from '../types'
 // 文件类型图标映射统一从共享工具引入（与仓库面板文件树共用一套，保证风格一致）
 import { getFileIcon } from '../utils/fileIcons'
 import {
-  CheckCircle2, Check, Plus, Trash2, RefreshCw, Files, Loader2,
+  CheckCircle2, Check, Plus, Trash2, RefreshCw, Files,
 } from 'lucide-vue-next'
 
 interface Props {
@@ -21,9 +21,6 @@ interface Props {
   conflictActive?: boolean
   // 进行中的拉取策略，决定解决条按钮文案（merge → 完成合并 / rebase → 继续变基）
   pullStrategy?: 'merge' | 'rebase' | null
-  // 拉取进度（git fetch/pull 百分比）：拉取开始即显示，用于面板内联展示
-  // 拉取进度，替代原先的居中弹窗。
-  pullProgress?: { percent: number; phase: string; detail: string; visible: boolean } | null
 }
 
 const props = defineProps<Props>()
@@ -224,48 +221,7 @@ const conflictCount = computed(() =>
 )
 const hasConflicts = computed(() => conflictCount.value > 0)
 
-// 拉取阶段 → 本地化文案（面板内联进度条的「阶段」标签）
-const pullPhaseLabel = computed(() => {
-  switch (props.pullProgress?.phase) {
-    case 'receiving': return t('repository.pullPhase.receiving')
-    case 'resolving': return t('repository.pullPhase.resolving')
-    case 'counting': return t('repository.pullPhase.counting')
-    case 'compressing': return t('repository.pullPhase.compressing')
-    case 'done': return t('repository.pullPhase.done')
-    default: return t('repository.pullPhase.pulling')
-  }
-})
-
-// 从后端透传的 git 原始进度片段解析统计信息（banner 尾部统计位）。
-// 片段形如 `remote: Receiving objects:  42% (100/238), 1.2 MiB | 300 KiB/s`：
-//   - 数量/总数量 `(100/238)`；
-//   - 已下载大小 `1.2 MiB`（`, xx` 且后跟 `|`）与速度 `300 KiB/s`（`|` 之后）：仅 receiving 阶段有。
-// 阶段策略（统计位要窄，三段全放要 174px，会把进度条挤到 82px，主次颠倒）：
-//   - counting/compressing（服务端准备，无大小/速度）→ 只显示数量；
-//   - receiving（真正下载）→ 只显示 大小 · 速度。此处不重复数量：进度条 + 百分比已经表达了
-//     「进行到哪」，对象数与之信息重叠，大小和速度才是新增信息；
-//   - resolving（本地应用增量）→ **冻结**：保留 receiving 的最终统计——
-//     delta 计数 `(5/15)` 不是对象下载数，混进来会让数字对不上（古哥 2026-10-21）。
-const pullStats = ref<string | null>(null)
-watch(() => props.pullProgress, (p) => {
-  const phase = p?.phase || ''
-  const d = p?.detail || ''
-  if (phase === 'counting' || phase === 'compressing' || !d) {
-    // 服务端准备阶段：只显示数量（重置掉上一轮的大小/速度）
-    const cnt = d.match(/\((\d+)\/(\d+)\)/)
-    pullStats.value = cnt ? t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] }) : null
-    return
-  }
-  if (phase === 'receiving') {
-    const parts: string[] = []
-    const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
-    if (size) parts.push(size[1])
-    const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
-    if (speed) parts.push(speed[1])
-    pullStats.value = parts.length > 0 ? parts.join(' · ') : null
-  }
-  // resolving/done：不改 pullStats，冻结 receiving 的最终统计
-}, { immediate: true })
+// 拉取进度已上移到工具栏下沿的 2px 全宽线（见 ToolBar.vue），本面板不再承载进度展示。
 </script>
 
 <template>
@@ -288,24 +244,7 @@ watch(() => props.pullProgress, (p) => {
       <span class="selected-count" v-if="selectedFiles.length > 0">{{ t('fileList.selected', { n: selectedFiles.length }) }}</span>
     </div>
 
-    <!-- 拉取进度（拉取开始即显示，无延迟）：面板头部下方的单行细进度条，
-         有无变更文件都用这一种形态，不遮挡文件列表 -->
-    <transition name="ppb-fade">
-      <div
-        v-if="pullProgress && pullProgress.visible"
-        class="pull-progress-banner"
-      >
-        <Loader2 :size="14" class="pp-spin" />
-        <span class="pp-phase">{{ pullPhaseLabel }}</span>
-        <div class="pp-bar pp-bar-inline">
-          <div class="pp-bar-fill" :style="{ width: pullProgress.percent + '%' }"></div>
-        </div>
-        <span class="pp-pct">{{ pullProgress.percent }}%</span>
-        <!-- 尾部统计位：receiving 显示 大小 · 速度，counting/compressing 显示对象数量；
-             banner 窄到放不下时整体隐藏（见 .pp-stats 的 @container ppb） -->
-        <span class="pp-stats" v-if="pullStats">{{ pullStats }}</span>
-      </div>
-    </transition>
+    <!-- 拉取进度已上移到工具栏下沿的 2px 全宽线（ToolBar.vue），此处不再占位 -->
 
     <div v-if="sortedFiles.length === 0 && loading && viewMode === 'working-tree'" class="empty">
       <div class="spinner"></div>
@@ -685,83 +624,7 @@ watch(() => props.pullProgress, (p) => {
   background-color: var(--bg-active);
 }
 
-/* ===== 拉取进度：面板头下方的单行细进度条，有无变更文件都用这一种形态。低调克制，不抢视觉 ===== */
-.pull-progress-banner {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background-color: var(--bg-toolbar);
-  border-bottom: 1px solid var(--border-color);
-  /* 统计位的显隐按 banner 实际宽度判断（面板可拖拽变窄），见下方 @container ppb */
-  container-type: inline-size;
-  container-name: ppb;
-}
-/* 旋转 spinner（复用 file-list-spin，与面板扫描态同节奏）；统一走灰色系，不使用品牌蓝 */
-.pp-spin {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  animation: file-list-spin 0.8s linear infinite;
-}
-.pp-phase {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 进度条：灰色细轨道 + 灰色细填充 */
-.pp-bar {
-  height: 3px;
-  background-color: var(--bg-tertiary);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.pp-bar-inline {
-  flex: 1;
-  min-width: 60px;
-}
-.pp-bar-fill {
-  height: 100%;
-  background-color: var(--text-tertiary);
-  border-radius: 2px;
-  transition: width 0.2s ease;
-}
-.pp-pct {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-/* banner 尾部统计位：比阶段文案更小更淡，等宽数字避免计数跳动时抖动。
-   上限 120px 兜住最长文案（`1.2 MiB · 300 KiB/s` 约 95px） */
-.pp-stats {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  max-width: 120px;
-}
-/* 空间不足以同时放下「阶段 + 进度条 + 百分比 + 统计」时，整体隐藏统计位：
-   半截的统计比没有统计更吵，阶段文案和百分比才是主体 */
-@container ppb (max-width: 320px) {
-  .pp-stats {
-    display: none;
-  }
-}
-.ppb-fade-enter-active,
-.ppb-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.ppb-fade-enter-from,
-.ppb-fade-leave-to {
-  opacity: 0;
-}
+/* 拉取进度样式已迁移到 ToolBar.vue 的 .global-pull-line（工具栏下沿 2px 全宽线） */
 
 .menu-item.disabled {
   opacity: 0.4;

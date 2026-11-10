@@ -27,7 +27,7 @@ interface Props {
   repositoryPath: string
   /** 推送反馈状态：done = 推送成功，按钮短暂显示"已推送"并隐藏 Tooltip */
   pushState?: 'idle' | 'done'
-  /** 拉取进行中：工具栏按钮统一禁用（busy），进度反馈只留在「变更文件」面板 */
+  /** 拉取进行中：工具栏按钮统一禁用（busy） */
   pulling?: boolean
   /** 推送进行中：同上 */
   pushing?: boolean
@@ -218,6 +218,8 @@ onBeforeUnmount(() => {
 <template>
   <TooltipProvider :delay-duration="260">
     <div class="toolbar">
+      <!-- 拉取进度已移至窗口底部状态栏（Repository.vue .status-bar），跨视图常驻 -->
+
       <!-- 左区：Git 主流程 + 布局控制与常用辅助操作 -->
       <div class="tb-left">
         <!-- Git 主流程：连接式分段按钮（拉取 | 提交 | 推送） -->

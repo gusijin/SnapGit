@@ -1274,10 +1274,13 @@ async function handleCheckoutFastForward(branchName: string) {
     await checkoutBranch(repoPath.value, branchName)
     isPulling.value = true
     beginPullProgress()
+    let ok = false
     try {
       await pullBranch(repoPath.value)
+      ok = true
     } finally {
-      finishPullProgress()
+      // 只有真正成功才让进度线满宽（全宽 = 拉取成功，失败直接收线）
+      finishPullProgress(ok)
     }
     await loadRepoData()
     resetCommitViewState()
@@ -1319,11 +1322,13 @@ async function handlePull() {
   if (isPulling.value) return
   isPulling.value = true
   beginPullProgress()
+  let ok = false
   try {
     await pullBranch(repoPath.value)
     await loadRepoData()
     lastPullTime.value = Date.now()
-    // 拉取成功不再弹 toast（古哥 2026-10-21）：进度反馈已在「变更文件」面板内联展示完毕
+    ok = true
+    // 拉取成功不再弹 toast（古哥 2026-10-21）：满宽进度线就是成功反馈
   } catch (e: any) {
     console.error('Pull error:', e)
     // 没有配置任何远程（刚 init / 还没添加 origin）：弹引导式对话框，引导用户「创建远程」，
@@ -1341,7 +1346,8 @@ async function handlePull() {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
   } finally {
-    finishPullProgress()
+    // 失败 / 分叉 / 冲突 / 无远程都不算成功，进度线停在原宽度淡出，绝不铺满
+    finishPullProgress(ok)
   }
 }
 
@@ -1351,10 +1357,12 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
   isPulling.value = true
   beginPullProgress()
   showPullDivergedDialog.value = false
+  let ok = false
   try {
     await pullWithStrategy(repoPath.value, strategy)
     await loadRepoData()
     lastPullTime.value = Date.now()
+    ok = true
     // 拉取成功不再弹 toast（古哥 2026-10-21）
   } catch (e: any) {
     console.error('Pull strategy error:', e)
@@ -1371,7 +1379,8 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
       showToast(t('repository.pullFailed', { error: msg }), 'error')
     }
   } finally {
-    finishPullProgress()
+    // 冲突还要用户解决，不算拉取成功 -> 不铺满全宽
+    finishPullProgress(ok)
   }
 }
 
@@ -1599,8 +1608,8 @@ let pushStateTimer: ReturnType<typeof setTimeout> | null = null
 const isPulling = ref(false)
 const isPushing = ref(false)
 
-// 拉取进度：后端通过 `pull-progress` 事件实时推送 git fetch/pull 百分比（Receiving/Resolving 等阶段）。
-// 拉取一开始就立即显示（visible 直接置 true），由「变更文件」面板顶部的单行进度条展示，无延迟。
+// 拉取进度：后端通过 `pull-progress` 事件实时推送 git 百分比与原始进度片段。
+// 拉取一开始就立即显示（visible 直接置 true），由窗口底部状态栏的一行文字展示，无延迟。
 const pullProgress = ref<{ percent: number; phase: string; detail: string; visible: boolean }>({
   percent: 0,
   phase: '',
@@ -1608,18 +1617,77 @@ const pullProgress = ref<{ percent: number; phase: string; detail: string; visib
   visible: false,
 })
 
+// 从 git 原始进度片段解析「大小 · 速度 / 对象数」统计段。
+// 片段形如 `remote: Receiving objects:  34% (100/238), 1.2 MiB | 300 KiB/s`：
+//   - 数量/总量 `(100/238)`：counting/compressing（服务端准备）阶段用它；
+//   - 已下载大小 `1.2 MiB`（`, xx` 且后跟 `|`）与速度 `300 KiB/s`（`|` 之后）：仅 receiving 有。
+// resolving / done 阶段**冻结** receiving 的最终统计：delta 计数 `(5/15)` 不是对象下载数，
+// 混进来会让数字对不上（古哥 2026-10-21 定过的口径）。
+const pullStats = ref<string[]>([])
+watch(pullProgress, (p) => {
+  const phase = p.phase
+  const d = p.detail || ''
+  if (!p.visible || !phase) {
+    pullStats.value = []
+    return
+  }
+  if (phase === 'counting' || phase === 'compressing') {
+    const cnt = d.match(/\((\d+)\/(\d+)\)/)
+    pullStats.value = cnt ? [t('repository.pullPhase.objectsCount', { done: cnt[1], total: cnt[2] })] : []
+    return
+  }
+  if (phase === 'receiving') {
+    const parts: string[] = []
+    const size = d.match(/,\s*([\d.]+\s*[KMGT]?iB)\s*\|/)
+    if (size) parts.push(size[1])
+    const speed = d.match(/\|\s*([\d.]+\s*[KMGT]?iB\/s)/)
+    if (speed) parts.push(speed[1])
+    pullStats.value = parts
+    return
+  }
+  // resolving / done / pulling：保留上一阶段的统计（或空），不覆盖成 delta 计数
+}, { deep: true, immediate: true })
+
+// 状态栏的一行文字：阶段 · 百分比 · 大小 · 速度（缺哪段省哪段）。
+// 连接阶段 git 尚无真实百分比 → 不显示「0%」这种假精确；完成态只留「拉取完成」。
+const pullStatusText = computed(() => {
+  const p = pullProgress.value
+  let phase: string
+  switch (p.phase) {
+    case 'receiving': phase = t('repository.pullPhase.receiving'); break
+    case 'resolving': phase = t('repository.pullPhase.resolving'); break
+    case 'counting': phase = t('repository.pullPhase.counting'); break
+    case 'compressing': phase = t('repository.pullPhase.compressing'); break
+    case 'done': phase = t('repository.pullPhase.done'); break
+    default: phase = t('repository.pullPhase.pulling')
+  }
+  if (p.phase === 'done') return phase
+  const parts = [phase]
+  if (p.percent > 0) parts.push(`${p.percent}%`)
+  parts.push(...pullStats.value)
+  return parts.join(' · ')
+})
+
 // 进入拉取：重置进度并立即显示
 function beginPullProgress() {
   pullProgress.value = { percent: 0, phase: '', detail: '', visible: true }
 }
 
-// 结束拉取：进入「100% 完成」态，延迟 600ms 淡出
-function finishPullProgress() {
-  pullProgress.value = { percent: 100, phase: 'done', detail: '完成', visible: true }
+// 结束拉取：只有 success=true 才切到「拉取完成」态，状态栏文字多停留一会儿再淡出。
+// 失败 / 分叉 / 冲突 / 无远程直接隐藏文字，绝不给出「已完成」的误导。
+// 按钮解锁仍按原 600ms 节奏，与状态栏文字的停留时长解耦。
+function finishPullProgress(success: boolean) {
   setTimeout(() => {
     isPulling.value = false
-    pullProgress.value.visible = false
   }, 600)
+  if (!success) {
+    pullProgress.value.visible = false
+    return
+  }
+  pullProgress.value = { percent: 100, phase: 'done', detail: '完成', visible: true }
+  setTimeout(() => {
+    pullProgress.value.visible = false
+  }, 900)
 }
 
 // 工具栏/菜单「推送」：不弹窗，直接把当前分支推到远程
@@ -2148,15 +2216,17 @@ async function setupMenuListener() {
     unlistenFileEdited = await listen('file-edited', () => {
       refreshFileStatusesAuto()
     })
-    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由「变更文件」面板内联展示（拉取开始即显示，无延迟）。
+    // 拉取进度：实时把后端推送的 git 百分比写入 pullProgress，由窗口底部状态栏的一行文字展示（拉取开始即显示，无延迟）。
     // done 事件直接忽略（双保险，后端已不再发）：完成态唯一来源是 finishPullProgress，
-    // 否则 fetch/pull 各自的 done 会把「拉取完成」闪现多次、还可能在合并中途藏掉进度面板。
+    // 否则 fetch/pull 各自的 done 会把「拉取完成」闪现多次、还可能在合并中途藏掉进度文字。
+    // 百分比不再封顶 96%：那是「全宽 = 成功」的进度条遗留约束，文字里出现 96% 反而像卡住；
+    // 现在阶段文案（正在接收对象 / 正在应用更新）本身就说明 100% 只是当前子阶段结束。
     unlistenPullProgress = await listen<{ percent: number; phase: string; detail: string }>(
       'pull-progress',
       (event) => {
         const { percent, phase, detail } = event.payload
-        if (phase === 'done') return
-        pullProgress.value.percent = percent
+        if (phase === 'done' || pullProgress.value.phase === 'done') return
+        pullProgress.value.percent = Math.min(Math.max(percent, 0), 100)
         pullProgress.value.phase = phase
         pullProgress.value.detail = detail
       },
@@ -2423,7 +2493,6 @@ onBeforeUnmount(() => {
               @refresh="refreshAll"
               @resolve-conflicts="finishPullResolve"
               @abort-conflicts="abortPullResolve"
-              :pull-progress="pullProgress"
             />
           </div>
           <!-- 拖拉分隔条 -->
@@ -2503,6 +2572,18 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </div>
+
+    <!-- 全局底部状态栏：根 flex 列的最后一项，与 mainView 无关，切到提交日志视图也不卸载。
+         拉取时显示一行进度文字；空闲时容器仍在（26px），不显示内容，零布局跳动。 -->
+    <footer class="status-bar">
+      <Transition name="status-fade">
+        <span
+          v-if="pullProgress.visible && pullStatusText"
+          class="status-bar-text"
+          :title="pullStatusText"
+        >{{ pullStatusText }}</span>
+      </Transition>
+    </footer>
 
     <!-- 提交对话框 -->
     <Dialog v-model:open="showCommitDialog">
@@ -2840,6 +2921,48 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* ===== 全局底部状态栏：根 flex 列的最后一项，切视图不卸载 =====
+   固定 26px + flex-shrink:0，拉取文字出现/消失不会挤压主布局；
+   与工具栏同色上下呼应，只用一条 1px 顶边与主内容区分。 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 0 12px;
+  background-color: var(--bg-toolbar);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.status-bar-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 百分比 / 大小 / 速度每次更新都不改字形宽度，避免文字左右抖动 */
+  font-variant-numeric: tabular-nums;
+}
+.status-fade-enter-active,
+.status-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.status-fade-enter-from,
+.status-fade-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-fade-enter-active,
+  .status-fade-leave-active {
+    transition: none;
+  }
+}
+
 /* 主布局 */
 .main-layout {
   display: flex;
@@ -2887,11 +3010,11 @@ onBeforeUnmount(() => {
 .file-list-area {
   min-height: 0;
   overflow: hidden;
-  /* 作为拉取进度遮罩的定位上下文（遮罩绝对居中于本面板） */
+  /* 保留定位上下文：面板内右键菜单等浮层依赖此层 */
   position: relative;
 }
 
-/* ===== 拉取进度（超过 5 秒）：原居中弹窗已弃用，改为 FileList 面板内联展示（见 FileList.vue .pull-progress-banner） ===== */
+/* ===== 拉取进度：原居中弹窗 / FileList 内联条均已弃用，现为工具栏下沿 2px 全宽线（见 ToolBar.vue .global-pull-line） ===== */
 
 .file-list-area > :deep(.file-list) {
   border-right: none;
