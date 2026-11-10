@@ -747,7 +747,12 @@ defineExpose({ openCreateDialog })
 
 .panel-content {
   flex: 1;
-  overflow: auto;
+  /* 只允许纵向滚动。列表行靠 margin-right:-8px 把 hover 背景铺进滚动条槽位，
+     这 8px 在 WebView2 的经典滚动条下会被算成横向溢出：一旦长分支名换行把列表撑高、
+     竖向滚动条激活，底部就冒出一条几乎满宽的水平滚动条（古哥 2026-11-10 反馈）。
+     overflow-x:hidden 直接掐断横向滚动；行背景仍在 padding box 内，不会被裁掉。 */
+  overflow-x: hidden;
+  overflow-y: auto;
   /* 常驻滚动条槽：分支多少都不改变内容宽度，分组数量徽标右边缘固定，与仓库面板数量徽标同列 */
   scrollbar-gutter: stable;
   padding: 0;
@@ -851,6 +856,11 @@ defineExpose({ openCreateDialog })
 
 .branch-name {
   flex: 1;
+  /* flex item 默认 min-width:auto，遇到没有断点机会的超长分支名（一长串 ASCII / hash）会拒绝收缩，
+     把整行撑出容器；面板拖窄时尤其明显。min-width:0 允许收缩，
+     overflow-wrap:anywhere 让它在任意字符处换行，而不是溢出或被裁。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: Consolas, Monaco, monospace;
 }
 
