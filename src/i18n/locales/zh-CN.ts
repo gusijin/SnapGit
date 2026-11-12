@@ -100,7 +100,6 @@ export default {
     stash: '储藏',
     refresh: '刷新',
     pullDone: '完成',
-    pushed: '已推送',
     detachedHead: '游离 HEAD',
     loadingBranch: '分支加载中…',
     currentBranch: '当前分支',

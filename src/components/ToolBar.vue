@@ -25,8 +25,6 @@ interface Props {
   /** 分支列表是否已加载完成：用于区分「加载中」与「真的游离 HEAD」 */
   branchListReady?: boolean
   repositoryPath: string
-  /** 推送反馈状态：done = 推送成功，按钮短暂显示"已推送"并隐藏 Tooltip */
-  pushState?: 'idle' | 'done'
   /** 拉取进行中：工具栏按钮统一禁用（busy） */
   pulling?: boolean
   /** 推送进行中：同上 */
@@ -51,7 +49,6 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   branchListReady: false,
-  pushState: 'idle',
   pulling: false,
   pushing: false,
   branches: () => [],
@@ -225,18 +222,8 @@ onBeforeUnmount(() => {
         <!-- Git 主流程：连接式分段按钮（拉取 | 提交 | 推送） -->
         <div class="seg-group">
           <template v-for="tool in primaryTools" :key="tool.id">
-            <!-- 推送成功态：不渲染 Tooltip（提示彻底消失），按钮短暂显示"已推送"反馈 -->
-            <button
-              v-if="tool.id === 'push' && pushState === 'done'"
-              type="button"
-              class="seg-btn seg-pushed"
-              disabled
-            >
-              <Check :size="15" />
-              <span>{{ t('toolbar.pushed') }}</span>
-            </button>
-            <!-- 常规态：Tooltip 悬浮提示 -->
-            <Tooltip v-else>
+            <!-- 常规态：Tooltip 悬浮提示（推送成功后按钮保持原样，反馈只走提示浮层） -->
+            <Tooltip>
               <TooltipTrigger as-child>
                 <button
                   type="button"
@@ -584,14 +571,6 @@ onBeforeUnmount(() => {
 .seg-btn.is-primary:hover:not(:disabled) {
   background-color: var(--bg-hover);
   color: var(--brand-primary);
-}
-
-/* 推送成功反馈：绿色勾 + "已推送"，不响应点击 */
-.seg-pushed,
-.seg-pushed:disabled {
-  color: var(--color-add);
-  opacity: 1;
-  cursor: default;
 }
 
 /* ===== 右侧：当前分支徽章 ===== */

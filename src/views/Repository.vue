@@ -1180,12 +1180,6 @@ async function handleCommitAndPush() {
       return
     }
     await pushChanges(repoPath.value, upstream.remote, committedBranch, upstream.remote_branch)
-    // 触发工具栏"已推送"反馈
-    pushState.value = 'done'
-    if (pushStateTimer) clearTimeout(pushStateTimer)
-    pushStateTimer = setTimeout(() => {
-      pushState.value = 'idle'
-    }, 2000)
     showToast(t('repository.pushSuccess'), 'success')
     loadRepoData()
   } catch (e: any) {
@@ -1600,10 +1594,6 @@ watch(
   { immediate: true }
 )
 
-// 推送成功反馈：工具栏推送按钮短暂显示"已推送"并隐藏 Tooltip
-const pushState = ref<'idle' | 'done'>('idle')
-let pushStateTimer: ReturnType<typeof setTimeout> | null = null
-
 // 拉取 / 推送中状态（驱动 ToolBar 按钮加载效果）
 const isPulling = ref(false)
 const isPushing = ref(false)
@@ -1758,12 +1748,6 @@ async function handlePush() {
     }
 
     await pushChanges(repoPath.value, remote, branch, remoteBranch)
-    // 触发工具栏"已推送"反馈
-    pushState.value = 'done'
-    if (pushStateTimer) clearTimeout(pushStateTimer)
-    pushStateTimer = setTimeout(() => {
-      pushState.value = 'idle'
-    }, 2000)
     showToast(t('repository.pushSuccess'), 'success')
     loadRepoData()
   } catch (e: any) {
@@ -1880,11 +1864,6 @@ async function handleDeleteRemoteBranch(payload: { remote: string; remoteBranch:
 }
 
 function handlePushed() {
-  pushState.value = 'done'
-  if (pushStateTimer) clearTimeout(pushStateTimer)
-  pushStateTimer = setTimeout(() => {
-    pushState.value = 'idle'
-  }, 2000)
   loadRepoData()
   showToast(t('repository.pushSuccess'), 'success')
 }
@@ -2364,10 +2343,6 @@ onBeforeUnmount(() => {
     clearTimeout(switchTimer)
     switchTimer = null
   }
-  if (pushStateTimer) {
-    clearTimeout(pushStateTimer)
-    pushStateTimer = null
-  }
   if (unlistenMenuAction) {
     unlistenMenuAction()
     unlistenMenuAction = null
@@ -2423,7 +2398,6 @@ onBeforeUnmount(() => {
       :remote-url="remoteUrl"
       :repo-name="repoName"
       :last-pull-time="lastPullTime"
-      :push-state="pushState"
       :pulling="isPulling"
       :pushing="isPushing"
       @open-repo="handleOpenRepo"

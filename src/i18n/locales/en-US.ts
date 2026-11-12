@@ -99,7 +99,6 @@ export default {
     stash: 'Stash',
     refresh: 'Refresh',
     pullDone: 'Done',
-    pushed: 'Pushed',
     detachedHead: 'Detached HEAD',
     loadingBranch: 'Loading branch…',
     currentBranch: 'Current branch',
