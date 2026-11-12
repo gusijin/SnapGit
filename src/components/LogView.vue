@@ -267,7 +267,15 @@ onMounted(() => {
 
     <div v-else class="log-list">
       <!-- @contextmenu.prevent.stop：日志列表禁用右键，不弹出任何菜单（搜索框不在本容器内，仍可正常右键粘贴） -->
-      <div class="log-items" ref="logItemsRef" @scroll="onLogScroll" @contextmenu.prevent.stop>
+      <!-- 行高单一数据源：由 commitGraph.ts 的 GRAPH_ROW_HEIGHT 注入 CSS 变量，
+           列表行、图谱列、SVG 画布与连线坐标共用，改行高只需改那一处常量。 -->
+      <div
+        class="log-items"
+        ref="logItemsRef"
+        :style="{ '--log-row-height': GRAPH_ROW_HEIGHT + 'px' }"
+        @scroll="onLogScroll"
+        @contextmenu.prevent.stop
+      >
         <div
           v-for="(commit, index) in filteredCommits"
           :key="commit.id"
@@ -668,12 +676,13 @@ onMounted(() => {
   display: grid;
   /* 列序：图谱 / 提交信息 / 作者 / 日期。作者列收窄至 110px（原 150px），
      avatar 20px + gap 8px + 名字约 82px，足够显示常见用户名；过长的截断省略。
-     高度固定 38px，与 commitGraph.ts 的 GRAPH_ROW_HEIGHT 保持一致（SVG 按此绘制）。
-     分隔线用 inset box-shadow 而非 border，保证每行可用高度也是 38px。 */
+     行高走 --log-row-height（由 GRAPH_ROW_HEIGHT 注入到 .log-items），紧凑但
+     仍容纳 20px 头像与 18px 分支胶囊；SVG 画布按同一常量绘制，改高只需改常量。
+     分隔线用 inset box-shadow 而非 border，保证每行可用高度就是整行行高。 */
   grid-template-columns: auto minmax(0, 1fr) 110px 150px;
   gap: 10px;
   padding: 0 12px;
-  height: 38px;
+  height: var(--log-row-height);
   box-sizing: border-box;
   line-height: 1.4;
   align-items: center;
@@ -704,11 +713,12 @@ onMounted(() => {
   gap: 8px;
 }
 
-/* 图谱列：svg 定宽（泳道数 × 14px），垂直居中铺满行高 */
+/* 图谱列：svg 定宽（泳道数 × 14px），高度与 .log-item 共用同一个变量，
+   节点圆心与连线端点才能精确落在行中线 / 行边界上 */
 .col-graph {
   display: flex;
   align-items: center;
-  height: 38px;
+  height: var(--log-row-height);
   flex-shrink: 0;
   overflow: hidden;
 }

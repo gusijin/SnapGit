@@ -1,7 +1,9 @@
 import type { Commit } from '../types'
 
-// 每行图谱的固定高度，必须与 LogView 中 .log-item 的高度一致
-export const GRAPH_ROW_HEIGHT = 38
+// 提交日志每行高度的唯一数据源：LogView 把它注入 --log-row-height 供 .log-item /
+// .col-graph 使用，本文件据此绘制泳道连线与节点圆心。改这里即可整体缩放行高，
+// 勿在 CSS 里另写死数字，否则图谱会与行错位。
+export const GRAPH_ROW_HEIGHT = 28
 // 每条泳道占用的宽度
 export const GRAPH_LANE_WIDTH = 14
 // 图谱最多渲染的泳道数，历史过于嘈杂时收窄，避免挤占提交信息
