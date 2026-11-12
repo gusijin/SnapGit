@@ -2983,11 +2983,11 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   /* 百分比 / 大小 / 速度每次更新都不改字形宽度，避免文字左右抖动 */
   font-variant-numeric: tabular-nums;
-  /* 空闲 ↔ 冲突的颜色切换柔和一点，文字内容本身仍是即时替换（拉取零延迟） */
-  transition: color 0.2s ease;
 }
 /* 冲突态：整行转告警红。--color-del 在深浅两套主题下各自适配，
-   这是整条状态栏唯一的色彩例外，其余状态一律灰字。 */
+   这是整条状态栏唯一的色彩例外，其余状态一律灰字。
+   刻意不做 color 过渡：实测会让拉取开始后的 200ms 内进度文字残留一层红色余温，
+   一行小字直接变色反而更干净。 */
 .status-bar-text.is-alert {
   color: var(--color-del);
 }
@@ -3001,8 +3001,7 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .status-fade-enter-active,
-  .status-fade-leave-active,
-  .status-bar-text {
+  .status-fade-leave-active {
     transition: none;
   }
 }
