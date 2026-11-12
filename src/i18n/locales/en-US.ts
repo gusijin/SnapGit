@@ -502,6 +502,12 @@ export default {
       objectsCount: '{done}/{total} objects',
       done: 'Pull complete',
     },
+    // Bottom status bar idle text: a single line with global summary not shown elsewhere
+    statusBar: {
+      clean: 'Working tree clean',
+      changes: '{n} changes',
+      conflicts: '{n} conflicts to resolve',
+    },
     noChangesToCommit: 'No changes to commit',
     filesVanished: 'Selected files no longer exist; cannot commit',
     commitFailed: 'Commit failed: {error}',

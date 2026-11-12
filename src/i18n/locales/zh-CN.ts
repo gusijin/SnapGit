@@ -504,6 +504,12 @@ export default {
       objectsCount: '{done}/{total} 个对象',
       done: '拉取完成',
     },
+    // 底部状态栏空闲态：一行文字，只报工具栏状态弹窗之外看不到的全局摘要
+    statusBar: {
+      clean: '工作区干净',
+      changes: '{n} 个变更',
+      conflicts: '{n} 个冲突待解决',
+    },
     noChangesToCommit: '没有需要提交的更改',
     // 提交前刷新工作区状态时，所选文件已不存在（被改名/删除、残留于旧列表）的提示
     filesVanished: '所选文件已不存在，无法提交',

@@ -1668,6 +1668,39 @@ const pullStatusText = computed(() => {
   return parts.join(' · ')
 })
 
+// ===== 底部状态栏：方案 A —— 严格一行文字，按模式整行替换 =====
+// ① progress：拉取等临时任务进行中，优先占用整行（零延迟，不编造 0%）；
+// ② alert：有冲突文件，整行转红（提交守卫要求冲突跨视图常驻可见）；
+// ③ idle：仓库名 · 工作区摘要，跨视图常驻。
+// 刻意不放分支名 / ↑↓ / 上次拉取：工具栏药丸与状态弹窗已经有一份，不重复播报。
+const statusBarMode = computed<'progress' | 'alert' | 'idle'>(() => {
+  if (pullProgress.value.visible && pullStatusText.value) return 'progress'
+  if (workingTreeCounts.value.conflict > 0) return 'alert'
+  return 'idle'
+})
+
+const statusBarText = computed(() => {
+  const mode = statusBarMode.value
+  if (mode === 'progress') return pullStatusText.value
+  // 未打开仓库：状态栏留白（容器仍常驻 26px，零布局跳动）
+  if (!repoPath.value) return ''
+  const parts = [repoName.value]
+  // 状态扫描中 fileStatuses 还是空的，此时别急着报「工作区干净」——
+  // FileList 用 :loading 守的是同一个误报，这里保持一致。
+  if (!fileStatusLoading.value) {
+    const c = workingTreeCounts.value
+    if (mode === 'alert') {
+      parts.push(t('repository.statusBar.conflicts', { n: c.conflict }))
+    } else {
+      const n = c.modified + c.untracked
+      parts.push(n > 0
+        ? t('repository.statusBar.changes', { n })
+        : t('repository.statusBar.clean'))
+    }
+  }
+  return parts.join(' · ')
+})
+
 // 进入拉取：重置进度并立即显示
 function beginPullProgress() {
   pullProgress.value = { percent: 0, phase: '', detail: '', visible: true }
@@ -2574,14 +2607,17 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 全局底部状态栏：根 flex 列的最后一项，与 mainView 无关，切到提交日志视图也不卸载。
-         拉取时显示一行进度文字；空闲时容器仍在（26px），不显示内容，零布局跳动。 -->
+         方案 A：严格一行文字 —— 空闲显示「仓库名 · 工作区摘要」，冲突整行转红，
+         拉取时整行替换为进度文字；容器恒常驻 26px，文字变化零布局跳动。
+         不加 key / out-in：拉取开始必须零延迟显示，进度每帧刷新也不该重播淡入淡出。 -->
     <footer class="status-bar">
       <Transition name="status-fade">
         <span
-          v-if="pullProgress.visible && pullStatusText"
+          v-if="statusBarText"
           class="status-bar-text"
-          :title="pullStatusText"
-        >{{ pullStatusText }}</span>
+          :class="{ 'is-alert': statusBarMode === 'alert' }"
+          :title="statusBarText"
+        >{{ statusBarText }}</span>
       </Transition>
     </footer>
 
@@ -2922,7 +2958,7 @@ onBeforeUnmount(() => {
 }
 
 /* ===== 全局底部状态栏：根 flex 列的最后一项，切视图不卸载 =====
-   固定 26px + flex-shrink:0，拉取文字出现/消失不会挤压主布局；
+   固定 26px + flex-shrink:0，空闲常驻文字与进度文字整行互换都不会挤压主布局；
    与工具栏同色上下呼应，只用一条 1px 顶边与主内容区分。 */
 .status-bar {
   display: flex;
@@ -2947,6 +2983,13 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   /* 百分比 / 大小 / 速度每次更新都不改字形宽度，避免文字左右抖动 */
   font-variant-numeric: tabular-nums;
+  /* 空闲 ↔ 冲突的颜色切换柔和一点，文字内容本身仍是即时替换（拉取零延迟） */
+  transition: color 0.2s ease;
+}
+/* 冲突态：整行转告警红。--color-del 在深浅两套主题下各自适配，
+   这是整条状态栏唯一的色彩例外，其余状态一律灰字。 */
+.status-bar-text.is-alert {
+  color: var(--color-del);
 }
 .status-fade-enter-active,
 .status-fade-leave-active {
@@ -2958,7 +3001,8 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .status-fade-enter-active,
-  .status-fade-leave-active {
+  .status-fade-leave-active,
+  .status-bar-text {
     transition: none;
   }
 }
