@@ -2,12 +2,16 @@
 
 > 🚀 A lightweight, fast and stable Git desktop client, built with **Tauri 2 + Vue 3 + Rust**. Native on Windows and macOS, with light / dark themes and a bilingual (中文 / English) interface.
 
-**[简体中文](README.zh-CN.md)** · **[⬇ Download the latest release](https://github.com/gusijin/SnapGit/releases)**
+**[简体中文](README.zh-CN.md)** · **[⬇ Download installers](https://github.com/gusijin/SnapGit/tree/main/releases)**
 
-[![Release](https://img.shields.io/github/v/release/gusijin/SnapGit?label=release&color=2d6cdf)](https://github.com/gusijin/SnapGit/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases)
+[![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
+[![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#download)
+[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**💯 100% free & open source — no activation, ever.** No account, no license key, no sign-in, no trial period, no paid tier. Download the installer, open a repository, and SnapGit is ready to use immediately.
 
 ![SnapGit working tree view, light theme](docs/screenshots/en/worktree-light.png)
 
@@ -15,14 +19,16 @@
 
 ## Download
 
-Get the latest installer from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** (current version: **0.1.0**).
+Installers for **0.1.0** ship in the repository's **[releases/ directory](https://github.com/gusijin/SnapGit/tree/main/releases)** — open a file and use **Download raw file**. The standard **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** page is created automatically when a `v*` tag is pushed (see [CI](#ci)).
+
+> ✅ All installers are free to download. There is no registration, activation step or trial period — just install it and open a repository.
 
 | Platform | Architecture | Installer |
 | --- | --- | --- |
-| Windows | x64 (64-bit) | `SnapGit_0.1.0_x64-setup.exe` |
-| Windows | x86 (32-bit) | `SnapGit_0.1.0_x86-setup.exe` |
-| macOS | Apple Silicon (arm64) | `SnapGit_0.1.0_aarch64.dmg` |
-| macOS | Intel (x86_64) | `SnapGit_0.1.0_x64.dmg` |
+| Windows | x64 (64-bit) | [`SnapGit_0.1.0_x64-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64-setup.exe) |
+| Windows | x86 (32-bit) | [`SnapGit_0.1.0_x86-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x86-setup.exe) |
+| macOS | Apple Silicon (arm64) | [`SnapGit_0.1.0_aarch64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_aarch64.dmg) |
+| macOS | Intel (x86_64) | [`SnapGit_0.1.0_x64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64.dmg) |
 
 ### Windows
 
@@ -34,7 +40,7 @@ Get the latest installer from **[GitHub Releases](https://github.com/gusijin/Sna
 
 1. Download the `.dmg` that matches your chip: `aarch64` for Apple Silicon, `x64` for Intel.
 2. Open the DMG and drag **SnapGit** into `Applications`.
-3. Builds are currently **unsigned**. If Gatekeeper reports that the app is damaged, right-click the app and choose **Open**, or remove the quarantine flag:
+3. Builds are **ad-hoc signed but not notarized** with an Apple Developer ID. If Gatekeeper reports that the app is damaged, right-click the app and choose **Open**, or remove the quarantine flag:
 
    ```bash
    sudo xattr -rd com.apple.quarantine /Applications/SnapGit.app
@@ -66,6 +72,7 @@ The **Submodules panel is hidden by default**. Enable it from **View → Submodu
 
 ## Features
 
+- **Free & activation-free** — open source under Apache-2.0; no account, no license key, no trial, no paid tier. Every feature works right after installation.
 - **Repositories** — open, clone, initialize and scan local repos; recent-repository list and cached first-run scan for a fast start.
 - **Branches** — create, checkout, rename, merge, delete local / remote branches; ahead / behind counts; detached-HEAD awareness.
 - **Commits & sync** — stage files, commit, commit-and-push, pull with merge / rebase strategy, non-fast-forward recovery with **Pull and Push**, push failure classification (credentials / SSH / non-ff), automatic fallback across all detected SSH private keys.
@@ -104,7 +111,7 @@ npm run tauri -- build --target i686-pc-windows-msvc --bundles nsis
 npm run tauri -- build --bundles dmg
 ```
 
-Output lands in `src-tauri/target/release/bundle/` (or `src-tauri/target/<triple>/release/bundle/` when `--target` is used). macOS builds are unsigned by default; set `bundle.macOS.signingIdentity` in `tauri.conf.json` and notarize before distributing.
+Output lands in `src-tauri/target/release/bundle/` (or `src-tauri/target/<triple>/release/bundle/` when `--target` is used). macOS builds are ad-hoc signed by default; use a Developer ID in `bundle.macOS.signingIdentity` and notarize before distributing.
 
 ### CI
 
@@ -115,9 +122,13 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+A manual `workflow_dispatch` run only rebuilds and commits the artifacts into `releases/` — it does **not** create a GitHub Release.
+
 ## FAQ
 
-**The macOS app says it is damaged / cannot be opened.** The build is unsigned — see the [Mac](#mac) section for the `xattr` command.
+**Is SnapGit free? Do I need to activate it?** Yes — SnapGit is 100% free and open source (Apache-2.0). There is no account, serial number, activation step, trial period or paid tier; all features are usable immediately after installation.
+
+**The macOS app says it is damaged / cannot be opened.** The build is not notarized — see the [Mac](#mac) section for the `xattr` command.
 
 **Where is the Submodules panel?** Hidden by default. **View → Submodules** toggles it, and the setting is remembered across restarts.
 

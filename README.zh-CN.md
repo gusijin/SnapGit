@@ -2,12 +2,16 @@
 
 > 🚀 更轻量、更快速、更稳定的 Git 桌面客户端，基于 **Tauri 2 + Vue 3 + Rust** 构建。原生支持 Windows 与 macOS，提供浅色 / 深色主题与中英双语界面。
 
-**[English](README.md)** · **[⬇ 下载最新版](https://github.com/gusijin/SnapGit/releases)**
+**[English](README.md)** · **[⬇ 下载安装包](https://github.com/gusijin/SnapGit/tree/main/releases)**
 
-[![Release](https://img.shields.io/github/v/release/gusijin/SnapGit?label=release&color=2d6cdf)](https://github.com/gusijin/SnapGit/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases)
+[![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
+[![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#下载)
+[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**💯 完全免费、开源，装好直接用，不用激活。** 不用注册账号、不用激活码 / 许可证、不用登录、没有试用期，也没有付费版和功能锁 —— 下载安装包，打开仓库就能开始用。
 
 ![SnapGit 工作区视图（浅色主题）](docs/screenshots/zh/worktree-light.png)
 
@@ -15,14 +19,16 @@
 
 ## 下载
 
-前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** 下载最新安装包（当前版本：**0.1.0**）。
+**0.1.0** 的四个安装包放在仓库的 **[releases/ 目录](https://github.com/gusijin/SnapGit/tree/main/releases)**，点开文件后用 **Download raw file** 即可下载。标准的 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** 发布页会在推送 `v*` tag 后自动生成（见下方 CI 自动打包一节）。
+
+> ✅ 所有安装包免费下载，安装后无需注册、无需激活、没有试用期 —— 打开仓库即可开始使用。
 
 | 平台 | 架构 | 安装包 |
 | --- | --- | --- |
-| Windows | x64（64 位） | `SnapGit_0.1.0_x64-setup.exe` |
-| Windows | x86（32 位） | `SnapGit_0.1.0_x86-setup.exe` |
-| macOS | Apple Silicon（arm64） | `SnapGit_0.1.0_aarch64.dmg` |
-| macOS | Intel（x86_64） | `SnapGit_0.1.0_x64.dmg` |
+| Windows | x64（64 位） | [`SnapGit_0.1.0_x64-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64-setup.exe) |
+| Windows | x86（32 位） | [`SnapGit_0.1.0_x86-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x86-setup.exe) |
+| macOS | Apple Silicon（arm64） | [`SnapGit_0.1.0_aarch64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_aarch64.dmg) |
+| macOS | Intel（x86_64） | [`SnapGit_0.1.0_x64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64.dmg) |
 
 ### Windows
 
@@ -34,7 +40,7 @@
 
 1. 按芯片选择 DMG：Apple Silicon 用 `aarch64`，Intel 用 `x64`。
 2. 打开 DMG，把 **SnapGit** 拖进 `Applications`。
-3. 当前产物 **未签名**。若 Gatekeeper 提示「已损坏」，右键选择 **打开**，或移除隔离属性：
+3. 当前产物 **仅做 ad-hoc 签名，未经 Apple Developer ID 签名与公证**。若 Gatekeeper 提示「已损坏」，右键选择 **打开**，或移除隔离属性：
 
    ```bash
    sudo xattr -rd com.apple.quarantine /Applications/SnapGit.app
@@ -66,6 +72,7 @@
 
 ## 功能特性
 
+- **免费开源 · 免激活** —— Apache-2.0 开源协议，不注册、不激活、不试用，也没有付费版；安装后所有功能直接可用。
 - **仓库管理** —— 打开、克隆、初始化、扫描本地仓库；最近仓库列表与首次扫描缓存，启动即可秒开。
 - **分支管理** —— 创建、切换、重命名、合并、删除本地 / 远程分支；领先 / 落后计数；游离 HEAD 识别。
 - **提交与同步** —— 暂存、提交、提交并推送、merge / rebase 策略拉取、非快进时「拉取并推送」一键恢复；推送失败分类（凭据 / SSH / 非快进），自动尝试所有检测到的 SSH 默认私钥。
@@ -104,7 +111,7 @@ npm run tauri -- build --target i686-pc-windows-msvc --bundles nsis
 npm run tauri -- build --bundles dmg
 ```
 
-产物位于 `src-tauri/target/release/bundle/`；指定 `--target` 时多一层目标三元组目录。macOS 产物默认未签名，对外分发需在 `tauri.conf.json` 配置 `bundle.macOS.signingIdentity` 并做公证。
+产物位于 `src-tauri/target/release/bundle/`；指定 `--target` 时多一层目标三元组目录。macOS 产物默认仅做 ad-hoc 签名，对外分发需在 `tauri.conf.json` 配置 `bundle.macOS.signingIdentity` 为 Developer ID 并做公证。
 
 ### CI 自动打包
 
@@ -115,11 +122,15 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+手动触发 `workflow_dispatch` 只会重新构建并把产物提交回仓库 `releases/` 目录，**不会创建 GitHub Release**；只有推 `v*` tag 才会发布到 Releases 页面。
+
 产物统一汇总到仓库根目录的 `releases/`（推 tag 时只发布 Release，不回写分支）。
 
 ## 常见问题
 
-**macOS 提示「已损坏」打不开？** 产物未签名，按 [Mac](#mac) 一节执行 `xattr` 命令即可。
+**SnapGit 收费吗？需要激活吗？** 完全免费、开源（Apache-2.0）。不用注册账号、不用激活码、没有激活流程、没有试用期，也不存在付费版；安装后所有功能即可直接使用。
+
+**macOS 提示「已损坏」打不开？** 产物未经 Apple 公证，按 [Mac](#mac) 一节执行 `xattr` 命令即可。
 
 **子模块面板在哪里？** 默认隐藏，用 **视图 → 子模块** 开启；设置会保留到下次启动。
 
