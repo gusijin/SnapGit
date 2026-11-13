@@ -139,7 +139,7 @@ const menuItems = computed<MenuEntry[]>(() => [
         type: 'check',
         labelKey: 'menu.submodules',
         action: 'toggle-submodules',
-        checked: props.submoduleVisible !== false
+        checked: props.submoduleVisible === true
       },
       {
         type: 'check',

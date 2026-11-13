@@ -51,6 +51,8 @@ const { t, locale } = useI18n()
 const LAST_REPO_KEY = 'snapgit-last-repo'
 const FIRST_LAUNCH_KEY = 'snapgit-first-launch'
 const SCANNED_PROJECTS_KEY = 'snapgit-scanned-projects'
+// 「视图 → 子模块」显隐偏好：默认隐藏，用户在视图菜单切换后写入，重启保留
+const SUBMODULE_PANEL_KEY = 'snapgit-show-submodules'
 
 // 判断操作系统：macOS 使用原生菜单栏，隐藏窗口内菜单栏
 // 优先使用 navigator.platform（更可靠），userAgent 作为后备
@@ -1546,8 +1548,16 @@ const configRepoPath = ref('')
 const showCheckoutBranch = ref(false)
 const branchPanelRef = ref<InstanceType<typeof BranchPanel> | null>(null)
 const submodulePanelRef = ref<InstanceType<typeof SubmodulePanel> | null>(null)
-// 子模块面板显隐（视图菜单可切换）
-const showSubmodulePanel = ref(true)
+// 子模块面板显隐（视图菜单可切换）：默认隐藏；只有存过 '1' 才显示，
+// 未存过 / 存储不可用一律按隐藏处理，用户的切换偏好跨重启保留。
+function readSubmodulePanelVisible(): boolean {
+  try {
+    return localStorage.getItem(SUBMODULE_PANEL_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const showSubmodulePanel = ref(readSubmodulePanelVisible())
 
 // 「不是 Git 仓库 → 询问是否初始化为新仓库」对话框状态
 // 用户在菜单栏/工具栏打开普通文件夹时触发，确认后调 init_repository 初始化
@@ -2272,6 +2282,16 @@ function syncSidebarMenu(collapsed: boolean) {
 }
 watch(leftPanelCollapsed, (v) => syncSidebarMenu(v))
 
+// 子模块面板显隐：视图菜单切换后写入 localStorage（下次启动恢复），
+// 同时回传 macOS 原生菜单的「子模块」勾选态（Win/Linux 前端菜单直接读 prop，无需事件）
+function syncSubmodulesMenu(visible: boolean) {
+  import('@tauri-apps/api/event').then(({ emit }) => emit('submodules-toggled', { visible }))
+}
+watch(showSubmodulePanel, (v) => {
+  try { localStorage.setItem(SUBMODULE_PANEL_KEY, v ? '1' : '0') } catch {}
+  syncSubmodulesMenu(v)
+})
+
 // 视图切换联动侧边栏：历史视图的日志面板已在左侧，再显示侧边栏会挤占提交详情区，
 // 所以进历史视图自动折叠、回工作视图自动展开（覆盖双击进历史、退出按钮、工具栏/菜单切换四条路径）
 watch(mainView, (view) => {
@@ -2283,6 +2303,8 @@ onMounted(() => {
   window.addEventListener('keydown', onSidebarShortcut)
   // 初始同步一次侧边栏折叠态到 macOS 原生菜单勾选态
   syncSidebarMenu(leftPanelCollapsed.value)
+  // 初始同步一次子模块面板显隐到 macOS 原生菜单（含重启后恢复的偏好）
+  syncSubmodulesMenu(showSubmodulePanel.value)
   // 通知后端当前语言（含启动时恢复的语言偏好），同步 macOS 原生菜单勾选态
   import('@tauri-apps/api/event').then(({ emit }) =>
     emit('locale-changed', { locale: locale.value })

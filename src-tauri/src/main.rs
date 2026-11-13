@@ -4458,7 +4458,7 @@ struct LangMenuState {
 }
 
 #[cfg(target_os = "macos")]
-fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<CheckMenuItem<R>>, CheckMenuItem<R>)> {
+fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<CheckMenuItem<R>>, CheckMenuItem<R>, CheckMenuItem<R>)> {
     // 菜单项（触发前端事件）
     let open_repo_item = MenuItem::with_id(app, "open-repo", "打开仓库", true, None::<&str>)?;
     let clone_repo_item = MenuItem::with_id(app, "clone-repo", "克隆仓库", true, None::<&str>)?;
@@ -4471,7 +4471,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<Che
 
     let new_branch_item = MenuItem::with_id(app, "new-branch", "新建分支", true, None::<&str>)?;
     let checkout_branch_item = MenuItem::with_id(app, "checkout-branch", "切换分支", true, None::<&str>)?;
-    let toggle_submodules_item = CheckMenuItem::with_id(app, "toggle-submodules", "子模块", true, true, None::<&str>)?;
+    // 子模块面板默认隐藏，勾选态由前端 submodules-toggled 事件同步（含启动时恢复的偏好）
+    let toggle_submodules_item = CheckMenuItem::with_id(app, "toggle-submodules", "子模块", true, false, None::<&str>)?;
     let toggle_sidebar_item = CheckMenuItem::with_id(app, "toggle-sidebar", "侧边栏", true, true, None::<&str>)?;
     let toggle_theme_item = CheckMenuItem::with_id(app, "toggle-theme", "深色主题", true, true, None::<&str>)?;
 
@@ -4578,7 +4579,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<Che
         &[&file_menu, &edit_menu, &repo_menu, &branch_menu, &view_menu, &help_menu],
     )?;
 
-    Ok((menu, lang_items, toggle_sidebar_item))
+    Ok((menu, lang_items, toggle_sidebar_item, toggle_submodules_item))
 }
 
 // 将菜单事件转发给前端窗口（仅 macOS 使用）
@@ -4627,7 +4628,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 // 构建原生菜单栏（含语言切换项，用于同步勾选态）
-                let (menu, lang_items, sidebar_item) = build_menu(&app.handle())?;
+                let (menu, lang_items, sidebar_item, submodules_item) = build_menu(&app.handle())?;
                 app.set_menu(menu)?;
 
                 // 语言项引用：菜单事件与前端 locale-changed 事件共用，各自持有一份克隆
@@ -4674,6 +4675,16 @@ fn main() {
                         serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
                     if let Some(collapsed) = payload.get("collapsed").and_then(|v| v.as_bool()) {
                         let _ = sidebar_item.set_checked(!collapsed);
+                    }
+                });
+
+                // 前端「视图 → 子模块」切换后回传，保持原生菜单勾选态一致；
+                // 前端启动时也会同步一次，用于恢复 localStorage 里保存的显隐偏好。
+                app.listen("submodules-toggled", move |event| {
+                    let payload: serde_json::Value =
+                        serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
+                    if let Some(visible) = payload.get("visible").and_then(|v| v.as_bool()) {
+                        let _ = submodules_item.set_checked(visible);
                     }
                 });
             }
