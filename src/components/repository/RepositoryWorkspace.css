@@ -1,0 +1,81 @@
+/* 中间面板 */
+.center-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background-color: var(--bg-secondary);
+  min-height: 0;
+}
+
+.file-list-area {
+  min-height: 0;
+  overflow: hidden;
+  /* 保留定位上下文：面板内右键菜单等浮层依赖此层 */
+  position: relative;
+}
+
+/* ===== 拉取进度：原居中弹窗 / FileList 内联条均已弃用，现为工具栏下沿 2px 全宽线（见 ToolBar.vue .global-pull-line） ===== */
+
+.file-list-area > :deep(.file-list) {
+  border-right: none;
+}
+
+/* 统一拖拽分隔条（上下 + 左右共用同一套外观） */
+.resize-handle,
+.resize-handle-col {
+  flex-shrink: 0;
+  box-sizing: content-box;
+  background-clip: content-box;
+  background-color: var(--border-color);
+  position: relative;
+  z-index: 1;
+}
+
+/* 纵向拖拽（上下拉动）：仓库列表↔分支面板、文件↔差异↔日志 */
+.resize-handle {
+  height: 1px;
+  padding: 3px 0;
+  margin: -3px 0;
+  cursor: ns-resize;
+}
+
+/* 横向拖拽（左右拉动）：仓库面板 ↔ 中间面板 */
+.resize-handle-col {
+  width: 1px;
+  padding: 0 3px;
+  margin: 0 -3px;
+  cursor: col-resize;
+}
+
+.diff-area {
+  min-height: 0;
+}
+
+.log-area {
+  min-height: 0;
+}
+
+/* 提交历史视图：左右布局 */
+.log-view-layout {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.log-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* 历史视图日志面板与提交详情之间由 .resize-handle-col 把手分隔，故此处不再加右边框 */
+
+.commit-detail-area {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

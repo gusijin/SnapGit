@@ -1,0 +1,450 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* ===== 全局底部状态栏：根 flex 列的最后一项，切视图不卸载 =====
+   固定 26px + flex-shrink:0，空闲常驻文字与进度文字整行互换都不会挤压主布局；
+   与工具栏同色上下呼应，只用一条 1px 顶边与主内容区分。 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 0 12px;
+  background-color: var(--bg-toolbar);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.status-bar-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 百分比 / 大小 / 速度每次更新都不改字形宽度，避免文字左右抖动 */
+  font-variant-numeric: tabular-nums;
+}
+/* 冲突态：整行转告警红。--color-del 在深浅两套主题下各自适配，
+   这是整条状态栏唯一的色彩例外，其余状态一律灰字。
+   刻意不做 color 过渡：实测会让拉取开始后的 200ms 内进度文字残留一层红色余温，
+   一行小字直接变色反而更干净。 */
+.status-bar-text.is-alert {
+  color: var(--color-del);
+}
+.status-fade-enter-active,
+.status-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.status-fade-enter-from,
+.status-fade-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-fade-enter-active,
+  .status-fade-leave-active {
+    transition: none;
+  }
+}
+
+/* 主布局 */
+.main-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+  position: relative;
+}
+
+/* 左侧面板 */
+.left-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.left-panel > :deep(.repository-list) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.left-panel > :deep(.branch-panel) {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 中间面板 */
+.center-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background-color: var(--bg-secondary);
+  min-height: 0;
+}
+
+.file-list-area {
+  min-height: 0;
+  overflow: hidden;
+  /* 保留定位上下文：面板内右键菜单等浮层依赖此层 */
+  position: relative;
+}
+
+/* ===== 拉取进度：原居中弹窗 / FileList 内联条均已弃用，现为工具栏下沿 2px 全宽线（见 ToolBar.vue .global-pull-line） ===== */
+
+.file-list-area > :deep(.file-list) {
+  border-right: none;
+}
+
+/* 统一拖拽分隔条（上下 + 左右共用同一套外观） */
+.resize-handle,
+.resize-handle-col {
+  flex-shrink: 0;
+  box-sizing: content-box;
+  background-clip: content-box;
+  background-color: var(--border-color);
+  position: relative;
+  z-index: 1;
+}
+
+/* 纵向拖拽（上下拉动）：仓库列表↔分支面板、文件↔差异↔日志 */
+.resize-handle {
+  height: 1px;
+  padding: 3px 0;
+  margin: -3px 0;
+  cursor: ns-resize;
+}
+
+/* 横向拖拽（左右拉动）：仓库面板 ↔ 中间面板 */
+.resize-handle-col {
+  width: 1px;
+  padding: 0 3px;
+  margin: 0 -3px;
+  cursor: col-resize;
+}
+
+.diff-area {
+  min-height: 0;
+}
+
+.log-area {
+  min-height: 0;
+}
+
+/* 提交历史视图：左右布局 */
+.log-view-layout {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.log-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* 历史视图日志面板与提交详情之间由 .resize-handle-col 把手分隔，故此处不再加右边框 */
+
+.commit-detail-area {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* "是否初始化为新仓库"对话框：左侧绿色问号圆圈 + 右侧文本（仿 TortoiseHg 风格）。
+   颜色走主题变量：深色主题用深绿 + 半透明白边；浅色主题用浅绿 + 深边。 */
+.init-repo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.init-repo-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  /* 浅色主题：柔和绿；深色主题：更亮的草绿 */
+  background: radial-gradient(circle at 30% 30%, #4ade80, #16a34a);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+:global([data-theme='dark'] .init-repo-icon) {
+  background: radial-gradient(circle at 30% 30%, #22c55e, #15803d);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.init-repo-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.init-repo-desc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Toast 提示 */
+.toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+.toast.success {
+  background-color: var(--bg-secondary);
+  color: var(--brand-primary);
+  border: 1px solid var(--border-medium);
+  border-left: 3px solid var(--brand-primary);
+  box-shadow:
+    0 10px 30px -8px rgba(15, 23, 42, 0.2),
+    0 2px 6px rgba(15, 23, 42, 0.08);
+}
+
+.toast.error {
+  background-color: #c53030;
+  color: #fff;
+}
+
+.toast-icon {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.toast-msg {
+  white-space: nowrap;
+}
+
+.toast-enter-active {
+  transition: all 0.3s ease-out;
+}
+
+.toast-leave-active {
+  transition: all 0.25s ease-in;
+}
+
+.toast-enter-from {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% - 12px));
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 8px));
+}
+
+/* ===== Dialog 通用样式（储藏对话框复用） ===== */
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.dialog {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  min-width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: dialogIn 0.15s ease-out;
+}
+
+.dialog-header {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.dialog-message p {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.dialog-message p:last-child {
+  margin-bottom: 0;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn {
+  padding: 6px 16px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-cancel {
+  background: none;
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ===== 储藏对话框 ===== */
+.stash-desc {
+  margin-bottom: 12px;
+}
+
+.stash-desc p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.stash-hint {
+  font-size: 12px !important;
+  color: var(--text-secondary) !important;
+  line-height: 1.5;
+}
+
+.stash-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.textarea-field {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.textarea-field:focus {
+  border-color: var(--brand-primary);
+}
+
+.stash-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.stash-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.stash-option input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--brand-primary);
+  cursor: pointer;
+}
+
+/* 欢迎弹窗：未找到仓库时弹出，隐藏默认关闭按钮（必须引导用户打开/扫描仓库） */
+.welcome-dialog-content :deep(> button:last-child) {
+  display: none;
+}
