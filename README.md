@@ -2,12 +2,12 @@
 
 > 🚀 A lightweight, fast and stable Git desktop client, built with **Tauri 2 + Vue 3 + Rust**. Native on Windows and macOS, with light / dark themes and a bilingual (中文 / English) interface.
 
-**[简体中文](README.zh-CN.md)** · **[⬇ Download installers](https://github.com/gusijin/SnapGit/tree/main/releases)**
+**[简体中文](README.zh-CN.md)** · **[⬇ Download installers](https://github.com/gusijin/SnapGit/releases/latest)**
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#download)
-[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
+[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v0.1.0)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -19,16 +19,16 @@
 
 ## Download
 
-Installers for **0.1.0** ship in the repository's **[releases/ directory](https://github.com/gusijin/SnapGit/tree/main/releases)** — open a file and use **Download raw file**. The standard **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** page is created automatically when a `v*` tag is pushed (see [CI](#ci)).
+Installers for **0.1.0** are available from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)**. A release is created automatically when a `v*` tag is pushed (see [CI](#ci)).
 
 > ✅ All installers are free to download. There is no registration, activation step or trial period — just install it and open a repository.
 
 | Platform | Architecture | Installer |
 | --- | --- | --- |
-| Windows | x64 (64-bit) | [`SnapGit_0.1.0_x64-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64-setup.exe) |
-| Windows | x86 (32-bit) | [`SnapGit_0.1.0_x86-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x86-setup.exe) |
-| macOS | Apple Silicon (arm64) | [`SnapGit_0.1.0_aarch64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_aarch64.dmg) |
-| macOS | Intel (x86_64) | [`SnapGit_0.1.0_x64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64.dmg) |
+| Windows | x64 (64-bit) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| Windows | x86 (32-bit) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| macOS | Apple Silicon (arm64) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| macOS | Intel (x86_64) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 
 ### Windows
 
@@ -122,7 +122,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-A manual `workflow_dispatch` run only rebuilds and commits the artifacts into `releases/` — it does **not** create a GitHub Release.
+A manual `workflow_dispatch` run only rebuilds the installers and stores them as a workflow artifact — it does **not** create a GitHub Release or commit binaries to the repository.
+
+Pushing a `v*` tag creates the GitHub Release and attaches all four installers. Installer binaries are kept out of the source repository.
 
 ## FAQ
 

@@ -4,13 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      commit_to_repo:
-        description: '把构建产物提交回仓库的 releases/ 目录'
-        type: boolean
-        required: false
-        default: true
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -199,19 +193,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 手动触发且勾选时，把产物提交回仓库 releases/ 目录
-      # （tag 推送时 checkout 处于 detached HEAD，不适合回写分支，故仅限手动触发）
-      - name: Commit releases/ to repository
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_to_repo }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f releases
-          if git diff --cached --quiet; then
-            echo "releases/ 无变化，跳过提交"
-            exit 0
-          fi
-          git commit -m "chore(release): update releases artifacts (#$GITHUB_RUN_NUMBER)"
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push origin "HEAD:$GITHUB_REF_NAME"

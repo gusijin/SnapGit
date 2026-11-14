@@ -2,12 +2,12 @@
 
 > 🚀 更轻量、更快速、更稳定的 Git 桌面客户端，基于 **Tauri 2 + Vue 3 + Rust** 构建。原生支持 Windows 与 macOS，提供浅色 / 深色主题与中英双语界面。
 
-**[English](README.md)** · **[⬇ 下载安装包](https://github.com/gusijin/SnapGit/tree/main/releases)**
+**[English](README.md)** · **[⬇ 下载安装包](https://github.com/gusijin/SnapGit/releases/latest)**
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#下载)
-[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/tree/main/releases)
+[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v0.1.0)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -19,16 +19,16 @@
 
 ## 下载
 
-**0.1.0** 的四个安装包放在仓库的 **[releases/ 目录](https://github.com/gusijin/SnapGit/tree/main/releases)**，点开文件后用 **Download raw file** 即可下载。标准的 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases)** 发布页会在推送 `v*` tag 后自动生成（见下方 CI 自动打包一节）。
+**0.1.0** 的四个安装包请前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)** 下载。推送 `v*` tag 后会自动创建 Release（见下方 CI 自动打包一节）。
 
 > ✅ 所有安装包免费下载，安装后无需注册、无需激活、没有试用期 —— 打开仓库即可开始使用。
 
 | 平台 | 架构 | 安装包 |
 | --- | --- | --- |
-| Windows | x64（64 位） | [`SnapGit_0.1.0_x64-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64-setup.exe) |
-| Windows | x86（32 位） | [`SnapGit_0.1.0_x86-setup.exe`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x86-setup.exe) |
-| macOS | Apple Silicon（arm64） | [`SnapGit_0.1.0_aarch64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_aarch64.dmg) |
-| macOS | Intel（x86_64） | [`SnapGit_0.1.0_x64.dmg`](https://github.com/gusijin/SnapGit/blob/main/releases/SnapGit_0.1.0_x64.dmg) |
+| Windows | x64（64 位） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| Windows | x86（32 位） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| macOS | Apple Silicon（arm64） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| macOS | Intel（x86_64） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 
 ### Windows
 
@@ -122,9 +122,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-手动触发 `workflow_dispatch` 只会重新构建并把产物提交回仓库 `releases/` 目录，**不会创建 GitHub Release**；只有推 `v*` tag 才会发布到 Releases 页面。
+手动触发 `workflow_dispatch` 只会重新构建并把安装包保存为 Actions 构建产物，**不会创建 GitHub Release，也不会把二进制提交回仓库**；只有推 `v*` tag 才会发布到 Releases 页面。
 
-产物统一汇总到仓库根目录的 `releases/`（推 tag 时只发布 Release，不回写分支）。
+推送 `v*` tag 后，四个安装包会作为附件上传到 GitHub Release。安装包不会保存在源码仓库中。
 
 ## 常见问题
 
