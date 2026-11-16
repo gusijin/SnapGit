@@ -160,9 +160,60 @@ jobs:
           path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  # ---------- Linux: x64 (deb + AppImage) ----------
+  # 用 ubuntu-22.04 而非 ubuntu-latest：Tauri v2 官方要求用支持 WebKitGTK 4.1 的
+  # 最低基线系统构建，runner 太新会抬高 glibc 要求，老发行版上跑不起来
+  # （/usr/lib/libc.so.6: version 'GLIBC_2.xx' not found）。
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      # --bundles 显式限定 deb + appimage：tauri.conf.json 的 targets 是 all，
+      # 在 Linux 上还会打 rpm，而 runner 没装 rpmbuild，不改会平白失败。
+      - name: Build deb + AppImage (x64)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-unknown-linux-gnu --bundles deb,appimage
+
+      - name: Upload linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnapGit-bin-linux-x64
+          path: |
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
   # ---------- 汇总：所有平台产物统一放进 releases/ ----------
   collect:
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
