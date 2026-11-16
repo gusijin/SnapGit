@@ -61,7 +61,55 @@ pub(crate) async fn stage_files(repo_path: String, file_paths: Vec<String>) -> R
 pub(crate) async fn discard_file(repo_path: String, file_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
-        // 先用 git ls-files 判断文件是否被追踪
+
+        // 先看该路径当前是不是「删除态」。git status --porcelain 每行前两字符是 XY：
+        // 已暂存删除为 "D "，未暂存删除为 " D"。两种情况都要从 HEAD 恢复文件，
+        // 不能沿用「ls-files 查不到 = 未追踪 → 删磁盘」的老逻辑：已暂存删除的文件
+        // 恰好也不在索引里，会被误判成未追踪，结果是 no-op，文件永远回不来。
+        let status_output = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("status")
+            .arg("--porcelain=v1")
+            .arg("--")
+            .arg(&file_path)
+            .output()
+            .map_err(|e| format!("无法执行 git status 命令: {}", e))?;
+
+        let status_text = String::from_utf8_lossy(&status_output.stdout);
+        let is_deleted = status_text.lines().any(|line| {
+            let mut xy = line.chars().take(2);
+            xy.next() == Some('D') || xy.next() == Some('D')
+        });
+
+        if is_deleted {
+            // 删除态：从 HEAD 同时还原索引与工作区。
+            // 覆盖：已暂存删除（D ）、未暂存删除（ D）、暂存修改后又在磁盘删除（MD）。
+            // 用 checkout HEAD 而非 checkout --（后者只从索引恢复，索引里已无该文件）。
+            let output = git_command()
+                .arg("-C")
+                .arg(&repo_path)
+                .arg("checkout")
+                .arg("HEAD")
+                .arg("--")
+                .arg(&file_path)
+                .output()
+                .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let msg = format!("{}{}", stderr, stdout);
+                return Err(if msg.trim().is_empty() {
+                    "恢复删除文件失败".to_string()
+                } else {
+                    msg
+                });
+            }
+            return Ok(());
+        }
+
+        // 非删除态沿用原逻辑：追踪文件从索引恢复，未追踪文件删磁盘。
         let ls_output = git_command()
             .arg("-C")
             .arg(&repo_path)
