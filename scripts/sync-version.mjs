@@ -24,24 +24,26 @@ const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'))
 tauriConfig.version = version
 writeIfChanged(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`)
 
+const cargoVersionRe = /^(version\s*=\s*")[^"]+("\s*)$/m
 const cargoToml = fs.readFileSync(cargoTomlPath, 'utf8')
-const nextCargoToml = cargoToml.replace(
-  /^(version\s*=\s*")[^"]+("\s*)$/m,
-  `$1${version}$2`,
-)
-if (nextCargoToml === cargoToml) {
+if (!cargoVersionRe.test(cargoToml)) {
   throw new Error('Could not find the package version in src-tauri/Cargo.toml')
 }
+const nextCargoToml = cargoToml.replace(
+  cargoVersionRe,
+  (_, prefix, suffix) => `${prefix}${version}${suffix}`,
+)
 writeIfChanged(cargoTomlPath, nextCargoToml)
 
+const lockVersionRe = /(\[\[package\]\]\r?\nname = "snapgit"\r?\nversion = ")[^"]+("\s*)/
 const cargoLock = fs.readFileSync(cargoLockPath, 'utf8')
-const nextCargoLock = cargoLock.replace(
-  /(\[\[package\]\]\r?\nname = "snapgit"\r?\nversion = ")[^"]+("\s*)/,
-  `$1${version}$2`,
-)
-if (nextCargoLock === cargoLock) {
+if (!lockVersionRe.test(cargoLock)) {
   throw new Error('Could not find the snapgit package version in src-tauri/Cargo.lock')
 }
+const nextCargoLock = cargoLock.replace(
+  lockVersionRe,
+  (_, prefix, suffix) => `${prefix}${version}${suffix}`,
+)
 writeIfChanged(cargoLockPath, nextCargoLock)
 
 console.log(`SnapGit version synchronized to ${version}`)
