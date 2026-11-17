@@ -1,8 +1,11 @@
 use super::*;
 
-
 #[command]
-pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, force: Option<bool>) -> Result<()> {
+pub(crate) async fn checkout_branch(
+    repo_path: String,
+    branch_name: String,
+    force: Option<bool>,
+) -> Result<()> {
     // 切换分支涉及大量阻塞 I/O（git checkout 外部进程），改为在 blocking 线程池执行，
     // 避免阻塞 Tauri async runtime worker 线程导致 Windows WebView2 消息泵饿死、应用闪退。
     tokio::task::spawn_blocking(move || {
@@ -17,7 +20,8 @@ pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, forc
         }
         cmd.arg(&branch_name);
 
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
 
         if output.status.success() {
@@ -32,9 +36,14 @@ pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, forc
             if force_flag {
                 track_cmd.arg("-f");
             }
-            track_cmd.arg("-b").arg(name).arg("--track").arg(&branch_name);
+            track_cmd
+                .arg("-b")
+                .arg(name)
+                .arg("--track")
+                .arg(&branch_name);
 
-            let track_output = track_cmd.output()
+            let track_output = track_cmd
+                .output()
                 .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
 
             if track_output.status.success() {
@@ -44,13 +53,16 @@ pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, forc
 
         // Strategy 2: try checkout with --track for remote branches
         let remotes_cmd = git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("remote").arg("-v")
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("remote")
+            .arg("-v")
             .output()
             .map_err(|e| format!("无法获取远程列表: {}", e))?;
 
         let remotes_output = String::from_utf8_lossy(&remotes_cmd.stdout);
-        let mut all_remotes: Vec<String> = remotes_output.lines()
+        let mut all_remotes: Vec<String> = remotes_output
+            .lines()
             .filter_map(|line| line.split_whitespace().next())
             .map(|s| s.to_string())
             .collect();
@@ -66,9 +78,14 @@ pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, forc
             if force_flag {
                 track_cmd.arg("-f");
             }
-            track_cmd.arg("-b").arg(&branch_name).arg("--track").arg(&remote_branch);
+            track_cmd
+                .arg("-b")
+                .arg(&branch_name)
+                .arg("--track")
+                .arg(&remote_branch);
 
-            let track_output = track_cmd.output()
+            let track_output = track_cmd
+                .output()
                 .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
 
             if track_output.status.success() {
@@ -80,7 +97,11 @@ pub(crate) async fn checkout_branch(repo_path: String, branch_name: String, forc
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let msg = format!("{}{}", stderr, stdout);
-        Err(if msg.trim().is_empty() { format!("分支 '{}' 不存在", branch_name) } else { msg })
+        Err(if msg.trim().is_empty() {
+            format!("分支 '{}' 不存在", branch_name)
+        } else {
+            msg
+        })
     })
     .await
     .map_err(|e| format!("切换分支任务失败: {}", e))?
@@ -97,8 +118,11 @@ pub(crate) fn checkout_remote_branch(repo_path: String, remote_branch: String) -
 
     // 若本地已存在同名分支，直接切换过去即可
     let local_exists = git_command()
-        .arg("-C").arg(&repo_path)
-        .arg("show-ref").arg("--verify").arg("--quiet")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("show-ref")
+        .arg("--verify")
+        .arg("--quiet")
         .arg(format!("refs/heads/{}", local_name))
         .output()
         .map(|o| o.status.success())
@@ -106,8 +130,10 @@ pub(crate) fn checkout_remote_branch(repo_path: String, remote_branch: String) -
 
     if local_exists {
         let out = git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("checkout").arg(&local_name)
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("checkout")
+            .arg(&local_name)
             .output()
             .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
         if out.status.success() {
@@ -116,13 +142,22 @@ pub(crate) fn checkout_remote_branch(repo_path: String, remote_branch: String) -
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let msg = format!("{}{}", stderr, stdout);
-        return Err(if msg.trim().is_empty() { format!("切换分支 '{}' 失败", local_name) } else { msg });
+        return Err(if msg.trim().is_empty() {
+            format!("切换分支 '{}' 失败", local_name)
+        } else {
+            msg
+        });
     }
 
     // 否则创建本地跟踪分支并切换
     let out = git_command()
-        .arg("-C").arg(&repo_path)
-        .arg("checkout").arg("-b").arg(&local_name).arg("--track").arg(&remote_branch)
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("checkout")
+        .arg("-b")
+        .arg(&local_name)
+        .arg("--track")
+        .arg(&remote_branch)
         .output()
         .map_err(|e| format!("无法执行 git checkout 命令: {}", e))?;
 
@@ -132,7 +167,11 @@ pub(crate) fn checkout_remote_branch(repo_path: String, remote_branch: String) -
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let msg = format!("{}{}", stderr, stdout);
-        Err(if msg.trim().is_empty() { format!("检出远程分支 '{}' 失败", remote_branch) } else { msg })
+        Err(if msg.trim().is_empty() {
+            format!("检出远程分支 '{}' 失败", remote_branch)
+        } else {
+            msg
+        })
     }
 }
 
@@ -239,7 +278,10 @@ pub(crate) fn auto_unstash_after_pull(repo_path: &str) -> Option<String> {
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            if !o.status.success() || combined.contains("CONFLICT") || combined.contains("could not apply") {
+            if !o.status.success()
+                || combined.contains("CONFLICT")
+                || combined.contains("could not apply")
+            {
                 Some(combined)
             } else {
                 None
@@ -279,7 +321,7 @@ pub(crate) fn repo_has_ssh_command(repo_path: &str) -> bool {
 }
 
 /// 把 SSH 私钥路径写入仓库本地 config（core.sshCommand）。
-/// 刻意不加 git 锁——供已持锁的调用方（set_ssh_key_path 持读锁、拉取流程持写锁）安全复用。
+/// 刻意不加 git 锁——供已持锁的调用方（set_ssh_key_path、拉取流程）安全复用。
 pub(crate) fn apply_ssh_key_config(repo_path: &str, key_path: &str) -> Result<String> {
     // 规范化为正斜杠（Git 风格）：Windows 反斜杠路径在 core.sshCommand 经 git 的
     // split_cmdline / sh 解析时属于脆弱写法，部分 git/ssh 版本或环境下会被当作转义符吃错，
@@ -288,17 +330,23 @@ pub(crate) fn apply_ssh_key_config(repo_path: &str, key_path: &str) -> Result<St
     if key_path.is_empty() {
         // 清空：移除 core.sshCommand（忽略失败，可能本来就没设）
         let _ = git_command()
-            .arg("-C").arg(repo_path)
-            .arg("config").arg("--local").arg("--unset")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("config")
+            .arg("--local")
+            .arg("--unset")
             .arg("core.sshCommand")
             .output();
         return Ok(String::new());
     }
     let cmd = format!("ssh -i \"{}\" -o IdentitiesOnly=yes", key_path);
     let status = git_command()
-        .arg("-C").arg(repo_path)
-        .arg("config").arg("--local")
-        .arg("core.sshCommand").arg(&cmd)
+        .arg("-C")
+        .arg(repo_path)
+        .arg("config")
+        .arg("--local")
+        .arg("core.sshCommand")
+        .arg(&cmd)
         .status();
     match status {
         Ok(s) if s.success() => Ok(cmd),
@@ -335,7 +383,11 @@ pub(crate) fn auto_ssh_key(repo_path: &str) -> Option<(String, Option<String>)> 
         .collect::<Vec<_>>()
         .join(" ");
     let ssh_cmd = format!("ssh {identities} -o IdentitiesOnly=yes");
-    let persist = if keys.len() == 1 { Some(keys[0].clone()) } else { None };
+    let persist = if keys.len() == 1 {
+        Some(keys[0].clone())
+    } else {
+        None
+    };
     Some((ssh_cmd, persist))
 }
 
@@ -427,7 +479,11 @@ pub(crate) async fn pull_branch(app: AppHandle, repo_path: String) -> Result<()>
 /// 分支分叉时按指定策略拉取：merge（`--no-ff` 生成合并提交）或 rebase（变基到远程之上）。
 /// 由前端「选择拉取方式」对话框触发。冲突时返回 `PULL_CONFLICT:` 前缀，供前端引导解决。
 #[command]
-pub(crate) async fn pull_with_strategy(app: AppHandle, repo_path: String, strategy: String) -> Result<()> {
+pub(crate) async fn pull_with_strategy(
+    app: AppHandle,
+    repo_path: String,
+    strategy: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
 
@@ -635,7 +691,11 @@ pub(crate) async fn add_remote(repo_path: String, name: String, url: String) -> 
         let _guard = git_write_guard();
 
         // 名称兜底：业务层必传，但多一层防御避免出现裸 `git remote add  <url>`（无名）
-        let name = if name.trim().is_empty() { "origin".to_string() } else { name.trim().to_string() };
+        let name = if name.trim().is_empty() {
+            "origin".to_string()
+        } else {
+            name.trim().to_string()
+        };
 
         let output = git_command()
             .arg("-C")

@@ -1996,7 +1996,7 @@ async function startFileWatcher() {
     } catch (recErr) {
       // Win32 上递归 watch 偶发失败，退回非递归监听仓库根目录
       console.warn('递归文件监听失败，退回非递归监听:', recErr)
-      unwatchFs = await fsWatch(repoPath.value, onFsEvent, { recursive: true })
+      unwatchFs = await fsWatch(repoPath.value, onFsEvent, { recursive: false })
     }
   } catch (e) {
     console.warn(

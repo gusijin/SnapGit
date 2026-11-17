@@ -1,24 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use tauri::command;
 
 use git2::{BranchType, DiffOptions, Repository, Status, StatusOptions};
 #[cfg(target_os = "macos")]
-use tauri::menu::{
-    CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
-};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[allow(unused_imports)]
-use tauri::{AppHandle, Emitter, Listener, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
+use tauri::{
+    AppHandle, Emitter, Listener, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, Window,
+};
 
 type Result<T> = std::result::Result<T, String>;
 mod git_core;
@@ -41,17 +42,16 @@ mod stash_submodules;
 
 mod edit_menu;
 
-pub(crate) use git_core::*;
-pub(crate) use models::*;
-pub(crate) use repository::*;
-pub(crate) use history::*;
-pub(crate) use mutations::*;
 pub(crate) use checkout::*;
-pub(crate) use scan::*;
 pub(crate) use diff::*;
-pub(crate) use stash_submodules::*;
 pub(crate) use edit_menu::*;
-
+pub(crate) use git_core::*;
+pub(crate) use history::*;
+pub(crate) use models::*;
+pub(crate) use mutations::*;
+pub(crate) use repository::*;
+pub(crate) use scan::*;
+pub(crate) use stash_submodules::*;
 
 fn main() {
     tauri::Builder::default()
@@ -67,25 +67,27 @@ fn main() {
             // 不使用 Overlay：Overlay 的 fullsize 内容视图会把顶部事件截走、且 hidden_title 后
             // 不响应拖拽，导致窗口无法拖动。
             #[cfg(target_os = "macos")]
-            let _main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("SnapGit")
-                .inner_size(1200.0, 800.0)
-                .resizable(true)
-                .title_bar_style(TitleBarStyle::Transparent)
-                .hidden_title(true)
-                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
-                .build()?;
+            let _main =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("SnapGit")
+                    .inner_size(1200.0, 800.0)
+                    .resizable(true)
+                    .title_bar_style(TitleBarStyle::Transparent)
+                    .hidden_title(true)
+                    .background_color(tauri::window::Color::from((226, 232, 240, 255)))
+                    .build()?;
 
             #[cfg(not(target_os = "macos"))]
-            let _main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("SnapGit")
-                .inner_size(1200.0, 800.0)
-                .resizable(true)
-                .decorations(false)
-                // WebView2 冷启动要几秒才出首帧，期间整窗显示窗口背景色。
-                // 设为应用头部色 #e2e8f0（与 macOS 一致），避免「启动后全白几秒」的割裂感。
-                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
-                .build()?;
+            let _main =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("SnapGit")
+                    .inner_size(1200.0, 800.0)
+                    .resizable(true)
+                    .decorations(false)
+                    // WebView2 冷启动要几秒才出首帧，期间整窗显示窗口背景色。
+                    // 设为应用头部色 #e2e8f0（与 macOS 一致），避免「启动后全白几秒」的割裂感。
+                    .background_color(tauri::window::Color::from((226, 232, 240, 255)))
+                    .build()?;
 
             // macOS: 使用系统原生菜单栏（显示在屏幕顶部）
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏
@@ -99,7 +101,9 @@ fn main() {
                 let lang_for_menu = lang_items.clone();
                 let lang_for_state = lang_items;
                 // 管理状态，供 locale-changed 监听回写勾选态
-                app.manage(LangMenuState { items: lang_for_state });
+                app.manage(LangMenuState {
+                    items: lang_for_state,
+                });
 
                 let app_handle = app.handle().clone();
                 app.on_menu_event(move |app, event| {

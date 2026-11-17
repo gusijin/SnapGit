@@ -1,13 +1,13 @@
 # <img src="app-icon.png" width="38" alt="SnapGit app icon"> SnapGit
 
-> 🚀 A lightweight, fast and stable Git desktop client, built with **Tauri 2 + Vue 3 + Rust**. Native on Windows and macOS, with light / dark themes and a bilingual (中文 / English) interface.
+> 🚀 A lightweight, fast and stable Git desktop client, built with **Tauri 2 + Vue 3 + Rust**. Native on Windows, macOS and Linux, with light / dark themes and a bilingual (中文 / English) interface.
 
 **[简体中文](README.zh-CN.md)** · **[⬇ Download installers](https://github.com/gusijin/SnapGit/releases/latest)**
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#download)
 [![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v0.1.0)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -19,7 +19,7 @@
 
 ## Download
 
-Installers for **0.1.0** are available from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)**. A release is created automatically when a `v*` tag is pushed (see [CI](#ci)).
+Installers for **0.1.0** are available from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)**. Windows, macOS and Linux packages are built automatically when a `v*` tag is pushed (see [CI](#ci)).
 
 > ✅ All installers are free to download. There is no registration, activation step or trial period — just install it and open a repository.
 
@@ -29,6 +29,7 @@ Installers for **0.1.0** are available from **[GitHub Releases](https://github.c
 | Windows | x86 (32-bit) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 | macOS | Apple Silicon (arm64) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 | macOS | Intel (x86_64) | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| Linux | x86_64 | `.deb` and AppImage from [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 
 ### Windows
 
@@ -87,9 +88,10 @@ The **Submodules panel is hidden by default**. Enable it from **View → Submodu
 
 ### Requirements
 
-- Node.js 18+, Rust 1.70+, Git
+- Node.js 20+, Rust 1.70+, Git
 - Windows: Visual Studio Build Tools (MSVC + WebView2)
 - macOS: Xcode Command Line Tools
+- Linux: WebKitGTK 4.1 and AppIndicator runtime libraries
 
 ```bash
 npm install
@@ -115,7 +117,7 @@ Output lands in `src-tauri/target/release/bundle/` (or `src-tauri/target/<triple
 
 ### CI
 
-`.github/workflows/release.yml` builds all four installers with three jobs (Windows x64 + x86, macOS arm64 + x86_64, collect). Push a `v*` tag to publish a GitHub Release, or run the workflow manually:
+`.github/workflows/release.yml` builds six release artifacts with Windows x64 + x86, macOS arm64 + x86_64, and Linux x86_64 jobs. Pull requests and pushes to `main` also run the quality checks in `.github/workflows/ci.yml`. Push a `v*` tag to publish a GitHub Release, or run the release workflow manually:
 
 ```bash
 git tag v0.1.0
@@ -124,7 +126,7 @@ git push origin v0.1.0
 
 A manual `workflow_dispatch` run only rebuilds the installers and stores them as a workflow artifact — it does **not** create a GitHub Release or commit binaries to the repository.
 
-Pushing a `v*` tag creates the GitHub Release and attaches all four installers. Installer binaries are kept out of the source repository.
+Pushing a `v*` tag creates the GitHub Release and attaches all release artifacts. Installer binaries are kept out of the source repository.
 
 ## FAQ
 

@@ -1,6 +1,5 @@
 use super::*;
 
-
 // ===== 文件差异 =====
 
 /// git 判定二进制的启发式：前 8000 字节内出现 NUL 字节即视为二进制
@@ -178,9 +177,7 @@ pub(crate) fn backtrack(
         let idx = (k + offset) as usize;
 
         // 判断这一步是从哪个方向进来的
-        let prev_k = if k == -(d as isize)
-            || (k != d as isize && v[idx - 1] < v[idx + 1])
-        {
+        let prev_k = if k == -(d as isize) || (k != d as isize && v[idx - 1] < v[idx + 1]) {
             k + 1 // 从「向下删除」方向来
         } else {
             k - 1 // 从「向右插入」方向来
@@ -282,9 +279,7 @@ pub(crate) fn lcs_diff(old: &[String], new: &[String]) -> Vec<DiffLine> {
     let mut idx = 0;
     while idx < lines.len() {
         let line = &lines[idx];
-        if line.line_type == "delete"
-            && idx + 1 < lines.len()
-            && lines[idx + 1].line_type == "add"
+        if line.line_type == "delete" && idx + 1 < lines.len() && lines[idx + 1].line_type == "add"
         {
             let (old_segments, new_segments) = diff_chars(&line.content, &lines[idx + 1].content);
             merged.push(DiffLine {
@@ -315,8 +310,14 @@ pub(crate) fn diff_chars(old: &str, new: &str) -> (Vec<DiffSegment>, Vec<DiffSeg
     const MAX_CHAR_DIFF_LEN: usize = 2000;
     if old.chars().count() > MAX_CHAR_DIFF_LEN || new.chars().count() > MAX_CHAR_DIFF_LEN {
         return (
-            vec![DiffSegment { text: old.to_string(), changed: false }],
-            vec![DiffSegment { text: new.to_string(), changed: false }],
+            vec![DiffSegment {
+                text: old.to_string(),
+                changed: false,
+            }],
+            vec![DiffSegment {
+                text: new.to_string(),
+                changed: false,
+            }],
         );
     }
 
@@ -428,41 +429,60 @@ pub(crate) fn file_content_from_tree(
 }
 
 #[command]
-pub(crate) async fn get_file_diff(repo_path: String, file_path: String, commit_id: Option<String>) -> Result<FileDiff> {
+pub(crate) async fn get_file_diff(
+    repo_path: String,
+    file_path: String,
+    commit_id: Option<String>,
+) -> Result<FileDiff> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
+        let _validated_path = resolve_repo_relative_path(&repo_path, &file_path)?;
         let repo = open_repo(&repo_path)?;
 
-        let (old_content, new_content, is_binary, eol_actual, eol_expected) = if let Some(cid) = commit_id {
-            // 提交历史模式：显示该提交相对父提交的修改对比
-            let oid = git2::Oid::from_str(&cid).map_err(|e| e.to_string())?;
-            let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
-            let commit_tree = commit.tree().map_err(|e| e.to_string())?;
-            let (new_content, new_bin, new_eol) = file_content_from_tree(&repo, &commit_tree, &file_path);
-            // 父提交中的文件内容（无父提交=新增文件，旧内容为空）
-            let (old_content, old_bin, old_eol) = if commit.parent_count() == 0 {
-                (Vec::new(), false, None)
+        let (old_content, new_content, is_binary, eol_actual, eol_expected) =
+            if let Some(cid) = commit_id {
+                // 提交历史模式：显示该提交相对父提交的修改对比
+                let oid = git2::Oid::from_str(&cid).map_err(|e| e.to_string())?;
+                let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+                let commit_tree = commit.tree().map_err(|e| e.to_string())?;
+                let (new_content, new_bin, new_eol) =
+                    file_content_from_tree(&repo, &commit_tree, &file_path);
+                // 父提交中的文件内容（无父提交=新增文件，旧内容为空）
+                let (old_content, old_bin, old_eol) = if commit.parent_count() == 0 {
+                    (Vec::new(), false, None)
+                } else {
+                    let parent = commit.parent(0).map_err(|e| e.to_string())?;
+                    let parent_tree = parent.tree().map_err(|e| e.to_string())?;
+                    file_content_from_tree(&repo, &parent_tree, &file_path)
+                };
+                // 提交模式：实际 = 当前提交版本，期望 = 父提交版本
+                (
+                    old_content,
+                    new_content,
+                    old_bin || new_bin,
+                    new_eol,
+                    old_eol,
+                )
             } else {
-                let parent = commit.parent(0).map_err(|e| e.to_string())?;
-                let parent_tree = parent.tree().map_err(|e| e.to_string())?;
-                file_content_from_tree(&repo, &parent_tree, &file_path)
+                // 工作区模式：工作区文件 vs HEAD
+                let full_path = resolve_repo_relative_path(&repo_path, &file_path)?;
+                let (new_content, new_bin, new_eol) = read_file_lines(&full_path);
+                let (old_content, old_bin, _old_eol) = {
+                    let head = repo.head().map_err(|e| e.to_string())?;
+                    let tree = head.peel_to_tree().map_err(|e| e.to_string())?;
+                    file_content_from_tree(&repo, &tree, &file_path)
+                };
+                // 工作区模式：实际 = 工作区文件 EOL；期望 = git 按 autocrlf/.gitattributes 期望的形态。
+                // 这正是「内容没变、但 git status 标 M」的根因（行尾规范化）。
+                let eol_expected = git_expected_eol(&repo);
+                (
+                    old_content,
+                    new_content,
+                    old_bin || new_bin,
+                    new_eol,
+                    eol_expected,
+                )
             };
-            // 提交模式：实际 = 当前提交版本，期望 = 父提交版本
-            (old_content, new_content, old_bin || new_bin, new_eol, old_eol)
-        } else {
-            // 工作区模式：工作区文件 vs HEAD
-            let full_path = PathBuf::from(&repo_path).join(&file_path);
-            let (new_content, new_bin, new_eol) = read_file_lines(&full_path);
-            let (old_content, old_bin, _old_eol) = {
-                let head = repo.head().map_err(|e| e.to_string())?;
-                let tree = head.peel_to_tree().map_err(|e| e.to_string())?;
-                file_content_from_tree(&repo, &tree, &file_path)
-            };
-            // 工作区模式：实际 = 工作区文件 EOL；期望 = git 按 autocrlf/.gitattributes 期望的形态。
-            // 这正是「内容没变、但 git status 标 M」的根因（行尾规范化）。
-            let eol_expected = git_expected_eol(&repo);
-            (old_content, new_content, old_bin || new_bin, new_eol, eol_expected)
-        };
 
         // 大文件 / 二进制 跳过 diff 运算：
         // - 二进制：old/new 为空，diff 无意义
@@ -497,7 +517,11 @@ pub(crate) async fn get_file_diff(repo_path: String, file_path: String, commit_i
 
 /// 读取 git 暂存区指定 stage 的文件内容。
 /// stage 1 = base, 2 = ours/HEAD, 3 = theirs/incoming
-pub(crate) fn read_stage_content(repo_path: &str, stage: u8, file_path: &str) -> Option<Vec<String>> {
+pub(crate) fn read_stage_content(
+    repo_path: &str,
+    stage: u8,
+    file_path: &str,
+) -> Option<Vec<String>> {
     let output = git_command()
         .arg("-C")
         .arg(repo_path)
@@ -568,7 +592,6 @@ pub(crate) fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
         // 结束标记（`>>>>>>> ` 后的分支名）：仅闭合块会填充，未闭合块保持空串
         let mut marker_theirs = String::new();
         let mut section = 0; // 0 = ours, 1 = base (diff3), 2 = theirs
-        let mut closed = false;
 
         while i < lines.len() {
             let cur = lines[i].clone();
@@ -600,12 +623,11 @@ pub(crate) fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
                 stray.push(i);
                 i += 1;
                 continue;
-            } else if cur.starts_with(">>>>>>> ") {
+            } else if let Some(marker) = cur.strip_prefix(">>>>>>> ") {
                 // ② 关键修复：只有「已经见过 =======」才认作结束标记
                 if section == 2 {
-                    marker_theirs = cur[8..].trim_end().to_string();
+                    marker_theirs = marker.trim_end().to_string();
                     i += 1;
-                    closed = true;
                     break;
                 }
                 // 提前出现的结束标记 → 畸形标记行（不计入 ours 内容）
@@ -630,13 +652,7 @@ pub(crate) fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
         // ③ 统一出口：闭合块用 end_line=i-1（i 已指向结束标记之后）；
         //    未闭合块（撞到下一个 <<<<<<< 或文件尾）用扫描终止处，至少把范围标出来 ——
         //    绝不静默丢弃，丢弃 = 用户看到的「有差异但没标记」。
-        let end_line = if closed {
-            i - 1
-        } else if i > start_line {
-            i - 1
-        } else {
-            start_line
-        };
+        let end_line = if i > start_line { i - 1 } else { start_line };
         result.push(ConflictBlock {
             start_line,
             separator_line,
@@ -654,11 +670,14 @@ pub(crate) fn parse_conflict_blocks(content: &str) -> Vec<ConflictBlock> {
 }
 
 #[command]
-pub(crate) async fn get_conflict_file(repo_path: String, file_path: String) -> Result<ConflictFile> {
+pub(crate) async fn get_conflict_file(
+    repo_path: String,
+    file_path: String,
+) -> Result<ConflictFile> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
 
-        let full_path = PathBuf::from(&repo_path).join(&file_path);
+        let full_path = resolve_repo_relative_path(&repo_path, &file_path)?;
         let working_raw = fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
         let working_content = working_raw.lines().map(|l| l.to_string()).collect();
 
@@ -673,7 +692,10 @@ pub(crate) async fn get_conflict_file(repo_path: String, file_path: String) -> R
         // ours/theirs 兜底，保证冲突解决器左右两栏仍显示「本地改动」与「远端改动」。
         if ours_content.is_empty() && theirs_content.is_empty() && !blocks.is_empty() {
             ours_content = blocks.iter().flat_map(|b| b.ours.iter().cloned()).collect();
-            theirs_content = blocks.iter().flat_map(|b| b.theirs.iter().cloned()).collect();
+            theirs_content = blocks
+                .iter()
+                .flat_map(|b| b.theirs.iter().cloned())
+                .collect();
         }
 
         Ok(ConflictFile {
@@ -693,7 +715,7 @@ pub(crate) async fn get_conflict_file(repo_path: String, file_path: String) -> R
 pub(crate) async fn read_working_file(repo_path: String, file_path: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
-        let full_path = PathBuf::from(&repo_path).join(&file_path);
+        let full_path = resolve_repo_relative_path(&repo_path, &file_path)?;
         fs::read_to_string(&full_path).map_err(|e| e.to_string())
     })
     .await
@@ -701,10 +723,14 @@ pub(crate) async fn read_working_file(repo_path: String, file_path: String) -> R
 }
 
 #[command]
-pub(crate) async fn write_file_content(repo_path: String, file_path: String, content: String) -> Result<()> {
+pub(crate) async fn write_file_content(
+    repo_path: String,
+    file_path: String,
+    content: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
-        let full_path = PathBuf::from(&repo_path).join(&file_path);
+        let full_path = resolve_repo_relative_path(&repo_path, &file_path)?;
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }

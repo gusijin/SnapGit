@@ -1,4 +1,3 @@
-
 // 挂在某个提交上的引用（分支/远程分支/标签），供日志面板像 SourceTree 那样内联显示
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct CommitRef {
@@ -165,4 +164,3 @@ pub(crate) struct SubmoduleInfo {
 pub(crate) struct RecentRepositories {
     pub(crate) repos: Vec<RepositoryInfo>,
 }
-

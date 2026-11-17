@@ -31,7 +31,6 @@
     "fs:allow-mkdir",
     "fs:allow-read-dir",
     "fs:allow-watch",
-    "fs:read-all",
     "fs:scope-home",
     "fs:scope-home-recursive",
     "shell:allow-open",

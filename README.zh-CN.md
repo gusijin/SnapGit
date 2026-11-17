@@ -1,13 +1,13 @@
 # <img src="app-icon.png" width="38" alt="SnapGit 应用图标"> SnapGit
 
-> 🚀 更轻量、更快速、更稳定的 Git 桌面客户端，基于 **Tauri 2 + Vue 3 + Rust** 构建。原生支持 Windows 与 macOS，提供浅色 / 深色主题与中英双语界面。
+> 🚀 更轻量、更快速、更稳定的 Git 桌面客户端，基于 **Tauri 2 + Vue 3 + Rust** 构建。原生支持 Windows、macOS 与 Linux，提供浅色 / 深色主题与中英双语界面。
 
 **[English](README.md)** · **[⬇ 下载安装包](https://github.com/gusijin/SnapGit/releases/latest)**
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#下载)
 [![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v0.1.0)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -19,7 +19,7 @@
 
 ## 下载
 
-**0.1.0** 的四个安装包请前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)** 下载。推送 `v*` tag 后会自动创建 Release（见下方 CI 自动打包一节）。
+**0.1.0** 的 Windows、macOS 与 Linux 安装包请前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)** 下载。推送 `v*` tag 后会自动创建 Release（见下方 CI 自动打包一节）。
 
 > ✅ 所有安装包免费下载，安装后无需注册、无需激活、没有试用期 —— 打开仓库即可开始使用。
 
@@ -29,6 +29,7 @@
 | Windows | x86（32 位） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 | macOS | Apple Silicon（arm64） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
 | macOS | Intel（x86_64） | [GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest) |
+| Linux | x86_64 | Release 中的 `.deb` 与 AppImage |
 
 ### Windows
 
@@ -87,9 +88,10 @@
 
 ### 前置依赖
 
-- Node.js 18+、Rust 1.70+、Git
+- Node.js 20+、Rust 1.70+、Git
 - Windows：Visual Studio Build Tools（MSVC + WebView2）
 - macOS：Xcode Command Line Tools
+- Linux：WebKitGTK 4.1 与 AppIndicator 运行库
 
 ```bash
 npm install
@@ -115,7 +117,7 @@ npm run tauri -- build --bundles dmg
 
 ### CI 自动打包
 
-`.github/workflows/release.yml` 用三个 job（Windows x64 + x86、macOS arm64 + x86_64、汇总）产出四个安装包。推 `v*` tag 自动发布到 GitHub Release，也可在 Actions 页面手动触发：
+`.github/workflows/release.yml` 用 Windows x64 + x86、macOS arm64 + x86_64、Linux x86_64 三个平台构建 Release 产物。Pull Request 和推送到 `main` 时还会运行 `.github/workflows/ci.yml` 中的质量检查。推 `v*` tag 自动发布到 GitHub Release，也可在 Actions 页面手动触发：
 
 ```bash
 git tag v0.1.0
@@ -124,7 +126,7 @@ git push origin v0.1.0
 
 手动触发 `workflow_dispatch` 只会重新构建并把安装包保存为 Actions 构建产物，**不会创建 GitHub Release，也不会把二进制提交回仓库**；只有推 `v*` tag 才会发布到 Releases 页面。
 
-推送 `v*` tag 后，四个安装包会作为附件上传到 GitHub Release。安装包不会保存在源码仓库中。
+推送 `v*` tag 后，所有平台安装包会作为附件上传到 GitHub Release。安装包不会保存在源码仓库中。
 
 ## 常见问题
 

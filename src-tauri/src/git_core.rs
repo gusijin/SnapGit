@@ -1,5 +1,5 @@
 use super::*;
-
+use std::path::Component;
 
 // 读写锁：写命令（commit/checkout/push/stage 等）独占（与读、写都互斥），只读命令
 // （get_commits/get_branches/get_file_status/stash_list 等）可并发共享。既保留原保护语义
@@ -40,7 +40,8 @@ pub(crate) fn git_write_guard() -> GitWriteGuard {
 // 文件状态缓存：自动刷新高频调用 get_file_status 时命中，避免每次都扫 .git。
 // TTL 短（800ms）以控制 stale；loadRepoData 等主动刷新走 cached=false 绕过，
 // 保证切库 / 写操作后即时准确。仅缓存 get_file_status（autoRefresh 高频路径）。
-pub(crate) static STATUS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<FileStatus>)>>> =
+type StatusCacheEntry = (Instant, Vec<FileStatus>);
+pub(crate) static STATUS_CACHE: LazyLock<Mutex<HashMap<String, StatusCacheEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) const STATUS_CACHE_TTL: Duration = Duration::from_millis(800);
 
@@ -51,9 +52,65 @@ pub(crate) static REPO_CACHE: LazyLock<Mutex<HashMap<String, git2::Repository>>>
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) const REPO_CACHE_LIMIT: usize = 8;
 
+/// Resolve a path supplied by the frontend as a path relative to a repository.
+///
+/// Git status paths are expected to be relative, but this command boundary is
+/// also used by the editor and discard actions. Validate the path here so an
+/// accidental or malicious `..` component cannot escape the selected repo.
+pub(crate) fn resolve_repo_relative_path(repo_path: &str, file_path: &str) -> Result<PathBuf> {
+    let relative = Path::new(file_path);
+    if relative.as_os_str().is_empty() || relative.is_absolute() {
+        return Err("文件路径必须是仓库内的相对路径".to_string());
+    }
+
+    let mut has_normal_component = false;
+    for component in relative.components() {
+        match component {
+            Component::Normal(_) => has_normal_component = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("文件路径不能离开仓库目录".to_string());
+            }
+        }
+    }
+    if !has_normal_component {
+        return Err("文件路径不能为空".to_string());
+    }
+
+    let repo_root = Path::new(repo_path)
+        .canonicalize()
+        .map_err(|e| format!("无法解析仓库路径: {}", e))?;
+    if !repo_root.is_dir() {
+        return Err("仓库路径不是目录".to_string());
+    }
+
+    let candidate = repo_root.join(relative);
+    // For an existing file, canonicalize the full path to catch a symlink that
+    // points outside the repository. For a new file, canonicalize the nearest
+    // existing parent and apply the same containment check.
+    let mut existing = candidate.as_path();
+    while !existing.exists() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| "无法解析文件路径".to_string())?;
+    }
+    let existing = existing
+        .canonicalize()
+        .map_err(|e| format!("无法解析文件路径: {}", e))?;
+    if !existing.starts_with(&repo_root) {
+        return Err("文件路径指向仓库外部".to_string());
+    }
+
+    Ok(candidate)
+}
+
 /// 取仓库实例：优先复用缓存（remove 出所有权），否则新建。错误已 map 成 String 以便 `?` 传播。
 pub(crate) fn open_repo(repo_path: &str) -> Result<git2::Repository> {
-    if let Some(repo) = REPO_CACHE.lock().unwrap().remove(repo_path) {
+    if let Some(repo) = REPO_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(repo_path)
+    {
         return Ok(repo);
     }
     git2::Repository::open(repo_path).map_err(|e| e.to_string())
@@ -67,7 +124,7 @@ pub(crate) fn is_git_busy() -> bool {
 
 /// 归还仓库实例到缓存（调用方不再持有）。超过上限则整体清空，避免多仓库无限累积。
 pub(crate) fn return_repo(repo_path: &str, repo: git2::Repository) {
-    let mut cache = REPO_CACHE.lock().unwrap();
+    let mut cache = REPO_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cache.len() >= REPO_CACHE_LIMIT {
         cache.clear();
     }
@@ -220,7 +277,10 @@ pub(crate) fn run_git_progress(
     // `BufReader::lines()` 只按 `\n` 切分，会把整个阶段的上百次刷新读成「一行」，
     // 导致解析时只取到最后一个 NN%（恒为 100%）→ 表现为「还没拉完就显示 100%」。
     // 因此这里手工读取字节流，并同时以 `\r` 与 `\n` 作为分隔符逐片段处理。
-    let stderr = child.stderr.take().expect("stderr 应当可获取");
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("git stderr 管道不可用"))?;
     let app_stderr = app.clone();
     let stderr_thread = std::thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
@@ -257,7 +317,10 @@ pub(crate) fn run_git_progress(
     });
 
     // stdout：成功信息（如 "Already up to date."）
-    let mut stdout = child.stdout.take().expect("stdout 应当可获取");
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("git stdout 管道不可用"))?;
     let stdout_thread = std::thread::spawn(move || {
         let mut s = String::new();
         let _ = stdout.read_to_string(&mut s);
@@ -276,5 +339,33 @@ pub(crate) fn run_git_progress(
 
 // 编辑窗口参数仓库：key = 窗口 label，value = { repoPath, filePath, mode }。
 // 独立 webview 的 initialization_script 注入不可靠，改为前端 mount 后主动来取。
-pub(crate) static EDIT_ARGS_MAP: std::sync::LazyLock<Mutex<std::collections::HashMap<String, serde_json::Value>>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+pub(crate) static EDIT_ARGS_MAP: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<String, serde_json::Value>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(test)]
+mod path_tests {
+    use super::resolve_repo_relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn accepts_repo_relative_paths() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri should have a project root")
+            .canonicalize()
+            .expect("project root should be canonicalizable");
+        let path = resolve_repo_relative_path(repo.to_str().unwrap(), "src/main.ts")
+            .expect("a file inside the repository should be accepted");
+        assert!(path.starts_with(&repo));
+    }
+
+    #[test]
+    fn rejects_paths_that_escape_the_repository() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri should have a project root");
+        assert!(resolve_repo_relative_path(repo.to_str().unwrap(), "../outside.txt").is_err());
+        assert!(resolve_repo_relative_path(repo.to_str().unwrap(), "/outside.txt").is_err());
+    }
+}

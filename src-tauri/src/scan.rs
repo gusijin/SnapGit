@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// 克隆远程仓库到本地目录。
 /// - `url`：远程仓库地址（https/ssh/git 协议均可）
 /// - `target_dir`：最终目标目录（不存在则 git 自动创建；已存在且必须为空）
@@ -20,7 +19,10 @@ pub(crate) async fn clone_repository(
     // 目标已存在且非空 → 明确拒绝（git clone 自己也会拒绝，我们提前给友好错误）
     if target_path.exists() {
         if !target_path.is_dir() {
-            return Err(format!("目标路径已存在且不是文件夹：{}", target_path.display()));
+            return Err(format!(
+                "目标路径已存在且不是文件夹：{}",
+                target_path.display()
+            ));
         }
         let is_empty = target_path
             .read_dir()
@@ -102,8 +104,12 @@ pub(crate) async fn create_branch(repo_path: String, branch_name: String) -> Res
         let head = repo.head().map_err(|e| e.to_string())?;
         let target = head.target().ok_or("Cannot get head target")?;
 
-        repo.branch(&branch_name, &repo.find_commit(target).map_err(|e| e.to_string())?, false)
-            .map_err(|e| e.to_string())?;
+        repo.branch(
+            &branch_name,
+            &repo.find_commit(target).map_err(|e| e.to_string())?,
+            false,
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     })
@@ -151,7 +157,11 @@ pub(crate) async fn merge_branch(repo_path: String, branch_name: String) -> Resu
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let msg = format!("{}{}", stderr, stdout);
-            Err(if msg.trim().is_empty() { "合并失败".to_string() } else { msg })
+            Err(if msg.trim().is_empty() {
+                "合并失败".to_string()
+            } else {
+                msg
+            })
         }
     })
     .await
@@ -159,7 +169,11 @@ pub(crate) async fn merge_branch(repo_path: String, branch_name: String) -> Resu
 }
 
 #[command]
-pub(crate) async fn rename_branch(repo_path: String, old_name: String, new_name: String) -> Result<()> {
+pub(crate) async fn rename_branch(
+    repo_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
         let output = git_command()
@@ -179,7 +193,11 @@ pub(crate) async fn rename_branch(repo_path: String, old_name: String, new_name:
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let msg = format!("{}{}", stderr, stdout);
-            Err(if msg.trim().is_empty() { "重命名分支失败".to_string() } else { msg })
+            Err(if msg.trim().is_empty() {
+                "重命名分支失败".to_string()
+            } else {
+                msg
+            })
         }
     })
     .await
@@ -428,11 +446,7 @@ pub(crate) async fn check_remote_branch_deletable(
         //    使用 libgit2 读取 remote url / pushurl（pushurl 优先，对应 `remote.<name>.pushurl`）。
         if let Ok(repo) = Repository::open(&repo_path) {
             if let Ok(r) = repo.find_remote(&remote) {
-                let push_url = r
-                    .pushurl()
-                    .or_else(|| r.url())
-                    .unwrap_or("")
-                    .to_string();
+                let push_url = r.pushurl().or_else(|| r.url()).unwrap_or("").to_string();
                 let lower = push_url.to_lowercase();
                 if lower.starts_with("git://") {
                     return Ok(RemoteDeleteCheck {
@@ -491,10 +505,19 @@ pub(crate) async fn check_remote_branch_deletable(
 
                 // 服务端明确拒绝：分支受保护 / 无权限
                 let denied_kw = [
-                    "protected", "denied", "forbidden", "permission denied",
-                    "you do not have permission", "cannot delete", "can't delete",
-                    "not allowed to delete", "not allowed to push", "you are not allowed",
-                    "protected branch", "branch protection", "403",
+                    "protected",
+                    "denied",
+                    "forbidden",
+                    "permission denied",
+                    "you do not have permission",
+                    "cannot delete",
+                    "can't delete",
+                    "not allowed to delete",
+                    "not allowed to push",
+                    "you are not allowed",
+                    "protected branch",
+                    "branch protection",
+                    "403",
                 ];
                 for kw in denied_kw.iter() {
                     if msg.contains(kw) {
@@ -568,7 +591,9 @@ pub(crate) fn open_in_terminal(repo_path: String) -> Result<()> {
                 .arg(format!("--cd={}", unix_path))
                 .creation_flags(0x00000010)
                 .spawn();
-            return child.map(|_| ()).map_err(|e| format!("无法打开 Git Bash: {}", e));
+            return child
+                .map(|_| ())
+                .map_err(|e| format!("无法打开 Git Bash: {}", e));
         }
         // 回退：新开一个 cmd 窗口并 cd 到仓库目录（Git for Windows 的 git.exe 已在 PATH 上）
         // /d 指定起始目录；CREATE_NEW_CONSOLE(0x10) 让其独立成窗口
@@ -576,7 +601,9 @@ pub(crate) fn open_in_terminal(repo_path: String) -> Result<()> {
             .args(["/c", "start", "/d", &path, "cmd"])
             .creation_flags(0x00000010)
             .spawn();
-        return child.map(|_| ()).map_err(|e| format!("无法打开终端: {}", e));
+        child
+            .map(|_| ())
+            .map_err(|e| format!("无法打开终端: {}", e))
     }
 
     #[cfg(target_os = "macos")]
@@ -585,7 +612,9 @@ pub(crate) fn open_in_terminal(repo_path: String) -> Result<()> {
         let child = std::process::Command::new("open")
             .args(["-a", "Terminal", &path])
             .spawn();
-        return child.map(|_| ()).map_err(|e| format!("无法打开终端: {}", e));
+        return child
+            .map(|_| ())
+            .map_err(|e| format!("无法打开终端: {}", e));
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -596,16 +625,24 @@ pub(crate) fn open_in_terminal(repo_path: String) -> Result<()> {
 
 #[command]
 pub(crate) async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
-    let _guard = git_read_guard();
-    apply_ssh_key_config(&repo_path, &key_path)
+    tokio::task::spawn_blocking(move || {
+        let _guard = git_write_guard();
+        apply_ssh_key_config(&repo_path, &key_path)
+    })
+    .await
+    .map_err(|e| format!("保存 SSH 私钥配置失败: {}", e))?
 }
 
 // 保存仓库用户信息（user.name / user.email）。
 // 空字符串表示移除该配置（git config --unset），方便回退到 global/system 默认值。
 #[command]
-pub(crate) async fn set_user_identity(repo_path: String, name: String, email: String) -> Result<()> {
+pub(crate) async fn set_user_identity(
+    repo_path: String,
+    name: String,
+    email: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = git_read_guard();
+        let _guard = git_write_guard();
         let set_or_unset = |key: &str, value: &str| -> std::result::Result<(), String> {
             let mut cmd = git_command();
             cmd.arg("-C").arg(&repo_path).arg("config").arg("--local");
@@ -654,10 +691,7 @@ pub(crate) fn detect_git() -> Result<serde_json::Value> {
             if out.status.success() {
                 let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 // 形如 "git version 2.45.1.windows.1"
-                let version = raw
-                    .strip_prefix("git version ")
-                    .unwrap_or(&raw)
-                    .to_string();
+                let version = raw.strip_prefix("git version ").unwrap_or(&raw).to_string();
                 return Ok(serde_json::json!({
                     "available": true,
                     "version": version,
@@ -688,9 +722,16 @@ pub(crate) fn get_scan_directories() -> Vec<PathBuf> {
     // 注：剔除 Desktop / Downloads / Library 等体量巨大且无仓库意义的目录，
     // 深度递归扫描会严重拖慢首屏。
     let common = [
-        "workspace", "code", "repos", "projects",
-        "opensource", "sandbox", "dev", "github",
-        "gitee", "source",
+        "workspace",
+        "code",
+        "repos",
+        "projects",
+        "opensource",
+        "sandbox",
+        "dev",
+        "github",
+        "gitee",
+        "source",
     ];
 
     // 平台专属目录：Windows 用反斜杠子路径；macOS / Linux 用其惯例开发目录。
@@ -699,13 +740,21 @@ pub(crate) fn get_scan_directories() -> Vec<PathBuf> {
     // 导致 macOS 上候选目录全不存在、扫描结果为空（"不会自动扫描到仓库"）。
     #[cfg(target_os = "windows")]
     let platform = [
-        "Documents\\site", "Documents\\projects",
-        "Documents\\code", "Documents\\workspace",
+        "Documents\\site",
+        "Documents\\projects",
+        "Documents\\code",
+        "Documents\\workspace",
     ];
     #[cfg(not(target_os = "windows"))]
     let platform = [
-        "Developer", "git", "src", "Projects", "Code",
-        "Repos", "Workspace", "Documents",
+        "Developer",
+        "git",
+        "src",
+        "Projects",
+        "Code",
+        "Repos",
+        "Workspace",
+        "Documents",
     ];
 
     for sub in common.iter().chain(platform.iter()) {
@@ -745,15 +794,39 @@ pub(crate) fn is_skip_dir(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(
         lower.as_str(),
-        "node_modules" | "vendor" | "target" | "build" | "dist" | "__pycache__"
-        | ".git" | ".svn" | ".hg" | "bin" | "obj" | ".next" | ".nuxt"
-        | ".cache" | ".gradle" | ".idea" | ".vscode" | ".vs"
-        | "windows" | "program files" | "program files (x86)" | "programdata"
-        | "system volume information" | "$recycle.bin" | "temp"
-        | "appdata" | "locallow" | "local" | "roaming"
-        | "tencent" | "wetype"
+        "node_modules"
+            | "vendor"
+            | "target"
+            | "build"
+            | "dist"
+            | "__pycache__"
+            | ".git"
+            | ".svn"
+            | ".hg"
+            | "bin"
+            | "obj"
+            | ".next"
+            | ".nuxt"
+            | ".cache"
+            | ".gradle"
+            | ".idea"
+            | ".vscode"
+            | ".vs"
+            | "windows"
+            | "program files"
+            | "program files (x86)"
+            | "programdata"
+            | "system volume information"
+            | "$recycle.bin"
+            | "temp"
+            | "appdata"
+            | "locallow"
+            | "local"
+            | "roaming"
+            | "tencent"
+            | "wetype"
     ) || lower.starts_with("$")
-       || lower.starts_with(".")
+        || lower.starts_with(".")
 }
 
 pub(crate) fn scan_directory(
@@ -784,7 +857,9 @@ pub(crate) fn scan_directory(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         projects.push(ScannedProject {
-            path: normalize_windows_path(&canonical).to_string_lossy().to_string(),
+            path: normalize_windows_path(&canonical)
+                .to_string_lossy()
+                .to_string(),
             name,
             vcs_type: "git".to_string(),
         });
@@ -798,7 +873,9 @@ pub(crate) fn scan_directory(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         projects.push(ScannedProject {
-            path: normalize_windows_path(&canonical).to_string_lossy().to_string(),
+            path: normalize_windows_path(&canonical)
+                .to_string_lossy()
+                .to_string(),
             name,
             vcs_type: "svn".to_string(),
         });
@@ -818,6 +895,12 @@ pub(crate) fn scan_directory(
         };
 
         let path = entry.path();
+        if fs::symlink_metadata(&path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
         if !path.is_dir() {
             continue;
         }
@@ -836,22 +919,26 @@ pub(crate) fn scan_directory(
 }
 
 #[command]
-pub(crate) fn scan_projects() -> Result<Vec<ScannedProject>> {
-    let _guard = git_read_guard();
-    let mut projects = Vec::new();
-    let scan_dirs = get_scan_directories();
-    let mut visited = std::collections::HashSet::new();
+pub(crate) async fn scan_projects() -> Result<Vec<ScannedProject>> {
+    tokio::task::spawn_blocking(|| {
+        let _guard = git_read_guard();
+        let mut projects = Vec::new();
+        let scan_dirs = get_scan_directories();
+        let mut visited = std::collections::HashSet::new();
 
-    for base_dir in &scan_dirs {
-        scan_directory(base_dir, 1, 4, &mut projects, &mut visited);
-    }
+        for base_dir in &scan_dirs {
+            scan_directory(base_dir, 1, 4, &mut projects, &mut visited);
+        }
 
-    // 去重
-    let mut seen = std::collections::HashSet::new();
-    projects.retain(|p| seen.insert(p.path.clone()));
-    projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        // 去重
+        let mut seen = std::collections::HashSet::new();
+        projects.retain(|p| seen.insert(p.path.clone()));
+        projects.sort_by_key(|a| a.name.to_lowercase());
 
-    Ok(projects)
+        Ok(projects)
+    })
+    .await
+    .map_err(|e| format!("扫描项目任务失败: {}", e))?
 }
 
 // ===== 文件树 =====
@@ -880,6 +967,14 @@ pub(crate) fn build_file_tree(
         };
 
         let path = entry.path();
+        // Do not follow symlinks from the file tree. A repository may contain
+        // links into another workspace or a loop back into itself.
+        if fs::symlink_metadata(&path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
         let name = match path.file_name() {
             Some(n) => n.to_string_lossy().to_string(),
             None => continue,
@@ -912,12 +1007,10 @@ pub(crate) fn build_file_tree(
     }
 
     // 文件夹优先，然后按名称排序
-    nodes.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    nodes.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     nodes

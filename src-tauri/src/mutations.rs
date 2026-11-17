@@ -1,5 +1,24 @@
 use super::*;
 
+fn redact_url_credentials(value: &str) -> String {
+    let Some(scheme_end) = value.find("://") else {
+        return value.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let Some(at_offset) = value[authority_start..].find('@') else {
+        return value.to_string();
+    };
+    let at = authority_start + at_offset;
+    let user_info = &value[authority_start..at];
+    if !user_info.contains(':') {
+        return value.to_string();
+    }
+    format!(
+        "{}[redacted]@{}",
+        &value[..authority_start],
+        &value[at + 1..]
+    )
+}
 
 // 暂存单个路径，返回是否真的有内容可暂存。
 // 用 git add -A 一次性处理新增、修改、删除等所有变更。
@@ -7,6 +26,7 @@ use super::*;
 // 前端列表来自旧快照），git 会报 "pathspec ... did not match any files"。
 // 这只代表「该路径无事可做」，不是失败：若当成错误抛出，一个幽灵路径会让整批提交中止。
 pub(crate) fn stage_one_path(repo_path: &str, file_path: &str) -> Result<bool> {
+    let _safe_path = resolve_repo_relative_path(repo_path, file_path)?;
     let output = git_command()
         .arg("-C")
         .arg(repo_path)
@@ -26,7 +46,11 @@ pub(crate) fn stage_one_path(repo_path: &str, file_path: &str) -> Result<bool> {
     if msg.contains("did not match any files") {
         return Ok(false);
     }
-    Err(if msg.trim().is_empty() { "暂存失败".to_string() } else { msg })
+    Err(if msg.trim().is_empty() {
+        "暂存失败".to_string()
+    } else {
+        msg
+    })
 }
 
 #[command]
@@ -61,6 +85,8 @@ pub(crate) async fn stage_files(repo_path: String, file_paths: Vec<String>) -> R
 pub(crate) async fn discard_file(repo_path: String, file_path: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
+        // Validate the path before passing it to either Git or filesystem APIs.
+        let _safe_path = resolve_repo_relative_path(&repo_path, &file_path)?;
 
         // 先看该路径当前是不是「删除态」。git status --porcelain 每行前两字符是 XY：
         // 已暂存删除为 "D "，未暂存删除为 " D"。两种情况都要从 HEAD 恢复文件，
@@ -135,18 +161,21 @@ pub(crate) async fn discard_file(repo_path: String, file_path: String) -> Result
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let msg = format!("{}{}", stderr, stdout);
-                return Err(if msg.trim().is_empty() { "丢弃修改失败".to_string() } else { msg });
+                return Err(if msg.trim().is_empty() {
+                    "丢弃修改失败".to_string()
+                } else {
+                    msg
+                });
             }
         } else {
             // 未追踪文件：直接删除
-            let full_path = std::path::Path::new(&repo_path).join(&file_path);
+            let full_path = resolve_repo_relative_path(&repo_path, &file_path)?;
             if full_path.exists() {
                 if full_path.is_dir() {
                     std::fs::remove_dir_all(&full_path)
                         .map_err(|e| format!("无法删除目录: {}", e))?;
                 } else {
-                    std::fs::remove_file(&full_path)
-                        .map_err(|e| format!("无法删除文件: {}", e))?;
+                    std::fs::remove_file(&full_path).map_err(|e| format!("无法删除文件: {}", e))?;
                 }
             }
         }
@@ -171,21 +200,26 @@ pub(crate) async fn commit(repo_path: String, message: String) -> Result<String>
             .map_err(|e| format!("无法执行 git commit 命令: {}", e))?;
 
         if output.status.success() {
-            // 从输出中提取 commit id
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // 典型输出: "[branchname abc1234] message"
-            let first_line = stdout.lines().next().unwrap_or("");
-            let commit_id = first_line
-                .split_whitespace()
-                .last()
-                .unwrap_or("unknown")
-                .to_string();
-            Ok(commit_id)
+            // 提交输出受 Git 语言环境影响。提交成功后读取 HEAD，避免解析人类可读文本。
+            let head = git_command()
+                .arg("-C")
+                .arg(&repo_path)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .map_err(|e| format!("无法读取新提交 ID: {}", e))?;
+            if !head.status.success() {
+                return Err("提交成功，但无法读取新提交 ID".to_string());
+            }
+            Ok(String::from_utf8_lossy(&head.stdout).trim().to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let msg = format!("{}{}", stderr, stdout);
-            Err(if msg.trim().is_empty() { "提交失败".to_string() } else { msg })
+            Err(if msg.trim().is_empty() {
+                "提交失败".to_string()
+            } else {
+                msg
+            })
         }
     })
     .await
@@ -193,7 +227,12 @@ pub(crate) async fn commit(repo_path: String, message: String) -> Result<String>
 }
 
 #[command]
-pub(crate) async fn push(repo_path: String, remote: String, local_branch: String, remote_branch: String) -> Result<()> {
+pub(crate) async fn push(
+    repo_path: String,
+    remote: String,
+    local_branch: String,
+    remote_branch: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_write_guard();
         // 使用系统 git 命令行推送，自动复用 credential.helper / SSH agent 等认证配置
@@ -251,7 +290,7 @@ pub(crate) async fn get_remote_url(repo_path: String, remote_name: String) -> Re
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let remote = repo.find_remote(&remote_name).map_err(|e| e.to_string())?;
         let url = remote.url().ok_or("无法获取远程 URL")?;
-        Ok(url.to_string())
+        Ok(redact_url_credentials(url))
     })
     .await
     .map_err(|e| format!("获取远程 URL 失败: {}", e))?
@@ -267,8 +306,10 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
         // 1. remotes：git remote -v
         let mut remotes: Vec<serde_json::Value> = Vec::new();
         if let Ok(output) = git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("remote").arg("-v")
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("remote")
+            .arg("-v")
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -276,7 +317,9 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
             let mut seen = std::collections::HashMap::new();
             for line in stdout.lines() {
                 let line = line.trim();
-                if line.is_empty() { continue; }
+                if line.is_empty() {
+                    continue;
+                }
                 if let Some((name, rest)) = line.split_once('\t') {
                     let url_part = rest.trim();
                     let url = if let Some(idx) = url_part.rfind('(') {
@@ -284,7 +327,8 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
                     } else {
                         url_part.to_string()
                     };
-                    let entry: &mut (String, String) = seen.entry(name.to_string())
+                    let entry: &mut (String, String) = seen
+                        .entry(name.to_string())
                         .or_insert_with(|| (String::new(), String::new()));
                     // 简单判断：先出现 fetch 再出现 push（git remote -v 默认顺序是 fetch, push）
                     if entry.0.is_empty() {
@@ -297,26 +341,36 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
             for (name, (fetch_url, push_url)) in &seen {
                 let mut obj = serde_json::Map::new();
                 obj.insert("name".into(), serde_json::Value::String(name.clone()));
-                obj.insert("fetch_url".into(), serde_json::Value::String(fetch_url.clone()));
-                obj.insert("push_url".into(), serde_json::Value::String(push_url.clone()));
+                obj.insert(
+                    "fetch_url".into(),
+                    serde_json::Value::String(redact_url_credentials(fetch_url)),
+                );
+                obj.insert(
+                    "push_url".into(),
+                    serde_json::Value::String(redact_url_credentials(push_url)),
+                );
                 remotes.push(serde_json::Value::Object(obj));
             }
         }
-        remotes.sort_by(|a, b| {
-            a["name"].as_str().cmp(&b["name"].as_str())
-        });
+        remotes.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         map.insert("remotes".into(), serde_json::Value::Array(remotes));
 
         // 辅助：读取某条 git config（local 优先 → global → system）
         let read_config = |repo_path: &str, key: &str| -> Option<String> {
             for scope in ["--local", "--global", "--system"] {
                 let mut cmd = git_command();
-                cmd.arg("-C").arg(repo_path)
-                    .arg("config").arg(scope).arg("--get").arg(key);
+                cmd.arg("-C")
+                    .arg(repo_path)
+                    .arg("config")
+                    .arg(scope)
+                    .arg("--get")
+                    .arg(key);
                 if let Ok(output) = cmd.output() {
                     if output.status.success() {
                         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if !s.is_empty() { return Some(s); }
+                        if !s.is_empty() {
+                            return Some(s);
+                        }
                     }
                 }
             }
@@ -324,26 +378,46 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
         };
 
         // 2. user.name / user.email
-        map.insert("user_name".into(), read_config(&repo_path, "user.name").into());
-        map.insert("user_email".into(), read_config(&repo_path, "user.email").into());
+        map.insert(
+            "user_name".into(),
+            read_config(&repo_path, "user.name").into(),
+        );
+        map.insert(
+            "user_email".into(),
+            read_config(&repo_path, "user.email").into(),
+        );
 
         // 3. credential.helper
-        map.insert("credential_helper".into(), read_config(&repo_path, "credential.helper").into());
+        map.insert(
+            "credential_helper".into(),
+            read_config(&repo_path, "credential.helper").into(),
+        );
 
         // 4. core.sshCommand（自定义 ssh 命令）
-        map.insert("core_ssh_command".into(), read_config(&repo_path, "core.sshCommand").into());
+        map.insert(
+            "core_ssh_command".into(),
+            read_config(&repo_path, "core.sshCommand").into(),
+        );
 
         // 5. 常见 SSH 密钥路径是否存在
         let home_dir = dirs::home_dir();
         let mut ssh_keys: Vec<serde_json::Value> = Vec::new();
-        let candidates = ["~/.ssh/id_ed25519", "~/.ssh/id_ed25519.pub",
-                          "~/.ssh/id_rsa", "~/.ssh/id_rsa.pub",
-                          "~/.ssh/id_ecdsa", "~/.ssh/id_ecdsa.pub"];
+        let candidates = [
+            "~/.ssh/id_ed25519",
+            "~/.ssh/id_ed25519.pub",
+            "~/.ssh/id_rsa",
+            "~/.ssh/id_rsa.pub",
+            "~/.ssh/id_ecdsa",
+            "~/.ssh/id_ecdsa.pub",
+        ];
         for cand in candidates {
             let expanded = if let Some(ref home) = home_dir {
                 let p = cand.trim_start_matches("~/");
                 // 避免 "home.join(\".ssh/id_ed25519\")" 保留正斜杠导致 Windows 路径混用斜杠
-                p.split('/').fold(home.clone(), |acc, s| acc.join(s)).to_string_lossy().to_string()
+                p.split('/')
+                    .fold(home.clone(), |acc, s| acc.join(s))
+                    .to_string_lossy()
+                    .to_string()
             } else {
                 cand.to_string()
             };
@@ -356,22 +430,36 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
         map.insert("ssh_keys".into(), serde_json::Value::Array(ssh_keys));
 
         // 6. GIT_SSH_COMMAND 环境变量（运行时覆盖）
-        map.insert("git_ssh_command_env".into(),
-            std::env::var("GIT_SSH_COMMAND").ok().into());
-        map.insert("ssh_auth_sock_env".into(),
-            std::env::var("SSH_AUTH_SOCK").ok().into());
+        map.insert(
+            "git_ssh_command_env".into(),
+            std::env::var("GIT_SSH_COMMAND").ok().into(),
+        );
+        map.insert(
+            "ssh_auth_sock_env".into(),
+            std::env::var("SSH_AUTH_SOCK").ok().into(),
+        );
 
         // 7. 本地完整 config（git config --local --list），透传方便调试
         let mut local_kv = serde_json::Map::new();
         if let Ok(output) = git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("config").arg("--local").arg("--list")
+            .arg("-C")
+            .arg(&repo_path)
+            .arg("config")
+            .arg("--local")
+            .arg("--list")
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if let Some((k, v)) = line.split_once('=') {
-                    local_kv.insert(k.to_string(), v.to_string().into());
+                    let value = if k.contains("credential") || k.ends_with("extraheader") {
+                        "[redacted]".to_string()
+                    } else if k.starts_with("remote.") && k.ends_with(".url") {
+                        redact_url_credentials(v)
+                    } else {
+                        v.to_string()
+                    };
+                    local_kv.insert(k.to_string(), value.into());
                 }
             }
         }
@@ -386,26 +474,36 @@ pub(crate) async fn get_repo_config(repo_path: String) -> Result<serde_json::Val
 }
 
 #[command]
-pub(crate) async fn save_credentials(repo_path: String, remote_name: String, username: String, token: String) -> Result<()> {
+pub(crate) async fn save_credentials(
+    repo_path: String,
+    remote_name: String,
+    username: String,
+    token: String,
+) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let _guard = git_read_guard();
+        let _guard = git_write_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
         let remote = repo.find_remote(&remote_name).map_err(|e| e.to_string())?;
         let url = remote.url().ok_or("无法获取远程 URL")?;
 
-        // 配置 credential.helper 为 store（文件存储，明文保存在 ~/.git-credentials）
-        git_command()
-            .arg("-C").arg(&repo_path)
-            .arg("config")
-            .arg("--local")
-            .arg("credential.helper")
-            .arg("store")
+        // 只使用用户已经配置的凭证助手。自动启用 `store` 会把 token
+        // 明文写入 ~/.git-credentials，桌面应用不应替用户降低存储安全级别。
+        let helper = git_command()
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["config", "--get-all", "credential.helper"])
             .output()
-            .map_err(|e| format!("无法配置 credential helper: {}", e))?;
+            .map_err(|e| format!("无法读取 credential helper: {}", e))?;
+        if !helper.status.success() || String::from_utf8_lossy(&helper.stdout).trim().is_empty() {
+            return Err(
+                "未检测到 Git 凭证助手，请先配置 Git Credential Manager 或系统凭证助手".to_string(),
+            );
+        }
 
         // 使用 git credential approve 存储凭证
         let mut child = git_command()
-            .arg("-C").arg(&repo_path)
+            .arg("-C")
+            .arg(&repo_path)
             .arg("credential")
             .arg("approve")
             .stdin(std::process::Stdio::piped())
@@ -415,12 +513,14 @@ pub(crate) async fn save_credentials(repo_path: String, remote_name: String, use
             .map_err(|e| format!("无法执行 git credential: {}", e))?;
 
         if let Some(stdin) = child.stdin.as_mut() {
-            write!(stdin, "url={}\n", url).ok();
-            write!(stdin, "username={}\n", username).ok();
-            write!(stdin, "password={}\n", token).ok();
+            writeln!(stdin, "url={}", url).ok();
+            writeln!(stdin, "username={}", username).ok();
+            writeln!(stdin, "password={}", token).ok();
         }
 
-        let output = child.wait_with_output().map_err(|e| format!("等待失败: {}", e))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("等待失败: {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("存储凭证失败: {}", stderr));
@@ -432,29 +532,22 @@ pub(crate) async fn save_credentials(repo_path: String, remote_name: String, use
     .map_err(|e| format!("保存凭证失败: {}", e))?
 }
 
-/// 全局「登录 GitHub」：把 OAuth 设备流拿到的 access_token 存入 git 凭证库（针对 https://github.com）。
-/// 这样任意 github.com 的 HTTPS 远端在 push/fetch 时都能自动复用，无需每次推送都重新授权。
-/// 仅在尚未配置任何 credential.helper 时启用 store（明文存于 ~/.git-credentials，
-/// 与 save_credentials 的本地配置一致），避免覆盖用户已有的凭证助手（如 osxkeychain / GCM）。
+/// 全局「登录 GitHub」：把 OAuth 设备流拿到的 access_token 交给用户已经配置的
+/// Git 凭证助手，避免应用自行创建明文凭证文件。
 #[command]
 pub(crate) async fn save_github_token(token: String) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        // 若未配置任何 credential.helper，则启用 store（与 save_credentials 的本地配置同源）
-        let has_helper = git_command()
+        let _guard = git_write_guard();
+        // 只使用用户已经配置的凭证助手，避免自动创建明文 ~/.git-credentials。
+        let helper = git_command()
             .arg("config")
-            .arg("--global")
-            .arg("--get")
-            .arg("credential.helper")
+            .args(["--get-all", "credential.helper"])
             .output()
-            .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-            .unwrap_or(false);
-        if !has_helper {
-            let _ = git_command()
-                .arg("--global")
-                .arg("config")
-                .arg("credential.helper")
-                .arg("store")
-                .output();
+            .map_err(|e| format!("无法读取 credential helper: {}", e))?;
+        if !helper.status.success() || String::from_utf8_lossy(&helper.stdout).trim().is_empty() {
+            return Err(
+                "未检测到 Git 凭证助手，请先配置 Git Credential Manager 或系统凭证助手".to_string(),
+            );
         }
 
         let mut child = git_command()
@@ -467,13 +560,14 @@ pub(crate) async fn save_github_token(token: String) -> Result<()> {
             .map_err(|e| format!("无法执行 git credential: {}", e))?;
 
         if let Some(stdin) = child.stdin.as_mut() {
-            use std::io::Write;
-            write!(stdin, "url=https://github.com\n").ok();
-            write!(stdin, "username=x-access-token\n").ok();
-            write!(stdin, "password={}\n", token).ok();
+            writeln!(stdin, "url=https://github.com").ok();
+            writeln!(stdin, "username=x-access-token").ok();
+            writeln!(stdin, "password={}", token).ok();
         }
 
-        let output = child.wait_with_output().map_err(|e| format!("等待失败: {}", e))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("等待失败: {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("保存 GitHub 凭证失败: {}", stderr));

@@ -1,8 +1,11 @@
 use super::*;
 
-
 #[command]
-pub(crate) async fn get_commits(repo_path: String, limit: usize, skip: Option<usize>) -> Result<Vec<Commit>> {
+pub(crate) async fn get_commits(
+    repo_path: String,
+    limit: usize,
+    skip: Option<usize>,
+) -> Result<Vec<Commit>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
@@ -27,7 +30,9 @@ pub(crate) async fn get_commits(repo_path: String, limit: usize, skip: Option<us
                 if reference.symbolic_target().is_some() {
                     continue;
                 }
-                let Some(full_name) = reference.name() else { continue };
+                let Some(full_name) = reference.name() else {
+                    continue;
+                };
                 let (name, ref_type) = if let Some(n) = full_name.strip_prefix("refs/heads/") {
                     (n, "branch")
                 } else if let Some(n) = full_name.strip_prefix("refs/remotes/") {
@@ -89,7 +94,9 @@ pub(crate) async fn get_commits(repo_path: String, limit: usize, skip: Option<us
 // 本地分支未配置上游时，对比第一个远程的 HEAD（默认分支）估算"本地需要上传"的提交数
 // 只取 ahead 分量（behind 置 0），避免未配置上游的分支显示误导性的"落后"数
 pub(crate) fn remote_head_ahead(repo: &Repository, local_oid: git2::Oid) -> (usize, usize) {
-    let Ok(remotes) = repo.remotes() else { return (0, 0) };
+    let Ok(remotes) = repo.remotes() else {
+        return (0, 0);
+    };
     for i in 0..remotes.len() {
         let Some(name) = remotes.get(i) else { continue };
         let head_ref = format!("refs/remotes/{}/HEAD", name);
@@ -124,7 +131,9 @@ pub(crate) async fn get_branches(repo_path: String, full: Option<bool>) -> Resul
 
         for branch in repo.branches(None).map_err(|e| e.to_string())? {
             let (branch, branch_type) = branch.map_err(|e| e.to_string())?;
-            let name = branch.name().map_err(|e| e.to_string())?
+            let name = branch
+                .name()
+                .map_err(|e| e.to_string())?
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
@@ -148,8 +157,7 @@ pub(crate) async fn get_branches(repo_path: String, full: Option<bool>) -> Resul
                             let upstream_oid = upstream.get().target();
                             match (local_oid, upstream_oid) {
                                 (Some(local), Some(upstream)) => {
-                                    repo.graph_ahead_behind(local, upstream)
-                                        .unwrap_or((0, 0))
+                                    repo.graph_ahead_behind(local, upstream).unwrap_or((0, 0))
                                 }
                                 _ => (0, 0),
                             }
@@ -206,16 +214,22 @@ pub(crate) async fn get_remotes(repo_path: String) -> Result<Vec<String>> {
 }
 
 #[command]
-pub(crate) async fn get_upstream(repo_path: String, branch_name: String) -> Result<Option<UpstreamInfo>> {
+pub(crate) async fn get_upstream(
+    repo_path: String,
+    branch_name: String,
+) -> Result<Option<UpstreamInfo>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
-        let branch = repo.find_branch(&branch_name, BranchType::Local)
+        let branch = repo
+            .find_branch(&branch_name, BranchType::Local)
             .map_err(|e| e.to_string())?;
 
         let result = match branch.upstream() {
             Ok(upstream) => {
-                let name = upstream.name().map_err(|e| e.to_string())?
+                let name = upstream
+                    .name()
+                    .map_err(|e| e.to_string())?
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 if let Some((remote, remote_branch)) = name.split_once('/') {
@@ -307,14 +321,17 @@ pub(crate) fn map_status(x: char, y: char) -> Option<&'static str> {
 }
 
 #[command]
-pub(crate) async fn get_file_status(repo_path: String, cached: Option<bool>) -> Result<Vec<FileStatus>> {
+pub(crate) async fn get_file_status(
+    repo_path: String,
+    cached: Option<bool>,
+) -> Result<Vec<FileStatus>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
 
         // C4: 自动刷新高频调用时命中缓存，避免每次都扫 .git
         let use_cache = cached.unwrap_or(true);
         if use_cache {
-            let cache = STATUS_CACHE.lock().unwrap();
+            let cache = STATUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             if let Some((t, data)) = cache.get(&repo_path) {
                 if t.elapsed() < STATUS_CACHE_TTL {
                     return Ok(data.clone());
@@ -354,7 +371,7 @@ pub(crate) async fn get_file_status(repo_path: String, cached: Option<bool>) -> 
         if use_cache {
             STATUS_CACHE
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(repo_path.clone(), (Instant::now(), file_statuses.clone()));
         }
         // 释放对 repo 的借用（statuses 仍持有），否则无法 move repo 归还缓存

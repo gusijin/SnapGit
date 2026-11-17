@@ -1,6 +1,5 @@
 use super::*;
 
-
 // 在独立的新窗口中打开文件编辑/冲突解决器（不再用当前窗口的 Dialog 弹窗）。
 // 传参方式：
 // 1. URL hash 标记为 #/editor，让前端 main.ts 知道该挂载 EditorWindow。
@@ -26,7 +25,8 @@ pub(crate) async fn open_edit_window(
             .unwrap_or(0)
     );
     // 文件列表索引是前端数组下标；不在列表中（单文件打开）传 None，前端据此禁用导航按钮
-    let current_index_value = current_index.filter(|&i| files_list.as_ref().is_some_and(|list| i < list.len()));
+    let current_index_value =
+        current_index.filter(|&i| files_list.as_ref().is_some_and(|list| i < list.len()));
     let args = serde_json::json!({
         "repoPath": repo_path,
         "filePath": file_path,
@@ -45,43 +45,35 @@ pub(crate) async fn open_edit_window(
 
     let _edit_window = {
         #[cfg(not(target_os = "macos"))]
-        let builder = tauri::WebviewWindowBuilder::new(
-            &app,
-            &label,
-            WebviewUrl::App("editor.html".into()),
-        )
-        .title("SnapGit - 文件编辑")
-        .inner_size(1200.0, 800.0)
-        .min_inner_size(700.0, 500.0)
-        .resizable(true)
-        // Windows/Linux: 关闭系统标题栏，由前端 TitleBar.vue 自绘（跟随主题切换）。
-        // macOS 分支见下，改用 TitleBarStyle::Overlay 让内容撑满、交通灯浮层覆盖（无空白行）。
-        .decorations(false)
-        // 窗口背景色 = 应用头部色 #e2e8f0：WebView2 首帧前的空窗期不再闪白。
-        .background_color(tauri::window::Color::from((226, 232, 240, 255)))
-        .initialization_script(&script);
+        let builder =
+            tauri::WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("editor.html".into()))
+                .title("SnapGit - 文件编辑")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(700.0, 500.0)
+                .resizable(true)
+                // Windows/Linux: 关闭系统标题栏，由前端 TitleBar.vue 自绘（跟随主题切换）。
+                // macOS 分支见下，改用 TitleBarStyle::Overlay 让内容撑满、交通灯浮层覆盖（无空白行）。
+                .decorations(false)
+                // 窗口背景色 = 应用头部色 #e2e8f0：WebView2 首帧前的空窗期不再闪白。
+                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
+                .initialization_script(&script);
 
         #[cfg(target_os = "macos")]
-        let builder = tauri::WebviewWindowBuilder::new(
-            &app,
-            &label,
-            WebviewUrl::App("editor.html".into()),
-        )
-        .title("SnapGit - 文件编辑")
-        .inner_size(1200.0, 800.0)
-        .min_inner_size(700.0, 500.0)
-        .resizable(true)
-        // macOS: Transparent 标题栏样式（原生透明标题栏，本身可拖拽），
-        // 用窗口背景色 (= 应用头部色 #e2e8f0) 染成与应用头部一致，视觉无缝；
-        // 不使用 Overlay 以免 fullsize 内容视图截走顶部事件、导致无法拖拽窗口。
-        .title_bar_style(TitleBarStyle::Transparent)
-        .hidden_title(true)
-        .background_color(tauri::window::Color::from((226, 232, 240, 255)))
-        .initialization_script(&script);
+        let builder =
+            tauri::WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("editor.html".into()))
+                .title("SnapGit - 文件编辑")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(700.0, 500.0)
+                .resizable(true)
+                // macOS: Transparent 标题栏样式（原生透明标题栏，本身可拖拽），
+                // 用窗口背景色 (= 应用头部色 #e2e8f0) 染成与应用头部一致，视觉无缝；
+                // 不使用 Overlay 以免 fullsize 内容视图截走顶部事件、导致无法拖拽窗口。
+                .title_bar_style(TitleBarStyle::Transparent)
+                .hidden_title(true)
+                .background_color(tauri::window::Color::from((226, 232, 240, 255)))
+                .initialization_script(&script);
 
-        builder
-            .build()
-            .map_err(|e| e.to_string())?
+        builder.build().map_err(|e| e.to_string())?
     };
 
     Ok(())
@@ -93,7 +85,10 @@ pub(crate) async fn open_edit_window(
 // 2. 用调用方 webview 的 label 自动匹配
 // 3. 回退搜索：遍历 EDIT_ARGS_MAP 找第一个 editor-* 条目（兜底）
 #[command]
-pub(crate) fn get_edit_args(window: WebviewWindow, label: Option<String>) -> Result<serde_json::Value> {
+pub(crate) fn get_edit_args(
+    window: WebviewWindow,
+    label: Option<String>,
+) -> Result<serde_json::Value> {
     let map = EDIT_ARGS_MAP.lock().map_err(|e| e.to_string())?;
 
     // 方式 1：前端显式传入 label
@@ -139,9 +134,7 @@ pub(crate) fn get_commit_files(repo_path: String, commit_id: String) -> Result<V
     let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
     let tree = commit.tree().map_err(|e| e.to_string())?;
 
-    let parents: Vec<git2::Tree> = commit.parents()
-        .filter_map(|p| p.tree().ok())
-        .collect();
+    let parents: Vec<git2::Tree> = commit.parents().filter_map(|p| p.tree().ok()).collect();
 
     let mut file_statuses = Vec::new();
 
@@ -157,21 +150,22 @@ pub(crate) fn get_commit_files(repo_path: String, commit_id: String) -> Result<V
                 }
             }
             git2::TreeWalkResult::Ok
-        }).map_err(|e| e.to_string())?;
+        })
+        .map_err(|e| e.to_string())?;
     } else {
         // 与第一个父提交比较
         let parent_tree = &parents[0];
         let mut diff_opts = DiffOptions::new();
         diff_opts.include_untracked(true);
 
-        let diff = repo.diff_tree_to_tree(
-            Some(parent_tree),
-            Some(&tree),
-            Some(&mut diff_opts),
-        ).map_err(|e| e.to_string())?;
+        let diff = repo
+            .diff_tree_to_tree(Some(parent_tree), Some(&tree), Some(&mut diff_opts))
+            .map_err(|e| e.to_string())?;
 
         for delta in diff.deltas() {
-            let path = delta.new_file().path()
+            let path = delta
+                .new_file()
+                .path()
                 .or_else(|| delta.old_file().path())
                 .and_then(|p| p.to_str())
                 .unwrap_or("")
@@ -205,7 +199,14 @@ pub(crate) struct LangMenuState {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<R>, Vec<CheckMenuItem<R>>, CheckMenuItem<R>, CheckMenuItem<R>)> {
+pub(crate) fn build_menu<R: Runtime>(
+    app: &AppHandle<R>,
+) -> tauri::Result<(
+    Menu<R>,
+    Vec<CheckMenuItem<R>>,
+    CheckMenuItem<R>,
+    CheckMenuItem<R>,
+)> {
     // 菜单项（触发前端事件）
     let open_repo_item = MenuItem::with_id(app, "open-repo", "打开仓库", true, None::<&str>)?;
     let clone_repo_item = MenuItem::with_id(app, "clone-repo", "克隆仓库", true, None::<&str>)?;
@@ -217,11 +218,21 @@ pub(crate) fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<
     let refresh_item = MenuItem::with_id(app, "refresh", "刷新", true, Some("CmdOrCtrl+R"))?;
 
     let new_branch_item = MenuItem::with_id(app, "new-branch", "新建分支", true, None::<&str>)?;
-    let checkout_branch_item = MenuItem::with_id(app, "checkout-branch", "切换分支", true, None::<&str>)?;
+    let checkout_branch_item =
+        MenuItem::with_id(app, "checkout-branch", "切换分支", true, None::<&str>)?;
     // 子模块面板默认隐藏，勾选态由前端 submodules-toggled 事件同步（含启动时恢复的偏好）
-    let toggle_submodules_item = CheckMenuItem::with_id(app, "toggle-submodules", "子模块", true, false, None::<&str>)?;
-    let toggle_sidebar_item = CheckMenuItem::with_id(app, "toggle-sidebar", "侧边栏", true, true, None::<&str>)?;
-    let toggle_theme_item = CheckMenuItem::with_id(app, "toggle-theme", "深色主题", true, true, None::<&str>)?;
+    let toggle_submodules_item = CheckMenuItem::with_id(
+        app,
+        "toggle-submodules",
+        "子模块",
+        true,
+        false,
+        None::<&str>,
+    )?;
+    let toggle_sidebar_item =
+        CheckMenuItem::with_id(app, "toggle-sidebar", "侧边栏", true, true, None::<&str>)?;
+    let toggle_theme_item =
+        CheckMenuItem::with_id(app, "toggle-theme", "深色主题", true, true, None::<&str>)?;
 
     // 仓库配置（打开仓库配置对话框）
     let repo_config_item = MenuItem::with_id(app, "repo-config", "配置", true, None::<&str>)?;
@@ -229,8 +240,22 @@ pub(crate) fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<
     // 语言切换（与 Windows 前端 MenuBar.vue 的「编辑 → 语言」对齐）。
     // 注意：语言项必须与 src/i18n/locales/index.ts 的 LocaleRegistry 保持一致。
     let lang_items: Vec<CheckMenuItem<R>> = vec![
-        CheckMenuItem::with_id(app, "set-locale-zh-CN", "简体中文", true, false, None::<&str>)?,
-        CheckMenuItem::with_id(app, "set-locale-en-US", "English", true, false, None::<&str>)?,
+        CheckMenuItem::with_id(
+            app,
+            "set-locale-zh-CN",
+            "简体中文",
+            true,
+            false,
+            None::<&str>,
+        )?,
+        CheckMenuItem::with_id(
+            app,
+            "set-locale-en-US",
+            "English",
+            true,
+            false,
+            None::<&str>,
+        )?,
     ];
 
     // 文件菜单
@@ -290,10 +315,7 @@ pub(crate) fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<
         app,
         "分支",
         true,
-        &[
-            &new_branch_item,
-            &checkout_branch_item,
-        ],
+        &[&new_branch_item, &checkout_branch_item],
     )?;
 
     // 视图菜单
@@ -314,19 +336,35 @@ pub(crate) fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<(Menu<
         app,
         "帮助",
         true,
-        &[
-            &MenuItem::with_id(app, "about", "关于 SnapGit", true, None::<&str>)?,
-        ],
+        &[&MenuItem::with_id(
+            app,
+            "about",
+            "关于 SnapGit",
+            true,
+            None::<&str>,
+        )?],
     )?;
 
     // 顶级菜单：macOS 会自动插入应用菜单（含 About、Services、Hide、Quit）
     // 我们这里依然按"文件"、"编辑"等配置，Windows 直接显示为窗口菜单
     let menu = Menu::with_items(
         app,
-        &[&file_menu, &edit_menu, &repo_menu, &branch_menu, &view_menu, &help_menu],
+        &[
+            &file_menu,
+            &edit_menu,
+            &repo_menu,
+            &branch_menu,
+            &view_menu,
+            &help_menu,
+        ],
     )?;
 
-    Ok((menu, lang_items, toggle_sidebar_item, toggle_submodules_item))
+    Ok((
+        menu,
+        lang_items,
+        toggle_sidebar_item,
+        toggle_submodules_item,
+    ))
 }
 
 // 将菜单事件转发给前端窗口（仅 macOS 使用）
