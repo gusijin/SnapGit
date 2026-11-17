@@ -17,7 +17,8 @@ tauri-plugin-dialog = "2.7.2"
 # 未开启时前端调用 watch 会报 "Command watch not found"，自动刷新只能降级为窗口聚焦刷新
 tauri-plugin-fs = { version = "2.5.1", features = ["watch"] }
 tauri-plugin-shell = "2.3.5"
-rfd = "0.16"
+# Linux 下必须与 tauri-plugin-dialog 的 default(gtk3) 对齐；rfd 的 gtk3/xdg-portal 两个后端互斥
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
