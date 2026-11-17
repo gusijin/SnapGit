@@ -1,16 +1,18 @@
 {
   "name": "snapgit",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/sync-version.mjs",
     "build": "vue-tsc && vite build",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
+    "pretauri": "node scripts/sync-version.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

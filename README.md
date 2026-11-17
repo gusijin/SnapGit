@@ -6,7 +6,7 @@
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#download)
-[![Version](https://img.shields.io/badge/version-0.1.0-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v0.1.0)
+[![Version](https://img.shields.io/badge/version-1.0.1-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v1.0.1)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -19,7 +19,7 @@
 
 ## Download
 
-Installers for **0.1.0** are available from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)**. Windows, macOS and Linux packages are built automatically when a `v*` tag is pushed (see [CI](#ci)).
+Installers for **1.0.1** are available from **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)**. Windows, macOS and Linux packages are built automatically when a `v*` tag is pushed (see [CI](#ci)).
 
 > ✅ All installers are free to download. There is no registration, activation step or trial period — just install it and open a repository.
 
@@ -33,7 +33,7 @@ Installers for **0.1.0** are available from **[GitHub Releases](https://github.c
 
 ### Windows
 
-1. Download `SnapGit_0.1.0_x64-setup.exe` — pick the `x86` build **only** on 32-bit Windows.
+1. Download `SnapGit_1.0.1_x64-setup.exe` — pick the `x86` build **only** on 32-bit Windows.
 2. Run the NSIS installer. The WebView2 Runtime is installed automatically when missing.
 3. Launch SnapGit and use **File → Open Repository**; the first-run scan also finds local repositories for you.
 
@@ -99,6 +99,8 @@ npm run tauri dev      # start the app in development mode
 npm run build          # type-check + build the frontend only
 ```
 
+The application version has one source of truth in `package.json`. The build and Tauri scripts synchronize the Tauri and Rust package metadata automatically.
+
 ### Packaging
 
 ```bash
@@ -120,8 +122,8 @@ Output lands in `src-tauri/target/release/bundle/` (or `src-tauri/target/<triple
 `.github/workflows/release.yml` builds six release artifacts with Windows x64 + x86, macOS arm64 + x86_64, and Linux x86_64 jobs. Pull requests and pushes to `main` also run the quality checks in `.github/workflows/ci.yml`. Push a `v*` tag to publish a GitHub Release, or run the release workflow manually:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 A manual `workflow_dispatch` run only rebuilds the installers and stores them as a workflow artifact — it does **not** create a GitHub Release or commit binaries to the repository.
