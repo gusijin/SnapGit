@@ -214,6 +214,7 @@ fn main() {
             open_folder_dialog,
             open_file_dialog,
             open_in_terminal,
+            open_in_file_manager,
             set_ssh_key_path,
             set_user_identity,
             detect_git,

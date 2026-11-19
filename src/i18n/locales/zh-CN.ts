@@ -611,6 +611,7 @@ export default {
     config: '配置',
     delete: '删除',
     openTerminal: '在 Git Bash 中打开',
+    openInFileManager: '在文件管理器中打开',
   },
   editorWindow: {
     noArgs: '未检测到编辑参数。请从主窗口双击文件打开编辑器。',

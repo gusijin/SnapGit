@@ -176,6 +176,11 @@ export async function openInTerminal(repoPath: string): Promise<void> {
   await invoke('open_in_terminal', { repoPath })
 }
 
+/** 在系统文件管理器中打开仓库目录。 */
+export async function openInFileManager(repoPath: string): Promise<void> {
+  await invoke('open_in_file_manager', { repoPath })
+}
+
 export async function setSshKeyPath(repoPath: string, keyPath: string): Promise<string> {
   return await invoke('set_ssh_key_path', { repoPath, keyPath })
 }

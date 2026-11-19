@@ -609,6 +609,7 @@ export default {
     config: 'Config',
     delete: 'Delete',
     openTerminal: 'Open in Git Bash',
+    openInFileManager: 'Open in File Manager',
   },
   editorWindow: {
     noArgs: 'No edit parameters detected. Double-click a file in the main window to open the editor.',

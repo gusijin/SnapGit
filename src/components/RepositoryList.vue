@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, FolderOpen, FolderGit2, Loader2, Trash2, ChevronRight, ChevronDown, Settings, Terminal } from 'lucide-vue-next'
+import { Folder, FolderOpen, FolderGit2, Loader2, Trash2, ChevronRight, ChevronDown, Settings, Terminal, ExternalLink } from 'lucide-vue-next'
 import type { ScannedProject, FileTreeNode, FileStatus } from '../types'
 // 文件类型图标映射与变更文件面板 FileList 共用同一套，保证风格统一
 import { getFileIcon } from '../utils/fileIcons'
-import { openInTerminal } from '../api/git'
+import { openInFileManager, openInTerminal } from '../api/git'
 
 interface Props {
   projects: ScannedProject[]
@@ -205,6 +205,17 @@ async function handleOpenTerminal() {
   }
 }
 
+async function handleOpenInFileManager() {
+  const project = contextMenuProject.value
+  closeContextMenu()
+  if (!project) return
+  try {
+    await openInFileManager(project.path)
+  } catch (err) {
+    console.error('打开文件管理器失败:', err)
+  }
+}
+
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
   // 点击落在右键菜单内部时不关闭（菜单项自身会关闭）；点击软件任何其它地方（含其它仓库项、空白、其它面板）都关闭
@@ -345,6 +356,10 @@ onUnmounted(() => {
         <div class="context-menu-item" @click="handleOpenTerminal">
           <Terminal class="menu-icon" :size="14" />
           <span>{{ t('repositoryList.openTerminal') }}</span>
+        </div>
+        <div class="context-menu-item" @click="handleOpenInFileManager">
+          <ExternalLink class="menu-icon" :size="14" />
+          <span>{{ t('repositoryList.openInFileManager') }}</span>
         </div>
         <div class="context-menu-item" @click="handleConfigProject">
           <Settings class="menu-icon" :size="14" />

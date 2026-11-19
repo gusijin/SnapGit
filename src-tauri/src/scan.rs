@@ -623,6 +623,49 @@ pub(crate) fn open_in_terminal(repo_path: String) -> Result<()> {
     }
 }
 
+// 在系统文件管理器中打开仓库目录（Explorer / Finder / xdg-open）。
+#[command]
+pub(crate) fn open_in_file_manager(repo_path: String) -> Result<()> {
+    let raw = repo_path.trim().to_string();
+    // Windows 扩展长度路径前缀不适用于 Explorer，打开前去掉它。
+    let path = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+    if !Path::new(&path).is_dir() {
+        return Err(format!("仓库路径不存在或不是目录: {}", path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return std::process::Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("无法打开文件管理器: {}", e));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("无法打开文件管理器: {}", e));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("无法打开文件管理器: {}", e));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Err("当前平台不支持打开文件管理器".to_string())
+    }
+}
+
 #[command]
 pub(crate) async fn set_ssh_key_path(repo_path: String, key_path: String) -> Result<String> {
     tokio::task::spawn_blocking(move || {
