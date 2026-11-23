@@ -826,7 +826,7 @@ function lineNumberArray(count: number): number[] {
               <div v-for="n in lineNumberArray(leftLineCount)" :key="n" class="line-num">{{ n }}</div>
             </div>
           </div>
-          <div class="textarea-wrapper">
+          <div class="textarea-wrapper" :class="{ 'empty-side': oursLines.length === 0 }">
             <div class="diff-overlay" aria-hidden="true">
               <div ref="leftOverlayInner" class="diff-overlay-inner">
                 <div v-for="(line, idx) in oursLines" :key="'lo' + idx" class="hl-line" :class="line.cls"><span v-for="(seg, si) in line.segs" :key="si" :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]">{{ seg.text }}</span></div>
@@ -980,7 +980,7 @@ function lineNumberArray(count: number): number[] {
               <div v-for="n in lineNumberArray(rightLineCount)" :key="n" class="line-num">{{ n }}</div>
             </div>
           </div>
-          <div class="textarea-wrapper">
+          <div class="textarea-wrapper" :class="{ 'empty-side': theirsLines.length === 0 }">
             <div class="diff-overlay" aria-hidden="true">
               <div ref="rightOverlayInner" class="diff-overlay-inner">
                 <div v-for="(line, idx) in theirsLines" :key="'ro' + idx" class="hl-line" :class="line.cls"><span v-for="(seg, si) in line.segs" :key="si" :class="['tok-' + seg.type, { 'seg-chg': seg.changed }]">{{ seg.text }}</span></div>
@@ -1152,7 +1152,9 @@ function lineNumberArray(count: number): number[] {
   width: 42px;
   flex-shrink: 0;
   overflow: hidden;
-  background-color: var(--bg-toolbar);
+  background: var(--bg-toolbar) !important;
+  position: relative;
+  z-index: 1;
   border-right: 1px solid var(--border-color);
   padding-top: 8px;
   text-align: right;
@@ -1175,6 +1177,9 @@ function lineNumberArray(count: number): number[] {
   font-size: 10px;
   color: var(--text-muted);
   font-family: Consolas, Monaco, monospace;
+  background: var(--bg-toolbar) !important;
+  position: relative;
+  z-index: 1;
 }
 
 .textarea-wrapper {
@@ -1187,6 +1192,16 @@ function lineNumberArray(count: number): number[] {
 
 .middle-panel .textarea-wrapper {
   background-color: var(--bg-primary);
+}
+
+/* 只有整个 ours/theirs 侧没有对应内容时才使用格子底。普通空行保持原背景。 */
+.textarea-wrapper.empty-side {
+  background-color: var(--bg-empty);
+  background-image:
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
+  background-position: 0 0, 4px 4px;
+  background-size: 8px 8px;
 }
 
 .solver-textarea {

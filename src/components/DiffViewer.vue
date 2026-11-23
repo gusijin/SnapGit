@@ -538,7 +538,7 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
                 :key="topIdx + idx"
                 class="table-row"
                 :class="[line.line_type !== 'add' ? getLineTypeClass(line.line_type) : '', {
-                  'empty': line.line_type === 'add',
+                  'diff-empty-cell': line.line_type === 'add',
                   'first-change': (topIdx + idx) === firstChangeIdx
                 }]"
               >
@@ -593,7 +593,7 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
                 :key="topIdx + idx"
                 class="table-row"
                 :class="[line.line_type !== 'delete' ? getLineTypeClass(line.line_type) : '', {
-                  'empty': line.line_type === 'delete',
+                  'diff-empty-cell': line.line_type === 'delete',
                   'first-change': (topIdx + idx) === firstChangeIdx
                 }]"
               >
@@ -919,9 +919,15 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   border-bottom: 1px solid transparent;
 }
 
-.table-row.empty {
-  color: transparent;
+/* ⚠️ 勿用 .empty：本组件「无内容提示」占位也用 .empty（flex:1 + flex-direction:column），
+   同名会让此行被拉高、行号列竖排，格子底铺满整片空白。 */
+.table-row.diff-empty-cell {
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: 0;
   min-height: 18px; /* 空占位行（add/delete 对侧）不得被压缩，保证两侧行高一致 */
+  padding-right: 0;
+  border-bottom-width: 0;
 }
 
 /* 行号列：中性 gutter（与编辑文件对比一致，不随差异行染色） */
@@ -935,7 +941,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   -webkit-user-select: none;
   -webkit-user-drag: none;
   user-select: none;
-  background-color: var(--bg-toolbar);
+  background: var(--bg-toolbar) !important;
+  position: relative;
+  z-index: 1;
   border-right: 1px solid var(--border-color);
 }
 
@@ -964,6 +972,16 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
 .line-modified {
   background-color: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+/* 增删占位行的格子底从行号栏右侧开始。 */
+.table-row.diff-empty-cell .line-content {
+  background-color: var(--bg-empty);
+  background-image:
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
+  background-position: 0 0, 4px 4px;
+  background-size: 8px 8px;
 }
 
 /* 语法高亮 token 颜色（IDEA 风格，随主题切换 var(--syntax-*)） */

@@ -806,7 +806,7 @@ onUnmounted(() => {
                   v-for="(row, idx) in rowModel"
                   :key="'lo' + idx"
                   class="hl-line"
-                  :class="row.leftCls"
+                  :class="[row.leftCls, { 'hl-empty': !row.showLeft }]"
                 ><span
                     v-for="(seg, si) in row.leftSegs"
                     :key="si"
@@ -937,7 +937,7 @@ onUnmounted(() => {
                   v-for="(row, idx) in rowModel"
                   :key="'ro' + idx"
                   class="hl-line"
-                  :class="row.rightCls"
+                  :class="[row.rightCls, { 'hl-empty': !row.showRight }]"
                 ><span
                     v-for="(seg, si) in row.rightSegs"
                     :key="si"
@@ -1130,7 +1130,9 @@ onUnmounted(() => {
   width: 42px;
   flex-shrink: 0;
   overflow: hidden;
-  background-color: var(--bg-toolbar);
+  background: var(--bg-toolbar) !important;
+  position: relative;
+  z-index: 1;
   border-right: 1px solid var(--border-color);
   /* 上 8px + 下 18px：与 textarea 内容边距一致（下边同补 10px 常驻横滚条占位），
      保证内容总高 = 行数×18+26 与 textarea scrollHeight 相等，拖到底部时最大滚动距离一致、
@@ -1149,6 +1151,9 @@ onUnmounted(() => {
   font-size: 10px;
   color: var(--text-muted);
   font-family: Consolas, Monaco, monospace;
+  background: var(--bg-toolbar) !important;
+  position: relative;
+  z-index: 1;
 }
 
 .textarea-wrapper {
@@ -1261,6 +1266,17 @@ onUnmounted(() => {
   color: var(--text-primary);
   box-sizing: border-box;
   overflow: visible;
+  background-color: var(--bg-secondary);
+}
+
+/* 只有增删造成的缺失侧使用格子底，普通空行保持原有背景。 */
+.hl-line.hl-empty {
+  background-color: var(--bg-empty) !important;
+  background-image:
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
+    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
+  background-position: 0 0, 4px 4px;
+  background-size: 8px 8px;
 }
 
 /* 行级底色（与查看差异面板一致：删红·加绿·改黄，差异行整片语义底色）。

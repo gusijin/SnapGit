@@ -64,6 +64,8 @@
   --bg-selection: rgba(59, 130, 246, 0.35);  /* 文本选中底（半透明：文字在下层着色层，需透出） */
   --bg-input: #0f172a;            /* 输入底 */
   --bg-overlay: rgba(2, 6, 23, 0.7);
+  --bg-empty: #25334a;            /* 空白代码区域 */
+  --bg-empty-grid: #334155;       /* 空白区域格子 */
 
   --border-color: #0f172a;
   --border-light: #1e293b;
@@ -133,6 +135,8 @@
   --bg-selection: rgba(45, 108, 223, 0.3);   /* 文本选中底（半透明：文字在下层着色层，需透出） */
   --bg-input: #ffffff;
   --bg-overlay: rgba(15, 23, 42, 0.5);
+  --bg-empty: #f1f5f9;            /* 空白代码区域 */
+  --bg-empty-grid: #dbe3ec;       /* 空白区域格子 */
 
   --border-color: #e2e8f0;
   --border-light: #f1f5f9;
