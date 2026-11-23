@@ -546,7 +546,7 @@ const {
             <DialogTitle class="text-[15px] leading-snug">{{ t('repository.errorTitle') }}</DialogTitle>
           </div>
         </DialogHeader>
-        <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--text-muted)]">{{ errorMessage }}</p>
+        <p class="max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--text-muted)]">{{ errorMessage }}</p>
         <DialogFooter class="gap-2">
           <Button variant="outline" @click="errorDialogVisible = false">{{ t('repository.errorClose') }}</Button>
         </DialogFooter>

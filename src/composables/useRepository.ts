@@ -9,7 +9,7 @@ import {
   stashCreate, stashList, stashApply, stashDrop, openEditWindow,
   finishMerge, continueRebase, abortMerge, abortRebase,
 } from '../api/git'
-import { classifyPushError } from '../pushError'
+import { classifyPushError, cleanGitError } from '../pushError'
 import type { Commit, Branch, FileStatus, ScannedProject, FileTreeNode, FileDiff, StashEntry } from '../types'
 import {
   NOISE_DIR_RE, sanitizePath, sanitizeProjects, fileNameOf, firstCommitFilePath,
@@ -1290,7 +1290,7 @@ async function handlePull() {
       // 选择策略后产生冲突：提示用户解决冲突后再试
       showToast(t('repository.pullConflictDesc'), 'error')
     } else {
-      showToast(t('repository.pullFailed', { error: msg }), 'error')
+      showToast(t('repository.pullFailed', { error: cleanGitError(msg) }), 'error')
     }
   } finally {
     // 失败 / 分叉 / 冲突 / 无远程都不算成功，进度线停在原宽度淡出，绝不铺满
@@ -1323,7 +1323,7 @@ async function handlePullStrategy(strategy: 'merge' | 'rebase') {
       const n = conflictFiles.value.length
       showToast(t('repository.pullConflictFiles', { n }), 'error')
     } else {
-      showToast(t('repository.pullFailed', { error: msg }), 'error')
+      showToast(t('repository.pullFailed', { error: cleanGitError(msg) }), 'error')
     }
   } finally {
     // 冲突还要用户解决，不算拉取成功 -> 不铺满全宽
@@ -1363,7 +1363,7 @@ async function finishPullResolve() {
     // 冲突解决条消失 + 列表刷新已是完成反馈
   } catch (e: any) {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
-    showToast(t('repository.pullFailed', { error: msg }), 'error')
+    showToast(t('repository.pullFailed', { error: cleanGitError(msg) }), 'error')
   } finally {
     isPulling.value = false
   }
@@ -1384,7 +1384,7 @@ async function abortPullResolve() {
     showToast(t('repository.pullAborted'), 'success')
   } catch (e: any) {
     const msg = typeof e === 'string' ? e : e?.toString?.() || String(e)
-    showToast(t('repository.pullFailed', { error: msg }), 'error')
+    showToast(t('repository.pullFailed', { error: cleanGitError(msg) }), 'error')
   } finally {
     isPulling.value = false
   }

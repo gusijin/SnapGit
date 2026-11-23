@@ -1,32 +1,45 @@
 /**
- * 推送失败信息的分类与清洗。
+ * Git 操作失败信息的分类与清洗。
  *
- * 背景：`git push` 因「非快进」被拒时，stderr 里除了真正的拒绝原因，还会混进一段
- * 与本次操作无关的 OpenSSH 提示（后量子密钥交换警告、known_hosts 自动写入提示等）。
- * 直接把这些原文铺到弹窗/toast 里既吓人又没有信息量，也没有给出可操作的下一步。
+ * 背景：`git push/pull` 失败时，stderr 里除了真正的失败原因，还会混进大量与本次
+ * 操作无关的噪声：OpenSSH 后量子密钥交换警告、known_hosts 自动写入提示，以及
+ * 代码托管平台回传的 `remote:` 空行 / 分隔线 / gRPC 传输层错误。直接把这些原文
+ * 铺到「操作失败」弹窗里既吓人又没有信息量，真正的 `fatal:` 原因还被埋在最后。
  *
  * 这里统一做两件事：
- *   1) 清洗掉这类噪声行，只留下与推送本身相关的部分；
- *   2) 归类失败原因，其中「非快进（远程有新提交）」这一档供 UI 给出「拉取并推送」出口，
+ *   1) 清洗掉这类噪声行，只留下与操作本身相关的部分（拉取/推送共用 cleanGitError）；
+ *   2) 归类推送失败原因，其中「非快进（远程有新提交）」这一档供 UI 给出「拉取并推送」出口，
  *      对齐 IDEA / SmartGit 的推送被拒处理方式。
  */
 
-/** 与本次推送无关、需要剔除的 stderr 噪声行。 */
+/** 与本次操作无关、需要剔除的 stderr 噪声行（推送、拉取共用）。 */
 const NOISE_LINE_PATTERNS: RegExp[] = [
   // OpenSSH 后量子密钥交换警告（3 行）
   /^\s*\*\*\s/,
   /^\s*See\s+https?:\/\/openssh\.com\/pq\.html\s*$/i,
   // known_hosts 自动写入提示
   /^\s*Warning:\s+Permanently added .*to the list of known hosts\.?\s*$/i,
+  // 远端回显的空白行 / 纯分隔线（GitCode / GitLab banner，无任何信息量）
+  /^\s*remote:\s*$/,
+  /^\s*remote:\s*-{3,}\s*$/,
+  // 代码托管平台 gRPC 传输层错误：连接不上后端，不是仓库/凭证问题，对用户无操作性指引
+  /^\s*remote:\s*rpc error:.*TransientFailure/i,
+  /^\s*connection error:\s*desc\s*=\s*"transport: Error while dialing/i,
 ]
 
-/** 剔除噪声行并去掉首尾空行，得到可读的裸错误文本。 */
+/** 剔除噪声行、压缩连续空行并去掉首尾空行，得到可读的裸错误文本。 */
 export function cleanGitError(raw: string): string {
   if (!raw) return ''
   const kept = raw.split(/\r?\n/).filter((ln) => !NOISE_LINE_PATTERNS.some((re) => re.test(ln)))
-  while (kept.length > 0 && kept[0].trim() === '') kept.shift()
-  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop()
-  return kept.join('\n')
+  // 噪声行被剔除后常留下一串空行；压成一个空行保留段落结构（认证失败文案里有 \n\n 分段）
+  const compact: string[] = []
+  for (const ln of kept) {
+    if (ln.trim() === '' && compact[compact.length - 1]?.trim() === '') continue
+    compact.push(ln)
+  }
+  while (compact.length > 0 && compact[0].trim() === '') compact.shift()
+  while (compact.length > 0 && compact[compact.length - 1].trim() === '') compact.pop()
+  return compact.join('\n')
 }
 
 /**
