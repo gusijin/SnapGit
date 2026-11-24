@@ -599,7 +599,7 @@ export default {
     remoteAdded: '已添加远程 {name}',
     cloneSuccessOpening: '克隆成功，正在打开...',
     cloneSuccessOpenFailed: '克隆成功但打开失败：{error}',
-    aboutDialog: 'SnapGit v1.0.1\n基于 Tauri 2 + Vue 3 构建的现代 Git 客户端',
+    aboutDialog: 'SnapGit v1.0.2\n基于 Tauri 2 + Vue 3 构建的现代 Git 客户端',
   },
   repositoryList: {
     title: '仓库',
