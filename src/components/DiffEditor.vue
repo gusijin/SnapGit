@@ -181,6 +181,40 @@ const rowModel = computed(() => {
   })
 })
 
+// 缺失侧斜纹整块绘制的遮罩（与 DiffViewer 同因：逐行画在半像素行缝处会错位）。
+// overlay-inner 有 8px padding-top，故每行起点要加 EDITOR_PAD_TOP。
+const EDITOR_PAD_TOP = 8
+const EDITOR_LINE_HEIGHT = 18 // 与 .hl-line 的 height/line-height 一致
+function buildStripeMask(side: 'left' | 'right'): string {
+  const rows = rowModel.value
+  if (rows.length === 0) return 'none'
+  const stops: string[] = []
+  let cursor = EDITOR_PAD_TOP
+  for (let i = 0; i < rows.length; i++) {
+    const empty = side === 'left' ? !rows[i].showLeft : !rows[i].showRight
+    if (!empty) continue
+    const top = EDITOR_PAD_TOP + i * EDITOR_LINE_HEIGHT
+    const bottom = top + EDITOR_LINE_HEIGHT
+    if (top > cursor) stops.push(`transparent ${cursor}px`, `transparent ${top}px`)
+    stops.push(`#000 ${top}px`, `#000 ${bottom}px`)
+    cursor = bottom
+  }
+  // ⚠️ 不能返回 'none'：mask-image:none 表示「不裁剪」，整块实底斜纹会铺满盖住代码。
+  // 没有占位行时给一条全透明渐变，让整层完全隐藏。
+  if (stops.length === 0) {
+    const totalNone = EDITOR_PAD_TOP + rows.length * EDITOR_LINE_HEIGHT
+    return `linear-gradient(to bottom, transparent 0px, transparent ${totalNone}px)`
+  }
+  const total = EDITOR_PAD_TOP + rows.length * EDITOR_LINE_HEIGHT
+  // ⚠️ 必须无条件在 total 处补透明收尾：若最后一处占位正好结束在 total，
+  // 渐变最后色标会是 #000，CSS 会把它延续到层底，导致占位行以下整片铺满斜纹。
+  if (cursor < total) stops.push(`transparent ${cursor}px`)
+  stops.push(`transparent ${total}px`)
+  return `linear-gradient(to bottom, ${stops.join(', ')})`
+}
+const leftStripeMask = computed(() => buildStripeMask('left'))
+const rightStripeMask = computed(() => buildStripeMask('right'))
+
 // 左栏只读文本（新增行处留空行，与右栏对齐）
 const leftAlignedText = computed(() => rowModel.value.map((r) => r.oldText).join('\n'))
 
@@ -801,7 +835,8 @@ onUnmounted(() => {
           </div>
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
-              <div ref="leftOverlayInner" class="diff-overlay-inner">
+              <div ref="leftOverlayInner" class="diff-overlay-inner" :style="{ '--stripe-mask': leftStripeMask }">
+                <div class="empty-stripes-layer" aria-hidden="true"></div>
                 <div
                   v-for="(row, idx) in rowModel"
                   :key="'lo' + idx"
@@ -932,7 +967,8 @@ onUnmounted(() => {
           </div>
           <div class="textarea-wrapper">
             <div class="diff-overlay" aria-hidden="true">
-              <div ref="rightOverlayInner" class="diff-overlay-inner">
+              <div ref="rightOverlayInner" class="diff-overlay-inner" :style="{ '--stripe-mask': rightStripeMask }">
+                <div class="empty-stripes-layer" aria-hidden="true"></div>
                 <div
                   v-for="(row, idx) in rowModel"
                   :key="'ro' + idx"
@@ -1253,6 +1289,23 @@ onUnmounted(() => {
 .diff-overlay-inner {
   padding-top: 8px;
   will-change: transform;
+  position: relative;
+}
+
+/* 缺失侧斜纹整块绘制一次 + mask 裁剪，避免逐行栅格化在半像素行缝处错位。
+   层在彩色文字之下（z-index:0），textarea 透明叠在上层；行号列独立元素不受影响。 */
+.empty-stripes-layer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: var(--bg-empty);
+  background-image: var(--bg-empty-stripes);
+  -webkit-mask-image: var(--stripe-mask, none);
+  mask-image: var(--stripe-mask, none);
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* 每行：与 textarea 完全相同的字体度量，保证光标与彩色文字逐字符对齐 */
@@ -1267,16 +1320,15 @@ onUnmounted(() => {
   box-sizing: border-box;
   overflow: visible;
   background-color: var(--bg-secondary);
+  /* 文字在斜纹层之上；占位行 hl-empty 透明，斜纹从下方透出。
+     即使遮罩异常也不会盖住文字。 */
+  position: relative;
+  z-index: 1;
 }
 
-/* 只有增删造成的缺失侧使用格子底，普通空行保持原有背景。 */
+/* 占位行自身透明，斜纹由 .empty-stripes-layer 整块绘制 + mask 裁剪（见上）。 */
 .hl-line.hl-empty {
-  background-color: var(--bg-empty) !important;
-  background-image:
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
-  background-position: 0 0, 4px 4px;
-  background-size: 8px 8px;
+  background-color: transparent !important;
 }
 
 /* 行级底色（与查看差异面板一致：删红·加绿·改黄，差异行整片语义底色）。

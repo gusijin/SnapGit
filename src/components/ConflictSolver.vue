@@ -1194,14 +1194,10 @@ function lineNumberArray(count: number): number[] {
   background-color: var(--bg-primary);
 }
 
-/* 只有整个 ours/theirs 侧没有对应内容时才使用格子底。普通空行保持原背景。 */
+/* 只有整个 ours/theirs 侧没有对应内容时才使用斜线底。普通空行保持原背景。 */
 .textarea-wrapper.empty-side {
   background-color: var(--bg-empty);
-  background-image:
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
-  background-position: 0 0, 4px 4px;
-  background-size: 8px 8px;
+  background-image: var(--bg-empty-stripes);
 }
 
 .solver-textarea {

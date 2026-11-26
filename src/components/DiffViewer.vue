@@ -137,6 +137,39 @@ const bottomPad = computed(() => {
   return Math.max(0, (total - computeWindow(total).end) * ROW_HEIGHT)
 })
 
+// 缺失侧底纹整块绘制的遮罩：只在占位行区间露出斜纹。
+// ⚠️ 不能逐行画背景：18px 行高 × DPI 1.25 = 22.5 设备像素，逐行栅格化会让
+// 行缝处斜线错开半像素（看起来"折了一下"）。整块一次栅格化 + mask 裁剪才连续。
+function buildStripeMask(side: 'left' | 'right'): string {
+  const lines = props.diff?.lines ?? []
+  if (lines.length === 0) return 'none'
+  const stops: string[] = []
+  let cursor = 0
+  for (let i = 0; i < lines.length; i++) {
+    const empty = side === 'left' ? lines[i].line_type === 'add' : lines[i].line_type === 'delete'
+    if (!empty) continue
+    const top = i * ROW_HEIGHT
+    const bottom = top + ROW_HEIGHT
+    if (top > cursor) stops.push(`transparent ${cursor}px`, `transparent ${top}px`)
+    stops.push(`#000 ${top}px`, `#000 ${bottom}px`)
+    cursor = bottom
+  }
+  // ⚠️ 不能返回 'none'：mask-image:none 表示「不裁剪」，整块实底斜纹会铺满盖住代码。
+  // 没有占位行时给一条全透明渐变，让整层完全隐藏。
+  if (stops.length === 0) {
+    const totalNone = lines.length * ROW_HEIGHT
+    return `linear-gradient(to bottom, transparent 0px, transparent ${totalNone}px)`
+  }
+  const total = lines.length * ROW_HEIGHT
+  // ⚠️ 必须无条件在 total 处补透明收尾：若最后一处占位正好结束在 total，
+  // 渐变最后色标会是 #000，CSS 会把它延续到层底，导致占位行以下整片铺满斜纹。
+  if (cursor < total) stops.push(`transparent ${cursor}px`)
+  stops.push(`transparent ${total}px`)
+  return `linear-gradient(to bottom, ${stops.join(', ')})`
+}
+const leftStripeMask = computed(() => buildStripeMask('left'))
+const rightStripeMask = computed(() => buildStripeMask('right'))
+
 // 虚拟窗口起始行下标（全量 lines 里的位置），用于行号高亮 first-change 的对齐
 const topIdx = computed(() => {
   const total = (props.diff?.lines ?? []).length
@@ -531,7 +564,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
             <div
               class="side-inner"
               ref="leftInnerRef"
+              :style="{ '--stripe-mask': leftStripeMask }"
             >
+              <div class="empty-stripes-layer" aria-hidden="true"></div>
               <div :style="{ height: topPad + 'px' }"></div>
               <div
                 v-for="(line, idx) in renderLines"
@@ -567,10 +602,10 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
             preserveAspectRatio="none"
           >
             <path
-              v-for="(h, hi) in hunks"
-              :key="'hb' + hi"
+              v-for="h in hunks"
+              :key="h.start"
               class="band"
-              :class="['band-' + h.kind, { 'band-current': hi === currentHunkIdx }]"
+              :class="'band-' + h.kind"
               :d="h.path"
               vector-effect="non-scaling-stroke"
             />
@@ -586,7 +621,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
             <div
               class="side-inner"
               ref="rightInnerRef"
+              :style="{ '--stripe-mask': rightStripeMask }"
             >
+              <div class="empty-stripes-layer" aria-hidden="true"></div>
               <div :style="{ height: topPad + 'px' }"></div>
               <div
                 v-for="(line, idx) in renderLines"
@@ -852,11 +889,8 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   stroke: var(--color-mod);
 }
 
-/* 当前所在差异块：连接带加粗描边，替代「叠一层更深的行底色」（与词级高亮同一套配色逻辑） */
-.diff-bands .band-current {
-  stroke-opacity: 1;
-  stroke-width: 2;
-}
+/* 连接带描边统一为 1px / 0.45：不再对「当前差异块」加粗描边——
+   加粗会让同屏弧线粗细不一（2026-11-26 古哥反馈）。当前块位置由工具栏「N/M」提示。 */
 
 .side {
   flex: 1;
@@ -889,10 +923,28 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+  position: relative;
   /* 补偿 .side 的 overflow-x:scroll 常驻横滚条占用的底部 10px，
      否则滚到最底时末行被横滚条盖住一截（与编辑窗口 .editor-textarea 同根因）。
      div 滚动容器的 padding 不会增加 scrollHeight，故补偿必须加在内容层。 */
   padding-bottom: 10px;
+}
+
+/* 缺失侧斜纹：整块绘制一次再按占位行 mask 裁剪。逐行画会在 DPI 1.25 的
+   半像素行缝处错位（18px × 1.25 = 22.5px），整块绘制天然跨行连续。
+   层放在行内容之下（z-index:0），行号列 z-index:1 保持纯色不受污染。 */
+.empty-stripes-layer {
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  left: 45px; /* 行号列 40px + 右边框 1px + gap 4px，斜纹只从代码区开始，与逐行版一致 */
+  right: 0;
+  background-color: var(--bg-empty);
+  background-image: var(--bg-empty-stripes);
+  -webkit-mask-image: var(--stripe-mask, none);
+  mask-image: var(--stripe-mask, none);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .left-side {
@@ -917,6 +969,10 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   padding: 0 4px 0 0; /* 左侧不留白，行号 gutter 顶到面板边缘（与编辑文件对比一致） */
   box-sizing: border-box;
   border-bottom: 1px solid transparent;
+  /* 代码行永远在斜纹层之上；占位行 line-content 透明，斜纹从下方透出。
+     即使遮罩异常也不会盖住文字。 */
+  position: relative;
+  z-index: 1;
 }
 
 /* ⚠️ 勿用 .empty：本组件「无内容提示」占位也用 .empty（flex:1 + flex-direction:column），
@@ -974,14 +1030,10 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   color: var(--text-primary);
 }
 
-/* 增删占位行的格子底从行号栏右侧开始。 */
+/* 占位行自身不画背景（斜纹由 .empty-stripes-layer 整块绘制 + mask 裁剪）。
+   逐行画会在 DPI 1.25 的半像素行缝处错位；行号列仍由 .line-num 保持中性纯色。 */
 .table-row.diff-empty-cell .line-content {
-  background-color: var(--bg-empty);
-  background-image:
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%),
-    linear-gradient(45deg, var(--bg-empty-grid) 25%, transparent 25%, transparent 75%, var(--bg-empty-grid) 75%);
-  background-position: 0 0, 4px 4px;
-  background-size: 8px 8px;
+  background: transparent;
 }
 
 /* 语法高亮 token 颜色（IDEA 风格，随主题切换 var(--syntax-*)） */
