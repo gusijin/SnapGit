@@ -15,6 +15,7 @@
     "core:window:allow-set-fullscreen",
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
     "core:app:default",
     "core:path:default",
     "dialog:default",
