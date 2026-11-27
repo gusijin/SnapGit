@@ -78,16 +78,28 @@ fn main() {
                     .build()?;
 
             #[cfg(not(target_os = "macos"))]
-            let _main =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("SnapGit")
-                    .inner_size(1200.0, 800.0)
-                    .resizable(true)
-                    .decorations(false)
-                    // WebView2 冷启动要几秒才出首帧，期间整窗显示窗口背景色。
-                    // 设为应用头部色 #e2e8f0（与 macOS 一致），避免「启动后全白几秒」的割裂感。
-                    .background_color(tauri::window::Color::from((226, 232, 240, 255)))
-                    .build()?;
+            let _main = {
+                let builder =
+                    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                        .title("SnapGit")
+                        .inner_size(1200.0, 800.0)
+                        .resizable(true)
+                        .decorations(false)
+                        // WebView2 冷启动要几秒才出首帧，期间整窗显示窗口背景色。
+                        // 设为应用头部色 #e2e8f0（与 macOS 一致），避免「启动后全白几秒」的割裂感。
+                        .background_color(tauri::window::Color::from((226, 232, 240, 255)));
+
+                // Windows：WebView2 走软件渲染，绕开老显卡驱动（AMD 2020 版 + Win11 24H2）
+                // 偶发的 GPU 渲染挂起导致的整窗纯色白屏。该 API 在 macOS/Linux 不受支持，
+                // 因此只在 Windows 追加；wry 默认的 --disable-features 会被本方法覆盖，
+                // 需原样带上，否则 WebView2 组件行为会悄悄变化。
+                #[cfg(target_os = "windows")]
+                let builder = builder.additional_browser_args(
+                    "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+                );
+
+                builder.build()?
+            };
 
             // macOS: 使用系统原生菜单栏（显示在屏幕顶部）
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏

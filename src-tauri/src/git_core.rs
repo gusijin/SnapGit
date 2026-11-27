@@ -137,18 +137,25 @@ pub(crate) fn return_repo(repo_path: &str, repo: git2::Repository) {
     cache.insert(repo_path.to_string(), repo);
 }
 
-/// 构造 git CLI 子进程命令。
+/// 构造 git CLI 子进程命令（可指定可执行文件路径）。
 /// Windows 上设置 CREATE_NO_WINDOW (0x08000000)，避免主程序（GUI 子系统、无控制台）
-/// spawn 控制台子进程 git.exe 时被分配一个控制台窗口并闪烁。
+/// spawn 控制台子进程 git.exe 时被系统分配一个 conhost 窗口并闪烁/停留。
 /// 输出/错误仍可被父进程正常捕获，行为等价于后台运行。
-pub(crate) fn git_command() -> std::process::Command {
+/// ⚠️ 所有 git 子进程（含 detect_git 的 --version 探测、ls-remote 等）都必须走这里：
+/// 直接 `std::process::Command::new("git")` 会漏掉该 flag，冷启动时会闪出一个
+/// 深蓝色空白控制台窗口（旧版实现的两处漏网正是如此）。
+pub(crate) fn git_command_at(program: &str) -> std::process::Command {
     // creation_flags 仅在 Windows 编译；非 Windows 上 cmd 不会被可变借用，
     // 用 cfg_attr 只在非 Windows 允许 unused_mut，避免 Windows 编译时缺 mut。
     #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = std::process::Command::new(program);
     #[cfg(windows)]
     cmd.creation_flags(0x08000000);
     cmd
+}
+
+pub(crate) fn git_command() -> std::process::Command {
+    git_command_at("git")
 }
 
 /// 解析单条 git 进度片段，提取 (阶段键, 该阶段内的百分比)。非进度行返回 None。

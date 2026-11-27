@@ -73,6 +73,13 @@ pub(crate) async fn open_edit_window(
                 .background_color(tauri::window::Color::from((226, 232, 240, 255)))
                 .initialization_script(&script);
 
+        // Windows：编辑窗口与主窗口保持一致，绕开 GPU 渲染挂起导致的白屏。
+        // 仅在 Windows 生效；macOS 分支下这条语句不参与编译，Linux 同理忽略。
+        #[cfg(target_os = "windows")]
+        let builder = builder.additional_browser_args(
+            "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+        );
+
         builder.build().map_err(|e| e.to_string())?
     };
 

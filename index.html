@@ -5,9 +5,126 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SnapGit</title>
+    <script>
+      // 首屏骨架早于任何样式/脚本确定主题，否则深色用户会先闪一片白。
+      // key 与 main.ts 的 STORAGE_KEY 一致；这段同步代码只读一次 localStorage，开销可忽略。
+      (function () {
+        var t = 'light'
+        try { if (localStorage.getItem('snapgit-theme') === 'dark') t = 'dark' } catch (e) {}
+        document.documentElement.setAttribute('data-theme', t)
+      })()
+    </script>
+    <style>
+      /* 内联首屏骨架（App Shell）：完全不依赖 JS bundle 与 style.css。
+         WebView 解析完本文件即可绘制，覆盖「WebView 起来了但 Vue 还没挂载」的空白期。
+         Vue 的 app.mount('#app') 会清空容器；main.ts 另有一次显式移除兜底。
+         所有变量名加 sg- 前缀，避免与 style.css 的语义变量冲突。 */
+      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+      :root {
+        --sg-bg: #ffffff; --sg-panel: #f8fafc; --sg-toolbar: #f1f5f9;
+        --sg-border: #e2e8f0; --sg-bar: #e2e8f0; --sg-accent: #2d6cdf;
+      }
+      html[data-theme="dark"] {
+        --sg-bg: #0f172a; --sg-panel: #1e293b; --sg-toolbar: #1e293b;
+        --sg-border: #334155; --sg-bar: #334155; --sg-accent: #3b82f6;
+      }
+      body { background: var(--sg-bg); }
+      #sg-shell {
+        display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
+        background: var(--sg-bg); overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        -webkit-user-select: none; user-select: none;
+      }
+      .sg-row { display: flex; align-items: center; gap: 10px; padding: 0 12px; box-sizing: border-box; flex-shrink: 0; }
+      .sg-titlebar { height: 32px; background: var(--sg-toolbar); border-bottom: 1px solid var(--sg-border); }
+      .sg-menubar { height: 28px; background: var(--sg-toolbar); border-bottom: 1px solid var(--sg-border); }
+      .sg-toolbar { height: 44px; background: var(--sg-toolbar); border-bottom: 1px solid var(--sg-border); }
+      .sg-status { height: 26px; background: var(--sg-toolbar); border-top: 1px solid var(--sg-border); }
+      .sg-mark { width: 14px; height: 14px; border-radius: 4px; background: var(--sg-accent); flex-shrink: 0; }
+      .sg-spacer { flex: 1; }
+      .sg-winbtn { width: 12px; height: 12px; border-radius: 3px; background: var(--sg-bar); flex-shrink: 0; }
+      .sg-btn { width: 62px; height: 22px; border-radius: 5px; background: var(--sg-bar); flex-shrink: 0; }
+      .sg-bar { height: 8px; border-radius: 4px; background: var(--sg-bar); flex-shrink: 0; }
+      .sg-bar, .sg-btn, .sg-winbtn, .sg-ico, .sg-diff-line { animation: sg-pulse 1.4s ease-in-out infinite; }
+      @keyframes sg-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+      @media (prefers-reduced-motion: reduce) {
+        .sg-bar, .sg-btn, .sg-winbtn, .sg-ico, .sg-diff-line { animation: none; }
+      }
+      .sg-main { display: flex; flex: 1; min-height: 0; }
+      .sg-left { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sg-panel); border-right: 1px solid var(--sg-border); }
+      .sg-center { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--sg-bg); }
+      .sg-panel-head { height: 30px; display: flex; align-items: center; padding: 0 10px; background: var(--sg-toolbar); border-bottom: 1px solid var(--sg-border); flex-shrink: 0; }
+      .sg-list { padding: 12px; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+      .sg-item { display: flex; align-items: center; gap: 8px; }
+      .sg-ico { width: 12px; height: 12px; border-radius: 3px; background: var(--sg-bar); flex-shrink: 0; }
+      .sg-divider { height: 1px; background: var(--sg-border); flex-shrink: 0; }
+      .sg-diff { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 11px; overflow: hidden; }
+      .sg-diff-line { height: 7px; border-radius: 3px; background: var(--sg-bar); flex-shrink: 0; }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="sg-shell" aria-hidden="true">
+        <div class="sg-row sg-titlebar">
+          <span class="sg-mark"></span>
+          <span class="sg-bar" style="width:110px"></span>
+          <span class="sg-spacer"></span>
+          <span class="sg-winbtn"></span><span class="sg-winbtn"></span><span class="sg-winbtn"></span>
+        </div>
+        <div class="sg-row sg-menubar">
+          <span class="sg-bar" style="width:38px"></span><span class="sg-bar" style="width:44px"></span>
+          <span class="sg-bar" style="width:34px"></span><span class="sg-bar" style="width:48px"></span>
+          <span class="sg-bar" style="width:36px"></span>
+        </div>
+        <div class="sg-row sg-toolbar">
+          <span class="sg-btn"></span><span class="sg-btn" style="width:76px"></span><span class="sg-btn" style="width:54px"></span>
+          <span class="sg-spacer"></span>
+          <span class="sg-btn" style="width:96px"></span><span class="sg-btn" style="width:52px"></span>
+        </div>
+        <div class="sg-main">
+          <div class="sg-left">
+            <div class="sg-panel-head"><span class="sg-bar" style="width:86px"></span></div>
+            <div class="sg-list">
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:128px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:96px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:152px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:112px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:136px"></span></div>
+            </div>
+            <div class="sg-panel-head"><span class="sg-bar" style="width:64px"></span></div>
+            <div class="sg-list">
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:118px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:88px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:130px"></span></div>
+            </div>
+          </div>
+          <div class="sg-center">
+            <div class="sg-panel-head"><span class="sg-bar" style="width:104px"></span></div>
+            <div class="sg-list">
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:168px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:132px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:186px"></span></div>
+            </div>
+            <div class="sg-divider"></div>
+            <div class="sg-diff">
+              <div class="sg-diff-line" style="width:72%"></div>
+              <div class="sg-diff-line" style="width:54%"></div>
+              <div class="sg-diff-line" style="width:86%"></div>
+              <div class="sg-diff-line" style="width:63%"></div>
+              <div class="sg-diff-line" style="width:78%"></div>
+              <div class="sg-diff-line" style="width:45%"></div>
+              <div class="sg-diff-line" style="width:69%"></div>
+            </div>
+            <div class="sg-panel-head"><span class="sg-bar" style="width:78px"></span></div>
+            <div class="sg-list">
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:210px"></span></div>
+              <div class="sg-item"><span class="sg-ico"></span><span class="sg-bar" style="width:176px"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sg-row sg-status"><span class="sg-bar" style="width:160px;height:6px"></span></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

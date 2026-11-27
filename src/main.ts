@@ -14,6 +14,12 @@ try {
   console.error('[SnapGit] 读取主题失败:', e)
 }
 
+// 首屏内联骨架（index.html）只负责「JS bundle 加载期间」的可见界面。
+// Vue 的 app.mount('#app') 本身会清空容器，这里再显式移除一次做双保险：
+// 万一将来换成 hydrate / 自定义挂载，骨架也不会残留在真实 UI 之上。
+// 编辑窗口走 editor.html，没有该节点，getElementById 返回 null 属正常。
+document.getElementById('sg-shell')?.remove()
+
 interface EditArgs {
   repoPath: string
   filePath: string

@@ -39,7 +39,25 @@ async function forceExit() {
 
 onMounted(() => {
   document.addEventListener('contextmenu', onContextMenuCapture, true)
-  detectGit()
+  // Git 检测是启动时唯一会 fork 子进程的命令（git --version）。虽然后端已改成
+  // async + spawn_blocking 不再占主线程，这里仍把它挪到首屏之后：把 IPC 通道
+  // 优先让给 get_initial_data，不与首屏四项数据争资源。Git 缺失时的引导弹窗
+  // 晚一点出现，不影响功能（属于异常路径）。
+  // 打点用于自证：若「耗时」接近 5~6 秒，即可确认冷启慢来自 git.exe 首次拉起。
+  const runDetectGit = () => {
+    const t0 = performance.now()
+    detectGit().finally(() => {
+      console.log(`[SnapGit:perf] Git 检测完成 +${Math.round(performance.now())}ms（耗时 ${Math.round(performance.now() - t0)}ms）`)
+    })
+  }
+  const ric = (window as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void
+  }).requestIdleCallback
+  if (typeof ric === 'function') {
+    ric(runDetectGit, { timeout: 1500 })
+  } else {
+    setTimeout(runDetectGit, 0)
+  }
   // 关闭确认监听注册失败时不拦截兜底会导致窗口关不掉，因此 Rust 端已拦；
   // 这里失败仅记日志（正常桌面端不会发生）。
   listen('close-requested', async () => {

@@ -385,7 +385,7 @@ pub(crate) fn detect_default_branch(repo_path: &str, remote: &str) -> Option<Str
     }
 
     // 2. ls-remote --symref 兜底
-    let mut child = std::process::Command::new("git")
+    let mut child = git_command()
         .args(["-C", repo_path, "ls-remote", "--symref", remote, "HEAD"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(std::process::Stdio::piped())
@@ -710,46 +710,56 @@ pub(crate) async fn set_user_identity(
 
 // 检测系统是否可用 git：优先 PATH，Windows 额外探测常见安装路径。
 // 返回 { available, version, path }，供前端判断是否需要引导用户安装 Git。
+// ⚠️ 必须是 async + spawn_blocking，不能写同步 command。
+// 这里会 fork 子进程跑 `git --version`，冷启动首次拉起 git.exe（PATH 查找 +
+// Defender 首次扫描 + MSYS DLL 加载）可能耗时数秒。Tauri v2 的同步 command 跑在
+// 主线程（IPC 消息循环所在线程）上，一旦阻塞，其它 async command 即使早已执行完，
+// 响应也发不回 WebView —— 表现为首屏四个面板空态卡 5~6 秒。
+// dev 模式因 Vite 逐模块加载要 5.6 秒，天然与这段错开，所以只有打包版复现。
 #[command]
-pub(crate) fn detect_git() -> Result<serde_json::Value> {
-    let candidates: Vec<String> = if cfg!(target_os = "windows") {
-        vec![
-            "git".into(),
-            "C:\\Program Files\\Git\\cmd\\git.exe".into(),
-            "C:\\Program Files (x86)\\Git\\cmd\\git.exe".into(),
-            "C:\\Program Files\\Git\\bin\\git.exe".into(),
-        ]
-    } else {
-        vec!["git".into(), "/usr/bin/git".into()]
-    };
-    let os_str = if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    };
-    for c in candidates {
-        if let Ok(out) = std::process::Command::new(&c).arg("--version").output() {
-            if out.status.success() {
-                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                // 形如 "git version 2.45.1.windows.1"
-                let version = raw.strip_prefix("git version ").unwrap_or(&raw).to_string();
-                return Ok(serde_json::json!({
-                    "available": true,
-                    "version": version,
-                    "path": c,
-                    "os": os_str,
-                }));
+pub(crate) async fn detect_git() -> Result<serde_json::Value> {
+    tokio::task::spawn_blocking(|| {
+        let candidates: Vec<String> = if cfg!(target_os = "windows") {
+            vec![
+                "git".into(),
+                "C:\\Program Files\\Git\\cmd\\git.exe".into(),
+                "C:\\Program Files (x86)\\Git\\cmd\\git.exe".into(),
+                "C:\\Program Files\\Git\\bin\\git.exe".into(),
+            ]
+        } else {
+            vec!["git".into(), "/usr/bin/git".into()]
+        };
+        let os_str = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        for c in candidates {
+            if let Ok(out) = git_command_at(&c).arg("--version").output() {
+                if out.status.success() {
+                    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    // 形如 "git version 2.45.1.windows.1"
+                    let version = raw.strip_prefix("git version ").unwrap_or(&raw).to_string();
+                    return Ok(serde_json::json!({
+                        "available": true,
+                        "version": version,
+                        "path": c,
+                        "os": os_str,
+                    }));
+                }
             }
         }
-    }
-    Ok(serde_json::json!({
-        "available": false,
-        "version": "",
-        "path": "",
-        "os": os_str,
-    }))
+        Ok(serde_json::json!({
+            "available": false,
+            "version": "",
+            "path": "",
+            "os": os_str,
+        }))
+    })
+    .await
+    .map_err(|e| format!("检测 Git 失败: {}", e))?
 }
 
 // ===== 项目扫描 =====

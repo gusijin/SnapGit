@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent, onMounted } from 'vue'
 import { useRepository } from '../composables/useRepository'
 import MenuBar from '../components/MenuBar.vue'
 import TitleBar from '../components/TitleBar.vue'
@@ -7,11 +8,6 @@ import RepositoryList from '../components/RepositoryList.vue'
 import BranchPanel from '../components/BranchPanel.vue'
 import SubmodulePanel from '../components/SubmodulePanel.vue'
 import RepositoryWorkspace from '../components/repository/RepositoryWorkspace.vue'
-import PushDialog from '../components/PushDialog.vue'
-import CloneDialog from '../components/CloneDialog.vue'
-import RepoConfigDialog from '../components/RepoConfigDialog.vue'
-import CheckoutBranchDialog from '../components/CheckoutBranchDialog.vue'
-import AddRemoteDialog from '../components/AddRemoteDialog.vue'
 import {
   Dialog,
   DialogContent,
@@ -24,6 +20,15 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { GitCommitVertical, ArrowUpFromLine, FolderOpen, HelpCircle, XCircle } from 'lucide-vue-next'
+
+// 对话框按需加载：首屏一个都不渲染，静态 import 却会把整棵模块图塞进主 bundle。
+// 改成动态 import 后 Vite 自动拆 chunk，减少首屏 JS 的下载与解析量。
+// 启动后空闲时预热（见下方 onMounted），首次打开对话框不会掉帧。
+const PushDialog = defineAsyncComponent(() => import('../components/PushDialog.vue'))
+const CloneDialog = defineAsyncComponent(() => import('../components/CloneDialog.vue'))
+const RepoConfigDialog = defineAsyncComponent(() => import('../components/RepoConfigDialog.vue'))
+const CheckoutBranchDialog = defineAsyncComponent(() => import('../components/CheckoutBranchDialog.vue'))
+const AddRemoteDialog = defineAsyncComponent(() => import('../components/AddRemoteDialog.vue'))
 
 const {
   isMacOS, repoPath, currentBranch, commits, loadingMoreCommits, noMoreCommits, branches, branchListReady,
@@ -50,6 +55,21 @@ const {
   cancelDeleteProject, confirmDeleteProject, confirmInitRepo, openAddRemoteDialog, handlePullStrategy, onRemoteAdded,
   confirmStash, autoScanProjects, handlePushed, handleCloned, handlePullConflict, t,
 } = useRepository()
+
+// 首屏之后在空闲时预热对话框 chunk：把模块下载/执行挪出关键路径，
+// 用户真正点开对话框时 import() 直接命中模块缓存，无加载延迟。
+onMounted(() => {
+  const warmDialogs = () => {
+    void import('../components/PushDialog.vue')
+    void import('../components/CloneDialog.vue')
+    void import('../components/RepoConfigDialog.vue')
+    void import('../components/CheckoutBranchDialog.vue')
+    void import('../components/AddRemoteDialog.vue')
+  }
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback
+  if (typeof ric === 'function') ric(warmDialogs, { timeout: 3000 })
+  else setTimeout(warmDialogs, 1200)
+})
 </script>
 
 <template>
