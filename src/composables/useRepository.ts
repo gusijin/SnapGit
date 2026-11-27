@@ -1,4 +1,5 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import {
   getCommits, getCurrentBranch, getBranches, getFileStatus, stageFiles, discardFile, commitChanges,
@@ -513,20 +514,51 @@ async function onSubmoduleChanged() {
   }
 }
 
-async function autoScanProjects() {
+let unlistenScanFound: (() => void) | null = null
+
+async function autoScanProjects(openFirst = false) {
   isScanning.value = true
+  let openedFirst = false
+  const discovered: ScannedProject[] = []
   try {
+    // 必须先注册监听再 invoke：否则后端事件早于监听到达，首个仓库就丢了。
+    unlistenScanFound = await listen<ScannedProject>('scan-project-found', (event) => {
+      const project = sanitizeProjects([event.payload])[0]
+      if (!project || discovered.some(p => p.path === project.path)) return
+      discovered.push(project)
+      // 增量更新列表：扫描过程中用户就能点任意已发现的仓库
+      if (!scannedProjects.value.some(p => p.path === project.path)) {
+        scannedProjects.value.push(project)
+      }
+      // 首次启动：扫到第一个就立刻打开，不必等全盘扫完
+      // 严格 === true：模板里「重新扫描」按钮是 @click="autoScanProjects"，
+      // Vue 会把 MouseEvent 当首个参数传入，不能把它误判成 openFirst。
+      if (openFirst === true && !openedFirst && project.vcs_type === 'git') {
+        openedFirst = true
+        perfMark(`扫到首个仓库，立即打开：${project.name}`)
+        openScannedProject(project).catch(e => console.error('[SnapGit] 打开首个仓库失败:', e))
+      }
+    })
     const projects = sanitizeProjects(await scanProjects())
-    scannedProjects.value = projects
+    // 合并事件增量与最终列表（重叠扫描根会让两者顺序不同），去重后按名称排序
+    const merged = [...projects]
+    const seen = new Set(merged.map(p => p.path))
+    for (const p of discovered) {
+      if (!seen.has(p.path)) { merged.push(p); seen.add(p.path) }
+    }
+    merged.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+    scannedProjects.value = merged
     // 保存扫描结果（写入缓存，下次启动直接秒开、不再扫盘）
-    localStorage.setItem(SCANNED_PROJECTS_KEY, JSON.stringify(projects))
-    console.log('[SnapGit] 仓库扫描完成，已缓存', projects.length, '个仓库')
+    localStorage.setItem(SCANNED_PROJECTS_KEY, JSON.stringify(merged))
+    console.log('[SnapGit] 仓库扫描完成，已缓存', merged.length, '个仓库')
   } catch (e) {
-    // 扫描失败也写入空缓存：避免每次启动都重试扫盘造成反复卡顿。
+    // 扫描失败也把已发现的仓库写入缓存：避免每次启动都重试扫盘造成反复卡顿。
     // 用户后续可用「重新扫描本地仓库」按钮或手动打开仓库重建列表。
-    localStorage.setItem(SCANNED_PROJECTS_KEY, JSON.stringify([]))
-    console.error('[SnapGit] 仓库扫描失败，已写入空缓存避免反复扫描:', e)
+    localStorage.setItem(SCANNED_PROJECTS_KEY, JSON.stringify(discovered))
+    console.error('[SnapGit] 仓库扫描失败，已写入结果避免反复扫描:', e)
   } finally {
+    unlistenScanFound?.()
+    unlistenScanFound = null
     isScanning.value = false
   }
 }
@@ -646,13 +678,12 @@ function perfMark(label: string) {
   console.log(`[SnapGit:perf] ${label} +${Math.round(performance.now())}ms`)
 }
 
-async function loadRepoData() {
+async function loadRepoData(withFullBranches = false) {
   if (!repoPath.value) return
   // 固定本次加载的目标路径：异步回调里用它做「期间是否已切库」校验，避免旧仓库数据覆盖新仓库
   const path = repoPath.value
-  // 关闸：首屏关键路径（分支+提交日志）完成前，抑制窗口 focus / fs 事件触发的
-  // 自动 git status 扫描、推迟子模块面板挂载，不与首屏抢 IO
-  //（阶段 3 本来就会扫一次全量，抑制期间的外部变化不会丢）
+  // 首屏门闩：任一关键数据回来就开，不再"全回来才开"，也没有 5 秒兜底。
+  // 门闩只用于抑制启动瞬间的自动刷新 / 推迟子模块挂载，不再阻塞任何数据展示。
   firstScreenReady.value = false
   // 切库统一：先清空旧仓库的所有面板数据，避免数据错位/残留。
   // （刚 init 的空仓库理论上不会崩，但作为防御性兜底，所有路径先清后拉）
@@ -668,7 +699,16 @@ async function loadRepoData() {
   loadingMoreCommits.value = false
   fileStatuses.value = []
   fileStatusLoading.value = true
-  perfMark('loadRepoData 开始（分阶段：分支/提交日志优先，变更文件最后）')
+  perfMark('loadRepoData 开始（四项并发、各回各显，无屏障）')
+
+  // 幂等开门：四项（当前分支/分支列表/提交日志/变更文件快扫）任一 settle 就开首屏门闩。
+  // 用 firstScreenReady 自身做幂等标志；path 校验防止切库后旧请求回调误开新仓库的门闩。
+  const openFirstScreen = () => {
+    if (repoPath.value !== path || firstScreenReady.value) return
+    firstScreenReady.value = true
+    perfMark('★ 首屏门闩开启（首个数据已就绪）')
+  }
+
   try {
     // ── 阶段 1（最轻、最优先）：当前分支名。仅一次轻量 HEAD 读取，乐观填充，
     //    不等任何重活，让工具栏/标题栏立刻显示真实分支名 ──
@@ -678,14 +718,11 @@ async function loadRepoData() {
         perfMark('当前分支就绪')
       })
       .catch(() => {})
+      .finally(openFirstScreen)
 
-    // ── 阶段 2（首屏关键路径）：分支列表 + 提交日志。
-    //    两者并发发出（GIT_LOCK 读锁可共享，互不阻塞），但下方 await 屏障确保
-    //    它们都就绪后，才放行阶段 3 的重量级变更文件扫描——严格实现加载优先级：
-    //    分支 → 提交日志 → 变更文件 → 查看差异。
-    //    （旧实现只把重活丢进 requestIdleCallback，但等待 IPC 时主线程空闲，
-    //     idle 回调会立即触发，变更文件实际仍与分支/提交抢跑，故改为显式屏障。） ──
-    const branchesReady = getBranches(path, false)
+    // ── 阶段 2：分支列表 + 提交日志 + 变更文件快扫，三者并发、各回各显 ──
+    //    谁先回来谁先展示，互不等待；全量 -uall 补全与 stash / 上游 / 按需分支一律后台。
+    getBranches(path, false)
       .then((data) => {
         if (repoPath.value !== path) return
         branches.value = data
@@ -694,8 +731,9 @@ async function loadRepoData() {
         perfMark(`★ 分支列表就绪（${data.length} 个分支）`)
       })
       .catch(() => { if (repoPath.value === path) branchListReady.value = true })
+      .finally(openFirstScreen)
 
-    const commitsReady = getCommits(path, 50)
+    getCommits(path, 50)
       .then((data) => {
         if (repoPath.value !== path) return
         commits.value = data
@@ -704,42 +742,46 @@ async function loadRepoData() {
         perfMark(`★ 提交日志就绪（${data.length} 条）`)
       })
       .catch(() => {})
+      .finally(openFirstScreen)
 
-    // 屏障：等分支 + 提交日志都回来，首屏关键路径完成，再放行变更文件等重活。
-    // 兜底：若 IPC 异常导致屏障长时间不返回，5 秒后强制开门，
-    // 避免 firstScreenReady 永久为 false 而彻底抑制自动刷新（宁可慢，不可卡死）。
-    await Promise.race([
-      Promise.all([branchesReady, commitsReady]),
-      new Promise((r) => setTimeout(r, 5000)),
-    ])
-    if (repoPath.value !== path) return // 期间已切库，整体丢弃（新仓库的 loadRepoData 自己管门闩）
-    firstScreenReady.value = true
-    perfMark('★ 首屏关键路径完成（分支+提交日志），开始加载变更文件')
+    // 变更文件快扫：首屏即可显示列表，加载态到此结束；
+    // 全量补全（递归未跟踪目录）在后台接棒，不阻塞首屏。
+    const fileStatusFastReady = getFileStatus(path, false, true)
+      .then((fast) => {
+        if (repoPath.value !== path) return
+        fileStatuses.value = fast
+        perfMark(`★ 变更文件快扫就绪（${fast.length} 项，后台补全中）`)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (repoPath.value === path) fileStatusLoading.value = false
+        openFirstScreen()
+      })
 
-    // ── 阶段 3（首屏之后）：变更文件 + 其余重量级 / 非首屏任务。
-    //    变更文件（git status 全量扫描）是用户随后「查看差异」的前提，优先发出；
-    //    stash 列表、全部分支 ahead/behind（最重，逐分支图遍历）、上游跟踪信息随后。
-    //    用 requestIdleCallback 让出主线程，避免与首屏渲染争抢。 ──
+    // ── 阶段 3（后台）：全量变更文件补全 + stash + 上游 + 按需分支 ──
     const deferred = () => {
       if (repoPath.value !== path) return // 期间已切库，整体丢弃
-      perfMark('延后任务启动（变更文件扫描 + 其余重活）')
-      getFileStatus(path, false)
-        .then((data) => {
-          if (repoPath.value === path) fileStatuses.value = data
-          perfMark(`变更文件就绪（${data.length} 个变更，可点击查看差异）`)
+      perfMark('后台任务启动（变更文件全量补全 + 其余）')
+      // 等快扫结束后再发全量请求，避免两个 git status 并发抢锁；
+      // 快扫失败时照样发全量兜底。两次结果若 path→status 一致则不重写，避免闪烁。
+      fileStatusFastReady
+        .then(() => getFileStatus(path, false))
+        .then((full) => {
+          if (!full || repoPath.value !== path) return
+          const prev = new Map(fileStatuses.value.map(f => [f.path, f.status]))
+          const same = full.length === fileStatuses.value.length &&
+            full.every(s => prev.get(s.path) === s.status)
+          if (!same) fileStatuses.value = full
+          perfMark(`变更文件全量就绪（${full.length} 个变更）`)
         })
         .catch(() => {})
-        .finally(() => { if (repoPath.value === path) fileStatusLoading.value = false })
       stashList(path)
         .then((data) => { if (repoPath.value === path) stashes.value = data })
         .catch(() => { if (repoPath.value === path) stashes.value = [] })
-      // 全部分支 ahead/behind：逐分支图遍历，最重，放最后
-      getBranches(path, true)
-        .then((full) => {
-          if (repoPath.value === path) branches.value = full
-          perfMark('全量 ahead/behind 完成（分支徽章已补齐）')
-        })
-        .catch(() => {})
+      // 全量 ahead/behind（逐分支图遍历，最重）：首屏与切库不再主动拉，
+      // 改为用户点刷新或展开本地分支分组时按需补全（loadFullBranches）。
+      // 当前分支的 ahead/behind 仍由阶段 2 的 getBranches(false) 计算，不受影响。
+      if (withFullBranches) loadFullBranches(path)
       // 工作区状态弹窗：补齐上游跟踪分支与远程地址（此时 currentBranch 已校准）
       loadUpstreamInfo()
     }
@@ -752,10 +794,26 @@ async function loadRepoData() {
   } catch (e) {
     console.error('Load repo error:', e)
     // 异常兜底：不能让门闩永久关闭（否则自动刷新全被抑制）、也不能让文件列表卡在「扫描中」
-    if (repoPath.value === path) {
-      firstScreenReady.value = true
-      fileStatusLoading.value = false
-    }
+    openFirstScreen()
+    if (repoPath.value === path) fileStatusLoading.value = false
+  }
+}
+
+// 按需补齐全部分支的 ahead/behind（逐分支图遍历，最重的一项）。
+// 首屏/切库不再调用；用户点刷新或展开本地分支分组时才触发。
+// 单飞：并发触发只跑一次，避免重复图遍历。
+let fullBranchesInFlight = false
+async function loadFullBranches(targetPath: string = repoPath.value) {
+  if (!targetPath || fullBranchesInFlight) return
+  fullBranchesInFlight = true
+  try {
+    const full = await getBranches(targetPath, true)
+    if (repoPath.value === targetPath) branches.value = full
+    perfMark('全量 ahead/behind 完成（分支徽章已补齐）')
+  } catch (e) {
+    console.error('加载全量分支信息失败:', e)
+  } finally {
+    fullBranchesInFlight = false
   }
 }
 
@@ -1883,7 +1941,7 @@ function cancelDeleteProject() {
 
 async function refreshAll() {
   diffRequestSeq++ // 作废在途的 diff 请求，避免旧结果回填
-  await loadRepoData()
+  await loadRepoData(true) // 用户主动刷新：顺带补齐全部分支 ahead/behind
   selectedFiles.value = []
   selectedFileDiff.value = null
   fileViewMode.value = 'working-tree'
@@ -1895,9 +1953,9 @@ async function refreshAll() {
 
 // 判断路径是否位于 .git 内部（git 自身的写操作会频繁触发事件，必须过滤，防止自刷新死循环）
 function scheduleAutoRefresh() {
-  // 首屏未就绪（分支/提交日志还没回来）时抑制自动刷新：
+  // 门闩开启前（首个关键数据还没回来）抑制自动刷新：
   // 启动瞬间窗口 focus 事件、编辑器/fs 噪声都可能触发这里，
-  // 若放行会与首屏关键路径抢磁盘 IO。抑制是安全的——阶段 3 必然扫一次全量。
+  // 若放行会与刚发出的首屏 IPC 抢磁盘 IO。首个数据回来即开门闩，抑制窗口很短。
   if (!firstScreenReady.value) return
   if (fsRefreshTimer) clearTimeout(fsRefreshTimer)
   fsRefreshTimer = setTimeout(() => {
@@ -2250,13 +2308,11 @@ onMounted(() => {
   // 关键：只要 localStorage 中存在扫描缓存（hasCache），就绝不扫描，直接秒开；
   // 仅在「完全无缓存」（首次启动或清过缓存）时才后台扫一次，并默认打开第一个仓库。
   if (!hasCache) {
-    autoScanProjects()
-      .then(() => {
-        if (isFirstLaunch && !localStorage.getItem(LAST_REPO_KEY) && scannedProjects.value.length > 0) {
-          return openScannedProject(scannedProjects.value[0])
-        }
-      })
-      .catch((e) => console.error('[SnapGit] 首次默认打开仓库失败:', e))
+    // 首次启动且没有上次仓库：由 autoScanProjects 的事件回调在扫到第一个仓库时立刻打开，
+    // 不再等全盘扫完才显示分支。有 lastRepo 的情况上面已走快路径，这里不重复打开。
+    const shouldOpenFirst = isFirstLaunch && !localStorage.getItem(LAST_REPO_KEY)
+    autoScanProjects(shouldOpenFirst)
+      .catch((e) => console.error('[SnapGit] 仓库扫描失败:', e))
   }
 })
 
@@ -2286,6 +2342,10 @@ onBeforeUnmount(() => {
   if (unlistenPullProgress) {
     unlistenPullProgress()
     unlistenPullProgress = null
+  }
+  if (unlistenScanFound) {
+    unlistenScanFound()
+    unlistenScanFound = null
   }
 })
   return {
@@ -2503,6 +2563,7 @@ onBeforeUnmount(() => {
     confirmDeleteProject,
     cancelDeleteProject,
     refreshAll,
+    loadFullBranches,
     isGitInternalPath,
     isNoiseDir,
     scheduleAutoRefresh,

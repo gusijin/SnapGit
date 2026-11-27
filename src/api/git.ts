@@ -49,8 +49,14 @@ export async function getUpstream(repoPath: string, branchName: string): Promise
   return await invoke('get_upstream', { repoPath, branchName })
 }
 
-export async function getFileStatus(repoPath: string, cached: boolean = true): Promise<FileStatus[]> {
-  return await invoke('get_file_status', { repoPath, cached })
+/**
+ * 工作区变更文件。
+ * - cached=true 命中后端 800ms 状态缓存（自动刷新用）。
+ * - fast=true 只做首屏快扫：不递归未跟踪目录（目录折叠成一条），且不读写状态缓存；
+ *   前端随后会以 fast=false 再拉一次全量，保证未跟踪文件逐个可见。
+ */
+export async function getFileStatus(repoPath: string, cached: boolean = true, fast: boolean = false): Promise<FileStatus[]> {
+  return await invoke('get_file_status', { repoPath, cached, fast })
 }
 
 export async function stageFile(repoPath: string, filePath: string): Promise<void> {

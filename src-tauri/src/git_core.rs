@@ -104,8 +104,9 @@ pub(crate) fn resolve_repo_relative_path(repo_path: &str, file_path: &str) -> Re
     Ok(candidate)
 }
 
-/// 取仓库实例：优先复用缓存（remove 出所有权），否则新建。错误已 map 成 String 以便 `?` 传播。
-pub(crate) fn open_repo(repo_path: &str) -> Result<git2::Repository> {
+/// 取仓库实例：优先复用缓存（remove 出所有权），否则新建，保留 git2::Error 错误码。
+/// 调用方用完必须 return_repo 归还；需要区分 NOT_A_REPO 等错误类型的场景用这个版本。
+pub(crate) fn open_repo_raw(repo_path: &str) -> std::result::Result<git2::Repository, git2::Error> {
     if let Some(repo) = REPO_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -113,7 +114,12 @@ pub(crate) fn open_repo(repo_path: &str) -> Result<git2::Repository> {
     {
         return Ok(repo);
     }
-    git2::Repository::open(repo_path).map_err(|e| e.to_string())
+    git2::Repository::open(repo_path)
+}
+
+/// 取仓库实例：优先复用缓存（remove 出所有权），否则新建。错误已 map 成 String 以便 `?` 传播。
+pub(crate) fn open_repo(repo_path: &str) -> Result<git2::Repository> {
+    open_repo_raw(repo_path).map_err(|e| e.to_string())
 }
 
 /// 查询当前是否有 Git 操作正在执行（供关闭窗口前的确认弹窗使用）。

@@ -878,55 +878,58 @@ pub(crate) fn scan_directory(
     max_depth: usize,
     projects: &mut Vec<ScannedProject>,
     visited: &mut std::collections::HashSet<PathBuf>,
+    on_found: &dyn Fn(&ScannedProject),
 ) {
     if current_depth > max_depth {
         return;
     }
 
-    let canonical = match dir.canonicalize() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    if visited.contains(&canonical) {
+    // 调用方（scan_projects）已对每个扫描根做一次 canonicalize，
+    // 这里收到的 dir 及其子路径天然是规范路径，无需再逐目录 canonicalize。
+    // Windows 上 canonicalize 每次都要开文件句柄，逐目录调用是首次启动扫盘的大头。
+    if visited.contains(dir) {
         return;
     }
-    visited.insert(canonical.clone());
+    visited.insert(dir.to_path_buf());
 
     // 检查是否是 Git 仓库
-    if canonical.join(".git").exists() {
-        let name = canonical
+    if dir.join(".git").exists() {
+        let name = dir
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        projects.push(ScannedProject {
-            path: normalize_windows_path(&canonical)
+        let project = ScannedProject {
+            path: normalize_windows_path(dir)
                 .to_string_lossy()
                 .to_string(),
             name,
             vcs_type: "git".to_string(),
-        });
+        };
+        on_found(&project); // 边扫边推给前端，首个仓库无需等全盘扫完
+        projects.push(project);
         return; // Git 仓库内部不再递归
     }
 
     // 检查是否是 SVN 仓库
-    if canonical.join(".svn").exists() {
-        let name = canonical
+    if dir.join(".svn").exists() {
+        let name = dir
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        projects.push(ScannedProject {
-            path: normalize_windows_path(&canonical)
+        let project = ScannedProject {
+            path: normalize_windows_path(dir)
                 .to_string_lossy()
                 .to_string(),
             name,
             vcs_type: "svn".to_string(),
-        });
+        };
+        on_found(&project);
+        projects.push(project);
         return;
     }
 
     // 递归扫描子目录
-    let entries = match fs::read_dir(&canonical) {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
@@ -957,20 +960,33 @@ pub(crate) fn scan_directory(
             continue;
         }
 
-        scan_directory(&path, current_depth + 1, max_depth, projects, visited);
+        scan_directory(&path, current_depth + 1, max_depth, projects, visited, on_found);
     }
 }
 
 #[command]
-pub(crate) async fn scan_projects() -> Result<Vec<ScannedProject>> {
-    tokio::task::spawn_blocking(|| {
-        let _guard = git_read_guard();
+pub(crate) async fn scan_projects(app: AppHandle) -> Result<Vec<ScannedProject>> {
+    tokio::task::spawn_blocking(move || {
+        // 纯目录遍历，不碰 Git 对象库：无需持 GIT_LOCK 读锁，
+        // 也不让 is_git_busy 把扫盘误算成 Git 忙（关窗时误弹确认框）。
         let mut projects = Vec::new();
         let scan_dirs = get_scan_directories();
         let mut visited = std::collections::HashSet::new();
 
+        // 边扫边推给前端：首次启动拿到第一个仓库就打开、显示分支，
+        // 无需等全盘扫完。emit 失败（窗口已关等）忽略，不影响扫描与缓存结果。
+        let on_found = |project: &ScannedProject| {
+            let _ = app.emit("scan-project-found", project.clone());
+        };
+
         for base_dir in &scan_dirs {
-            scan_directory(base_dir, 1, 4, &mut projects, &mut visited);
+            // 只对每个扫描根 canonicalize 一次（十几个），子目录路径由它派生，
+            // 保留重叠根去重与 Windows \\?\ 前缀行为，避免逐目录开文件句柄。
+            let canonical_base = match base_dir.canonicalize() {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            scan_directory(&canonical_base, 1, 4, &mut projects, &mut visited, &on_found);
         }
 
         // 去重

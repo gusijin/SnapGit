@@ -39,7 +39,7 @@ const {
   branchPanelRef, submodulePanelRef, showSubmodulePanel, showInitRepoDialog, pendingInitPath, initing,
   showNoRemoteDialog, showPullDivergedDialog, pullConflictActive, pendingPullStrategy,
   showAddRemoteDialog, showWelcomeDialog, isPulling, isPushing, statusBarMode, statusBarText,
-  handleOpenRepo, handleCommitFromToolbar, handlePush, handlePull, refreshAll, handleCheckoutBranch,
+  handleOpenRepo, handleCommitFromToolbar, handlePush, handlePull, refreshAll, loadFullBranches, handleCheckoutBranch,
   handleMenuAction, openScannedProject, requestDeleteProject, openRepoConfig, loadProjectFileTree,
   handleSelectFileFromTree, handleCheckoutFastForward, handleCheckoutForce, handleCheckoutCancel, handleCreateBranch,
   handleMergeBranch, handleRenameBranch, handleDeleteBranch, handleDeleteRemoteBranch, handlePushBranch,
@@ -140,6 +140,7 @@ const {
           :checkout-target-branch="checkoutTargetBranch"
           :stashes="stashes"
           :style="{ flex: branchPanelFlex }"
+          @load-full-branches="loadFullBranches"
           @checkout-branch="handleCheckoutBranch"
           @checkout-fast-forward="handleCheckoutFastForward"
           @checkout-force="handleCheckoutForce"

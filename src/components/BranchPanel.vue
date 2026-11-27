@@ -21,6 +21,7 @@ const emit = defineEmits([
   'checkout-branch', 'checkout-fast-forward', 'checkout-force', 'checkout-cancel',
   'create-branch', 'merge-branch', 'rename-branch', 'push-branch', 'pull-branch',
   'checkout-remote', 'stash-apply', 'stash-drop', 'delete-branch', 'delete-remote-branch',
+  'load-full-branches',
 ])
 
 const checkoutErrorDialogVisible = ref(false)
@@ -62,6 +63,9 @@ const expanded = reactive<{ local: boolean; remote: boolean; stash: boolean }>({
 
 function toggleGroup(key: 'local' | 'remote' | 'stash') {
   expanded[key] = !expanded[key]
+  // 首屏/切库只加载轻量分支数据（仅当前分支算 ahead/behind）。
+  // 用户点本地分支分组 = 关注分支详情，此刻才拉全量补齐其余分支徽章。
+  if (key === 'local') emit('load-full-branches')
 }
 
 // ===== 分支右键菜单 =====

@@ -72,7 +72,7 @@ pub(crate) fn remove_recent_repository(app: AppHandle, path: String) -> Result<(
 #[command]
 pub(crate) fn open_repository(path: String) -> Result<RepositoryInfo> {
     let _guard = git_read_guard();
-    let repo = Repository::open(&path).map_err(|e| {
+    let repo = open_repo_raw(&path).map_err(|e| {
         let msg = e.to_string();
         if matches!(e.code(), git2::ErrorCode::NotFound) {
             format!("NOT_A_REPO:{}", msg)
@@ -80,22 +80,27 @@ pub(crate) fn open_repository(path: String) -> Result<RepositoryInfo> {
             msg
         }
     })?;
+    // 用闭包包住后续逻辑：所有 `?` 都先回到这里，
+    // 保证取出的仓库实例一定归还 REPO_CACHE（open_repo 是 remove 语义）。
+    let result = (|| -> Result<RepositoryInfo> {
+        let repo_name = PathBuf::from(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let current_branch = repo
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .unwrap_or_else(|| "main".to_string());
 
-    let repo_name = PathBuf::from(&path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let current_branch = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().map(|s| s.to_string()))
-        .unwrap_or_else(|| "main".to_string());
-
-    Ok(RepositoryInfo {
-        path,
-        name: repo_name,
-        current_branch,
-    })
+        Ok(RepositoryInfo {
+            path: path.clone(),
+            name: repo_name,
+            current_branch,
+        })
+    })();
+    return_repo(&path, repo);
+    result
 }
 
 /// Initialize a directory as a new Git repository using `main` as its initial branch.

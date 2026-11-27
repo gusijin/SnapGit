@@ -8,84 +8,89 @@ pub(crate) async fn get_commits(
 ) -> Result<Vec<Commit>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
-        let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+        let repo = open_repo(&repo_path)?;
+        // 用闭包包住：unborn HEAD 的提前 return 与所有 `?` 都先回到这里，
+        // 保证仓库实例一定归还 REPO_CACHE（open_repo 是 remove 语义）。
+        let result = (|| -> Result<Vec<Commit>> {
+            // 空仓库（unborn HEAD，例如刚 init 还没首次 commit）没有可遍历的历史。
+            // 直接返回空数组，让前端分支/日志面板正常显示空状态，
+            // 而非把整个 `Promise.all` 拉爆导致面板残留上一个仓库的数据。
+            // （参考: libgit2 在 unborn HEAD 上 `revwalk.push_head()` 返回 `UnbornBranch` 错误）
+            if repo.head().is_err() {
+                return Ok(Vec::new());
+            }
 
-        // 空仓库（unborn HEAD，例如刚 init 还没首次 commit）没有可遍历的历史。
-        // 直接返回空数组，让前端分支/日志面板正常显示空状态，
-        // 而非把整个 `Promise.all` 拉爆导致面板残留上一个仓库的数据。
-        // （参考: libgit2 在 unborn HEAD 上 `revwalk.push_head()` 返回 `UnbornBranch` 错误）
-        if repo.head().is_err() {
-            return Ok(Vec::new());
-        }
+            let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
+            revwalk.push_head().map_err(|e| e.to_string())?;
 
-        let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
-        revwalk.push_head().map_err(|e| e.to_string())?;
-
-        // 预先建好「提交 id → 引用列表」映射：本地分支优先，其次远程分支，最后标签。
-        // 每次分页都重新扫一遍引用（引用数量远少于提交，开销可忽略），
-        // 这样即使期间切分支/拉取，下一页的标记也是最新的。
-        let mut refs_by_oid: HashMap<git2::Oid, Vec<CommitRef>> = HashMap::new();
-        if let Ok(references) = repo.references() {
-            for reference in references.flatten() {
-                if reference.symbolic_target().is_some() {
-                    continue;
-                }
-                let Some(full_name) = reference.name() else {
-                    continue;
-                };
-                let (name, ref_type) = if let Some(n) = full_name.strip_prefix("refs/heads/") {
-                    (n, "branch")
-                } else if let Some(n) = full_name.strip_prefix("refs/remotes/") {
-                    // origin/HEAD 只是默认分支的符号引用，不展示
-                    if n.ends_with("/HEAD") {
+            // 预先建好「提交 id → 引用列表」映射：本地分支优先，其次远程分支，最后标签。
+            // 每次分页都重新扫一遍引用（引用数量远少于提交，开销可忽略），
+            // 这样即使期间切分支/拉取，下一页的标记也是最新的。
+            let mut refs_by_oid: HashMap<git2::Oid, Vec<CommitRef>> = HashMap::new();
+            if let Ok(references) = repo.references() {
+                for reference in references.flatten() {
+                    if reference.symbolic_target().is_some() {
                         continue;
                     }
-                    (n, "remote")
-                } else if let Some(n) = full_name.strip_prefix("refs/tags/") {
-                    (n, "tag")
-                } else {
-                    continue;
-                };
-                if let Ok(commit) = reference.peel_to_commit() {
-                    refs_by_oid.entry(commit.id()).or_default().push(CommitRef {
-                        name: name.to_string(),
-                        ref_type: ref_type.to_string(),
-                    });
+                    let Some(full_name) = reference.name() else {
+                        continue;
+                    };
+                    let (name, ref_type) = if let Some(n) = full_name.strip_prefix("refs/heads/") {
+                        (n, "branch")
+                    } else if let Some(n) = full_name.strip_prefix("refs/remotes/") {
+                        // origin/HEAD 只是默认分支的符号引用，不展示
+                        if n.ends_with("/HEAD") {
+                            continue;
+                        }
+                        (n, "remote")
+                    } else if let Some(n) = full_name.strip_prefix("refs/tags/") {
+                        (n, "tag")
+                    } else {
+                        continue;
+                    };
+                    if let Ok(commit) = reference.peel_to_commit() {
+                        refs_by_oid.entry(commit.id()).or_default().push(CommitRef {
+                            name: name.to_string(),
+                            ref_type: ref_type.to_string(),
+                        });
+                    }
                 }
             }
-        }
-        // 稳定排序：分支 → 远程 → 标签，同类按名称
-        for refs in refs_by_oid.values_mut() {
-            refs.sort_by(|a, b| {
-                let rank = |t: &str| match t {
-                    "branch" => 0,
-                    "remote" => 1,
-                    _ => 2,
-                };
-                rank(&a.ref_type)
-                    .cmp(&rank(&b.ref_type))
-                    .then_with(|| a.name.cmp(&b.name))
-            });
-        }
+            // 稳定排序：分支 → 远程 → 标签，同类按名称
+            for refs in refs_by_oid.values_mut() {
+                refs.sort_by(|a, b| {
+                    let rank = |t: &str| match t {
+                        "branch" => 0,
+                        "remote" => 1,
+                        _ => 2,
+                    };
+                    rank(&a.ref_type)
+                        .cmp(&rank(&b.ref_type))
+                        .then_with(|| a.name.cmp(&b.name))
+                });
+            }
 
-        // 分页：skip 跳过最新的 N 条（LogView 滚动到底时加载更早的历史）
-        let skip_n = skip.unwrap_or(0);
-        let mut commits = Vec::new();
-        for id in revwalk.skip(skip_n).take(limit) {
-            let id = id.map_err(|e| e.to_string())?;
-            let commit = repo.find_commit(id).map_err(|e| e.to_string())?;
+            // 分页：skip 跳过最新的 N 条（LogView 滚动到底时加载更早的历史）
+            let skip_n = skip.unwrap_or(0);
+            let mut commits = Vec::new();
+            for id in revwalk.skip(skip_n).take(limit) {
+                let id = id.map_err(|e| e.to_string())?;
+                let commit = repo.find_commit(id).map_err(|e| e.to_string())?;
 
-            commits.push(Commit {
-                id: id.to_string(),
-                message: commit.message().unwrap_or("").trim().to_string(),
-                author: commit.author().name().unwrap_or("").to_string(),
-                date: commit.time().seconds().to_string(),
-                parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-                refs: refs_by_oid.remove(&id).unwrap_or_default(),
-            });
-        }
+                commits.push(Commit {
+                    id: id.to_string(),
+                    message: commit.message().unwrap_or("").trim().to_string(),
+                    author: commit.author().name().unwrap_or("").to_string(),
+                    date: commit.time().seconds().to_string(),
+                    parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+                    refs: refs_by_oid.remove(&id).unwrap_or_default(),
+                });
+            }
 
-        Ok(commits)
+            Ok(commits)
+        })();
+        return_repo(&repo_path, repo);
+        result
     })
     .await
     .map_err(|e| format!("加载提交记录失败: {}", e))?
@@ -115,81 +120,86 @@ pub(crate) fn remote_head_ahead(repo: &Repository, local_oid: git2::Oid) -> (usi
 pub(crate) async fn get_branches(repo_path: String, full: Option<bool>) -> Result<Vec<Branch>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
-        let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+        let repo = open_repo(&repo_path)?;
+        // 用闭包包住：所有 `?` 都先回到这里，
+        // 保证仓库实例一定归还 REPO_CACHE（open_repo 是 remove 语义）。
+        let result = (|| -> Result<Vec<Branch>> {
+            // 空仓库（unborn HEAD）：HEAD 文件指向 `refs/heads/<name>` 但没有 commit，
+            // `repo.head()` 会返回 Err。这里 fallback 到默认分支名（"main"），
+            // 分支列表天然为 Vec::new()，与「还没有任何分支」的事实一致。
+            // 前端分支面板进入空状态即可，绝不让整段挂在 `head.shorthand()?` 上。
+            let current_branch = repo
+                .head()
+                .ok()
+                .and_then(|h| h.shorthand().map(|s| s.to_string()))
+                .unwrap_or_else(|| "main".to_string());
 
-        // 空仓库（unborn HEAD）：HEAD 文件指向 `refs/heads/<name>` 但没有 commit，
-        // `repo.head()` 会返回 Err。这里 fallback 到默认分支名（"main"），
-        // 分支列表天然为 Vec::new()，与「还没有任何分支」的事实一致。
-        // 前端分支面板进入空状态即可，绝不让整段挂在 `head.shorthand()?` 上。
-        let current_branch = repo
-            .head()
-            .ok()
-            .and_then(|h| h.shorthand().map(|s| s.to_string()))
-            .unwrap_or_else(|| "main".to_string());
+            let mut branches = Vec::new();
 
-        let mut branches = Vec::new();
+            for branch in repo.branches(None).map_err(|e| e.to_string())? {
+                let (branch, branch_type) = branch.map_err(|e| e.to_string())?;
+                let name = branch
+                    .name()
+                    .map_err(|e| e.to_string())?
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
 
-        for branch in repo.branches(None).map_err(|e| e.to_string())? {
-            let (branch, branch_type) = branch.map_err(|e| e.to_string())?;
-            let name = branch
-                .name()
-                .map_err(|e| e.to_string())?
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+                let is_current = name == current_branch;
+                let is_remote = branch_type == BranchType::Remote;
 
-            let is_current = name == current_branch;
-            let is_remote = branch_type == BranchType::Remote;
+                // 过滤掉远程的 HEAD 符号引用（如 origin/HEAD），它不是真实分支
+                if is_remote && name.ends_with("/HEAD") {
+                    continue;
+                }
 
-            // 过滤掉远程的 HEAD 符号引用（如 origin/HEAD），它不是真实分支
-            if is_remote && name.ends_with("/HEAD") {
-                continue;
-            }
-
-            // 本地分支：计算相对于上游分支的 ahead/behind 提交数。
-            // C2 优化：切库（full=false）时只为当前分支计算，其余置 0，
-            // 避免遍历所有分支各做一次图遍历导致切换仓库卡顿；
-            // 分支面板需要完整数据时以 full=true 重新拉取补全。
-            let (ahead, behind) = if !is_remote {
-                if full.unwrap_or(false) || is_current {
-                    match branch.upstream() {
-                        Ok(upstream) => {
-                            let local_oid = branch.get().target();
-                            let upstream_oid = upstream.get().target();
-                            match (local_oid, upstream_oid) {
-                                (Some(local), Some(upstream)) => {
-                                    repo.graph_ahead_behind(local, upstream).unwrap_or((0, 0))
+                // 本地分支：计算相对于上游分支的 ahead/behind 提交数。
+                // C2 优化：切库（full=false）时只为当前分支计算，其余置 0，
+                // 避免遍历所有分支各做一次图遍历导致切换仓库卡顿；
+                // 分支面板需要完整数据时以 full=true 重新拉取补全。
+                let (ahead, behind) = if !is_remote {
+                    if full.unwrap_or(false) || is_current {
+                        match branch.upstream() {
+                            Ok(upstream) => {
+                                let local_oid = branch.get().target();
+                                let upstream_oid = upstream.get().target();
+                                match (local_oid, upstream_oid) {
+                                    (Some(local), Some(upstream)) => {
+                                        repo.graph_ahead_behind(local, upstream).unwrap_or((0, 0))
+                                    }
+                                    _ => (0, 0),
                                 }
-                                _ => (0, 0),
+                            }
+                            Err(_) => {
+                                // 无上游（如新建后未推送的分支）：对比远程 HEAD 估算"本地需要上传"的提交数
+                                match branch.get().target() {
+                                    Some(local) => {
+                                        let (ahead, _) = remote_head_ahead(&repo, local);
+                                        (ahead, 0)
+                                    }
+                                    None => (0, 0),
+                                }
                             }
                         }
-                        Err(_) => {
-                            // 无上游（如新建后未推送的分支）：对比远程 HEAD 估算"本地需要上传"的提交数
-                            match branch.get().target() {
-                                Some(local) => {
-                                    let (ahead, _) = remote_head_ahead(&repo, local);
-                                    (ahead, 0)
-                                }
-                                None => (0, 0),
-                            }
-                        }
+                    } else {
+                        (0, 0)
                     }
                 } else {
                     (0, 0)
-                }
-            } else {
-                (0, 0)
-            };
+                };
 
-            branches.push(Branch {
-                name,
-                is_current,
-                is_remote,
-                ahead,
-                behind,
-            });
-        }
+                branches.push(Branch {
+                    name,
+                    is_current,
+                    is_remote,
+                    ahead,
+                    behind,
+                });
+            }
 
-        Ok(branches)
+            Ok(branches)
+        })();
+        return_repo(&repo_path, repo);
+        result
     })
     .await
     .map_err(|e| format!("加载分支失败: {}", e))?
@@ -324,12 +334,15 @@ pub(crate) fn map_status(x: char, y: char) -> Option<&'static str> {
 pub(crate) async fn get_file_status(
     repo_path: String,
     cached: Option<bool>,
+    fast: Option<bool>,
 ) -> Result<Vec<FileStatus>> {
     tokio::task::spawn_blocking(move || {
         let _guard = git_read_guard();
 
-        // C4: 自动刷新高频调用时命中缓存，避免每次都扫 .git
-        let use_cache = cached.unwrap_or(true);
+        // C4: 自动刷新高频调用时命中缓存，避免每次都扫 .git。
+        // fast（首屏快扫）既不读也不写缓存，避免折叠目录项污染全量结果。
+        let is_fast = fast.unwrap_or(false);
+        let use_cache = cached.unwrap_or(true) && !is_fast;
         if use_cache {
             let cache = STATUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             if let Some((t, data)) = cache.get(&repo_path) {
@@ -345,8 +358,11 @@ pub(crate) async fn get_file_status(
         // 默认行为下 libgit2 会把「未跟踪目录」折叠成一条目录项（如 `releases/`），
         // 目录内新增的所有文件都不会出现在变更列表里，等价于 `git status`（不带 -uall）。
         // 变更文件面板要求所有新增文件逐个可见（不限制类型、不折叠目录），
-        // 因此递归展开未跟踪目录，等价于 `git status --porcelain -uall`。
-        opts.recurse_untracked_dirs(true);
+        // 因此全量扫描递归展开未跟踪目录，等价于 `git status --porcelain -uall`。
+        // 首屏快扫跳过递归：先把变更列表显示出来，前端随后补一次全量。
+        if !is_fast {
+            opts.recurse_untracked_dirs(true);
+        }
         let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
 
         let mut file_statuses = Vec::new();
