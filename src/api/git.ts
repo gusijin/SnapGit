@@ -1,5 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Commit, Branch, FileStatus, RepositoryInfo, ScannedProject, FileTreeNode, FileDiff, ConflictFile, StashEntry, SubmoduleInfo } from '../types'
+import type { Commit, Branch, FileStatus, InitialData, RepositoryInfo, ScannedProject, FileTreeNode, FileDiff, ConflictFile, StashEntry, SubmoduleInfo } from '../types'
+
+/**
+ * 首屏合并请求：一次 IPC 并发取回当前分支 / 分支列表 / 提交日志 / 变更文件快扫。
+ * 替代原来 4 个独立 invoke，避免冷启动时 IPC 通道建立开销被放大 4 倍。
+ */
+export async function getInitialData(repoPath: string): Promise<InitialData> {
+  return await invoke('get_initial_data', { repoPath })
+}
 
 export async function openRepository(path: string): Promise<RepositoryInfo> {
   return await invoke('open_repository', { path })

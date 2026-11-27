@@ -399,3 +399,24 @@ pub(crate) async fn get_file_status(
     .await
     .map_err(|e| format!("加载文件状态失败: {}", e))?
 }
+
+/// 首屏合并命令：一次 IPC 并发取回当前分支 / 分支列表 / 提交日志 / 变更文件快扫。
+/// 原来前端发 4 个独立 invoke，冷启动时 WebView2 的 IPC 通道建立开销被放大 4 倍；
+/// 这里用 tokio::join! 在后端并发跑四个既有命令（各自 spawn_blocking + 读锁共享），
+/// 只是把它们的结果打包成一次响应，不复制任何业务逻辑。
+/// 单项失败降级为 None，前端按空值填充对应面板，不让一项失败拖垮整屏。
+#[command]
+pub(crate) async fn get_initial_data(repo_path: String) -> Result<InitialData> {
+    let current = get_current_branch(repo_path.clone());
+    let branches = get_branches(repo_path.clone(), Some(false));
+    let commits = get_commits(repo_path.clone(), 50, Some(0));
+    let statuses = get_file_status(repo_path, Some(false), Some(true));
+    let (current, branches, commits, statuses) =
+        tokio::join!(current, branches, commits, statuses);
+    Ok(InitialData {
+        current_branch: current.ok(),
+        branches: branches.ok(),
+        commits: commits.ok(),
+        file_statuses: statuses.ok(),
+    })
+}

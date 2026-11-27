@@ -182,6 +182,7 @@ fn main() {
             init_repository,
             get_commits,
             get_branches,
+            get_initial_data,
             get_remotes,
             get_upstream,
             get_file_status,

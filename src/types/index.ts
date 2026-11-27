@@ -29,6 +29,14 @@ export interface FileStatus {
   status: string
 }
 
+// 首屏合并数据：一次 IPC 返回，单项失败为 null（前端按空值填充）
+export interface InitialData {
+  current_branch: string | null
+  branches: Branch[] | null
+  commits: Commit[] | null
+  file_statuses: FileStatus[] | null
+}
+
 export interface RepositoryInfo {
   path: string
   name: string

@@ -26,6 +26,16 @@ pub(crate) struct Branch {
     pub(crate) behind: usize,
 }
 
+/// 首屏合并数据：一次 IPC 返回当前分支 / 分支列表 / 提交日志 / 变更文件快扫。
+/// 用 Option 让单项失败不影响其余面板填充（前端各自按空数组处理）。
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct InitialData {
+    pub(crate) current_branch: Option<String>,
+    pub(crate) branches: Option<Vec<Branch>>,
+    pub(crate) commits: Option<Vec<Commit>>,
+    pub(crate) file_statuses: Option<Vec<FileStatus>>,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct UpstreamInfo {
     pub(crate) remote: String,
