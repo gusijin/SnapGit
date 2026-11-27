@@ -225,6 +225,14 @@ jobs:
           pattern: SnapGit-bin-*
           merge-multiple: true
 
+      # Linux artifact 由两条不同目录的 glob 上传（deb/ 与 appimage/），
+      # upload-artifact@v4 会保留子目录结构；merge-multiple 下载后文件落在
+      # releases/deb/、releases/appimage/。而下面发布用的 files: releases/*
+      # 只匹配一层，导致 deb/AppImage 从未出现在 GitHub Release 页面。
+      # 这里先拍平到 releases/ 根目录，三种平台包统一由 releases/* 发布。
+      - name: Flatten nested release files
+        run: find releases -mindepth 2 -type f -exec mv -f {} releases/ \;
+
       - name: List releases contents
         run: ls -lh releases
 
