@@ -11,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { writeFileContent, stageFile } from '../api/git'
+import { updateTextareaCursor } from '../utils/scrollbarCursor'
 
 interface Props {
   conflictFile: ConflictFile
@@ -838,6 +839,7 @@ function lineNumberArray(count: number): number[] {
               readonly
               class="solver-textarea"
               spellcheck="false"
+              @mousemove="updateTextareaCursor"
               @scroll="syncScroll('left')"
             />
           </div>
@@ -901,6 +903,7 @@ function lineNumberArray(count: number): number[] {
               v-model="workingContent"
               class="solver-textarea"
               spellcheck="false"
+              @mousemove="updateTextareaCursor"
               @scroll="syncScroll('middle')"
             />
           </div>
@@ -992,6 +995,7 @@ function lineNumberArray(count: number): number[] {
               readonly
               class="solver-textarea"
               spellcheck="false"
+              @mousemove="updateTextareaCursor"
               @scroll="syncScroll('right')"
             />
           </div>
@@ -1152,6 +1156,8 @@ function lineNumberArray(count: number): number[] {
   width: 42px;
   flex-shrink: 0;
   overflow: hidden;
+  /* 与 .solver-midcol 同因：内容层由 translateY 驱动，禁止任何自身滚动 */
+  overflow: clip;
   background: var(--bg-toolbar) !important;
   position: relative;
   z-index: 1;
@@ -1188,6 +1194,9 @@ function lineNumberArray(count: number): number[] {
   min-width: 0;
   /* 背景交给 wrapper：textarea 透明（文字由下方着色层显示），背景须在此层兜底 */
   background-color: var(--bg-tertiary);
+  /* 滚动条热区在部分 WebKit 版本里继承父容器 cursor，显式置 default 兜底，
+     避免鼠标停在滚动条上显示输入光标（配合 updateTextareaCursor 动态切换） */
+  cursor: default;
 }
 
 .middle-panel .textarea-wrapper {
@@ -1215,6 +1224,8 @@ function lineNumberArray(count: number): number[] {
   background-color: transparent;
   color: transparent;
   caret-color: var(--text-primary);
+  /* 文本区保持输入光标；滚动条槽区域由 updateTextareaCursor 切成 default */
+  cursor: text;
   white-space: pre;
   /* 横向滚动条常驻（与编辑页 .editor-textarea、查看页 .side 一致）：
      避免某一栏出现长行时独占横滚条、其余两栏没有，导致三栏视口高度差 10px、
@@ -1247,10 +1258,10 @@ function lineNumberArray(count: number): number[] {
 
 /* 聚焦态：与编辑页一致——只在「编辑区顶部」画 2px accent 线 + 3px 柔光，不留四边框。
    原先挂在 textarea 自身的 inset ring 会四面全露（截图实测 x505..993 / y40..918 一整圈）。
-   编辑页 .editor-container:focus-within 的 ring 名义上也是四边，但左被行号槽、右/下被
-   textarea 自己的不透明滚动条盖住，可见部分只有顶边（实测左带/右带蓝像素均为 0）。
-   这里用 wrapper 伪元素复刻同一可见结果：z-index:0 置于 textarea(z-index:1) 之下，
-   于是右端被竖直滚动条截断、左端自然从行号槽右侧起。2px@55% + 3px@16% 与编辑页规格一致。 */
+   ⚠️ 伪元素必须置于最上层（z-index:3）：若留在 z-index:0，会被后面的 .diff-overlay-inner
+   行底色盖住左段——它随横滚 translateX(-scrollLeft) 且宽度只有视口宽，只剩右缘之外
+   露出半截蓝线（编辑页同款「上方选中线错乱」）。右端用 right:10px 主动让开竖直滚动条，
+   不再依赖「被滚动条截断」。2px@55% + 3px@16% 与编辑页规格一致。 */
 .solver-textarea:focus {
   outline: none;
 }
@@ -1260,8 +1271,8 @@ function lineNumberArray(count: number): number[] {
   content: '';
   position: absolute;
   left: 0;
-  right: 0;
-  z-index: 0;
+  right: 10px; /* 让开 10px 竖直滚动条 */
+  z-index: 3; /* 高于 textarea(1) 与 .diff-overlay(0)，横滚时不被行底色遮挡 */
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
@@ -1297,12 +1308,18 @@ function lineNumberArray(count: number): number[] {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* 着色层内容由 translate 驱动，同样不允许产生自身滚动（含程序化） */
+  overflow: clip;
   pointer-events: none;
   z-index: 0;
 }
 
 .diff-overlay-inner {
   padding-top: 8px;
+  /* 与编辑页 / 查看面板一致：撑到最长代码行宽度，横滚 translateX 之后
+     行底色与聚焦线不会被内容层右缘截断成半截。 */
+  width: max-content;
+  min-width: 100%;
   will-change: transform;
 }
 
@@ -1480,6 +1497,11 @@ function lineNumberArray(count: number): number[] {
   background-color: var(--bg-toolbar);
   border-right: 1px solid var(--border-color);
   overflow: hidden;
+  /* clip 不创建滚动容器：hidden 仍可被 focus/scrollIntoView 程序化滚走
+     （实测焦点跳到视口外的合并按钮时 scrollTop 变 1817，占位条与弧形整体跑掉，
+     而 syncScroll 只改 .midcol-inner 的 transform、不会复位容器），与编辑页一致。
+     旧版 WebKit 不认识 clip 时退回 hidden（仍裁切）。 */
+  overflow: clip;
 }
 
 /* 中间列顶部占位：高度 = 相邻文本栏 .panel-label（运行时实测，midcolTopPad）。

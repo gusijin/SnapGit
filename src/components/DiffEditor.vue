@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { writeFileContent } from '../api/git'
+import { updateTextareaCursor } from '../utils/scrollbarCursor'
 
 interface Props {
   repoPath: string
@@ -243,7 +244,8 @@ const rulerMarks = computed(() => {
 // overlay 内层 ref，用于跟随滚动做 translateY
 const leftOverlayInner = ref<HTMLElement | null>(null)
 const rightOverlayInner = ref<HTMLElement | null>(null)
-const middleActionsRef = ref<HTMLElement | null>(null)
+// 中间列内容层：本列容器不接受用户滚动，由 syncScroll 用 translateY 精确同步
+const middleActionsInnerRef = ref<HTMLElement | null>(null)
 
 // 将连续同类型差异行（del/add/mod）合并为一组，每组只渲染一组操作按钮
 // 相同行（eq）不合并，每行占位保持对齐
@@ -411,10 +413,13 @@ function syncScroll(source: 'left' | 'right') {
       ov.style.transform = `translate(${-sourceLeft}px, ${-top}px)`
     }
   })
-  // 中间操作列跟随「源侧」真实位置：按钮始终贴着正在滚动、有内容的一侧
-  const midEl = middleActionsRef.value
-  if (midEl) {
-    midEl.scrollTop = sourceTop
+  // 中间操作列跟随源侧位置：本列自身不可滚动（overflow:hidden），用 transform 搬内容层。
+  // 不能用 scrollTop：中间列没有 textarea 的常驻横滚条，clientHeight 会多 10px，
+  // 滚到底时 scrollTop 被提前钳制（实测差 10px），连接带/合并按钮与文本行错位；
+  // 且鼠标停在本列滚轮时能独立滚走内容（左右代码不动），造成中间区域乱跑。
+  const midInner = middleActionsInnerRef.value
+  if (midInner) {
+    midInner.style.transform = `translateY(${-sourceTop}px)`
   }
   if (source === 'right') updateRightScrollInfo()
 }
@@ -855,6 +860,7 @@ onUnmounted(() => {
               readonly
               class="editor-textarea"
               spellcheck="false"
+              @mousemove="updateTextareaCursor"
               @scroll="syncScroll('left')"
             />
           </div>
@@ -897,9 +903,11 @@ onUnmounted(() => {
         </div>
 
         <!-- 行级操作按钮（VS Code Merge Editor 风格：箭头 + 颜色区块） -->
-        <div class="middle-actions" ref="middleActionsRef">
+        <div class="middle-actions">
+          <div ref="middleActionsInnerRef" class="middle-actions-inner">
           <!-- IDEA / Beyond Compare 风格连接带图层：弧形四边形把左右差异块桥接起来，
-               绝对定位于滚动内容顶部，随中间列一起滚动（纯装饰，不拦截事件） -->
+               绝对定位于内容层顶部（top:8px + 高度=行数×18px），随 translateY 一起同步
+               （纯装饰，不拦截事件） -->
           <svg
             v-if="rowModel.length > 0"
             class="diff-bands"
@@ -953,6 +961,7 @@ onUnmounted(() => {
               </div>
             </template>
           </div>
+          </div>
         </div>
       </div>
 
@@ -987,6 +996,7 @@ onUnmounted(() => {
               v-model="content"
               class="editor-textarea"
               spellcheck="false"
+              @mousemove="updateTextareaCursor"
               @scroll="syncScroll('right')"
             />
           </div>
@@ -1153,13 +1163,31 @@ onUnmounted(() => {
   transition: box-shadow 0.15s ease;
 }
 
-/* 聚焦态：统一主题 accent 蓝 + color-mix 降透明度（描边 55% / 柔光 16%），
-   用 :focus-within 在父容器画 ring —— 容器无滚动条，inset 四边都能正常显示
-   （textarea 自身的 inset 会被右缘自定义滚动条 + 下缘相邻区域遮挡只露出左/上，不友好） */
-.editor-container:focus-within {
-  box-shadow:
-    inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 55%, transparent),
-    inset 0 0 0 5px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+/* 聚焦态：编辑区顶部 2px accent 线 + 3px 柔光（描边 55% / 柔光 16%）。
+   ⚠️ 不能用容器 inset box-shadow：它画在容器背景层，而 .diff-overlay-inner 会随横滚
+   translateX(-scrollLeft)，其不透明行底色盖住顶边左段，只剩内容层右缘之外露出半截蓝线
+   （点击编辑区后「上方选中线错乱」的根因）。改为顶层伪元素，z-index:4 高于
+   ruler(3)/textarea(1)/overlay(0)，横滚到任何位置都完整显示。 */
+.editor-container::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 43px; /* 行号列 42px + 1px 右边框 */
+  right: 10px; /* 让开 10px 垂直滚动条 */
+  height: 5px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--accent-primary) 55%, transparent) 0 2px,
+    color-mix(in srgb, var(--accent-primary) 16%, transparent) 2px 5px
+  );
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.editor-container:focus-within::after {
+  opacity: 1;
 }
 
 .line-numbers {
@@ -1196,6 +1224,9 @@ onUnmounted(() => {
   flex: 1;
   position: relative;
   min-width: 0;
+  /* 滚动条热区在部分 WebKit 版本里继承父容器 cursor，显式置 default 兜底，
+     避免鼠标停在滚动条上显示输入光标（配合 updateTextareaCursor 动态切换） */
+  cursor: default;
 }
 
 .editor-textarea {
@@ -1215,6 +1246,8 @@ onUnmounted(() => {
   /* 文字交给下层彩色渲染层显示，textarea 仅承载光标/选区/编辑 */
   color: transparent;
   caret-color: var(--text-primary);
+  /* 文本区保持输入光标；滚动条槽区域由 updateTextareaCursor 切成 default */
+  cursor: text;
   white-space: pre;
   overflow-y: auto;
   /* 横向滚动条常驻：避免一侧长行出现横滚条、另一侧没有，
@@ -1288,6 +1321,11 @@ onUnmounted(() => {
 
 .diff-overlay-inner {
   padding-top: 8px;
+  /* 撑到最长代码行宽度（与查看面板 .side-inner 同规格）：syncScroll 会随横滚
+     translateX(-scrollLeft)，若只有视口宽，右移后右侧会露出没有行底色的空白，
+     行底色/斜纹断在半截，聚焦线也被遮得只剩右半段。 */
+  width: max-content;
+  min-width: 100%;
   will-change: transform;
   position: relative;
 }
@@ -1484,22 +1522,27 @@ onUnmounted(() => {
   padding: 1px 0;
 }
 
+/* ⚠️ 本列不接受任何用户滚动：鼠标停在中间列滚轮时不能把它单独滚走
+   （左右代码不动、连接带与合并按钮凭空跑掉，与文本行错位）。
+   容器只负责裁剪；内容层 .middle-actions-inner 由 syncScroll 用 translateY 与两侧
+   textarea 精确同步。不用 scrollTop 同步：本列没有 textarea 的常驻横滚条，
+   clientHeight 多 10px，滚到底 scrollTop 被提前钳制，连接带会错位 ~10px
+   （与冲突页 .solver-midcol 同一处理）。 */
 .middle-actions {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  /* clip 不创建滚动容器：连 focus/scrollIntoView 引起的程序化 scrollTop 都不可能发生，
+     内容层只由 transform 驱动。旧版 WebKit 不认识 clip 时退回 hidden（仍裁切）。 */
+  overflow: clip;
   position: relative;
-  scrollbar-width: none;
-  /* 上下各 8px：与 textarea 内容边距一致，内容总高 = 行数×18+16，
-     保证最大滚动距离与 textarea 相等（否则拖到底部时连接带/合并按钮被钳制错位） */
-  padding: 8px 0;
   box-sizing: border-box;
 }
 
-.middle-actions::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+.middle-actions-inner {
+  position: relative;
+  /* 上下各 8px：与 textarea 内容边距一致（行 0 上沿对齐） */
+  padding: 8px 0;
+  will-change: transform;
 }
 
 /* ===== 操作行/组 ===== */
@@ -1523,10 +1566,10 @@ onUnmounted(() => {
 }
 
 /* IDEA / Beyond Compare 风格差异连接带图层：
-   绝对定位于滚动内容顶部（top:0 + 高度=行数×18px），随 middle-actions 一起滚动 */
+   绝对定位于 .middle-actions-inner（top:8px + 高度=行数×18px），随 translateY 同步 */
 .diff-bands {
   position: absolute;
-  top: 8px; /* 与 .middle-actions 的 padding-top 对齐：行 0 的带子上沿 = 文本行 0 上沿 */
+  top: 8px; /* 与 .middle-actions-inner 的 padding-top 对齐：行 0 带子上沿 = 文本行 0 上沿 */
   left: 0;
   width: 100%;
   z-index: 0; /* 位于操作组（含合并按钮 z-index:10）之下 */
