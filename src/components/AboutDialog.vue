@@ -37,7 +37,7 @@ function onOpenChange(value: boolean) {
       <div class="space-y-3 text-sm">
         <div class="flex items-center justify-between">
           <span class="text-muted-foreground">{{ t('about.version') }}</span>
-          <span class="font-medium">v1.0.2</span>
+          <span class="font-medium">v1.0.3</span>
         </div>
         <div class="flex items-center justify-between gap-4">
           <span class="text-muted-foreground">{{ t('about.techStack') }}</span>

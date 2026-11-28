@@ -605,7 +605,7 @@ export default {
     remoteAdded: 'Remote {name} added',
     cloneSuccessOpening: 'Cloned successfully, opening...',
     cloneSuccessOpenFailed: 'Clone succeeded but failed to open: {error}',
-    aboutDialog: 'SnapGit v1.0.2\nA modern Git client built on Tauri 2 + Vue 3',
+    aboutDialog: 'SnapGit v1.0.3\nA modern Git client built on Tauri 2 + Vue 3',
   },
   repositoryList: {
     title: 'Repositories',

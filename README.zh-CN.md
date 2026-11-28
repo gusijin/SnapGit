@@ -6,7 +6,7 @@
 
 [![Free](https://img.shields.io/badge/price-100%25%20FREE-brightgreen)](LICENSE)
 [![No activation](https://img.shields.io/badge/activation-NOT%20REQUIRED-brightgreen)](#下载)
-[![Version](https://img.shields.io/badge/version-1.0.2-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v1.0.2)
+[![Version](https://img.shields.io/badge/version-1.0.3-2d6cdf)](https://github.com/gusijin/SnapGit/releases/tag/v1.0.3)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2d6cdf)](https://github.com/gusijin/SnapGit/releases/latest)
 [![Stack](https://img.shields.io/badge/Tauri%202%20%2B%20Vue%203%20%2B%20Rust-24c8db)](https://github.com/gusijin/SnapGit)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -19,7 +19,7 @@
 
 ## 下载
 
-**1.0.2** 的 Windows、macOS 与 Linux 安装包请前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)** 下载。推送 `v*` tag 后会自动创建 Release（见下方 CI 自动打包一节）。
+**1.0.3** 的 Windows、macOS 与 Linux 安装包请前往 **[GitHub Releases](https://github.com/gusijin/SnapGit/releases/latest)** 下载。推送 `v*` tag 后会自动创建 Release（见下方 CI 自动打包一节）。
 
 > ✅ 所有安装包免费下载，安装后无需注册、无需激活、没有试用期 —— 打开仓库即可开始使用。
 
@@ -33,7 +33,7 @@
 
 ### Windows
 
-1. 下载 `SnapGit_1.0.2_x64-setup.exe`；**仅** 32 位 Windows 才需要 `x86` 包。
+1. 下载 `SnapGit_1.0.3_x64-setup.exe`；**仅** 32 位 Windows 才需要 `x86` 包。
 2. 运行 NSIS 安装程序，缺少 WebView2 Runtime 时会自动安装。
 3. 启动后用 **文件 → 打开仓库**；首次启动也会自动扫描本机仓库，方便快速打开。
 
@@ -122,8 +122,8 @@ npm run tauri -- build --bundles dmg
 `.github/workflows/release.yml` 用 Windows x64 + x86、macOS arm64 + x86_64、Linux x86_64 三个平台构建 Release 产物。Pull Request 和推送到 `main` 时还会运行 `.github/workflows/ci.yml` 中的质量检查。推 `v*` tag 自动发布到 GitHub Release，也可在 Actions 页面手动触发：
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 手动触发 `workflow_dispatch` 只会重新构建并把安装包保存为 Actions 构建产物，**不会创建 GitHub Release，也不会把二进制提交回仓库**；只有推 `v*` tag 才会发布到 Releases 页面。

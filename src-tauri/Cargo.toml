@@ -1,6 +1,6 @@
 [package]
 name = "snapgit"
-version = "1.0.2"
+version = "1.0.3"
 description = "A modern Git client built with Tauri"
 authors = ["HST"]
 edition = "2021"
