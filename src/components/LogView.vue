@@ -342,6 +342,7 @@ onMounted(() => {
           <div class="col col-author">
             <span 
               class="avatar" 
+              :title="commit.author"
               :style="{ backgroundColor: getAvatarColor(commit.author) }"
             >{{ getInitial(commit.author) }}</span>
             <span class="author-name" v-html="highlight(commit.author, filterText)"></span>
@@ -847,6 +848,20 @@ onMounted(() => {
 /* 极窄面板：远程分支标记让位给提交信息，本地分支与标签仍然保留 */
 @container (max-width: 460px) {
   .ref-remote {
+    display: none;
+  }
+}
+
+/* 面板缩得更小：作者列只保留头像，隐藏姓名，把宽度让给提交信息列。
+   头像上的 title 保留完整作者名，hover 即可查看。 */
+@container (max-width: 400px) {
+  .log-item {
+    grid-template-columns: auto minmax(0, 1fr) 28px;
+  }
+  .col-author {
+    justify-content: center;
+  }
+  .author-name {
     display: none;
   }
 }
