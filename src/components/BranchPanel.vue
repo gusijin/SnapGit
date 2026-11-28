@@ -328,13 +328,12 @@ defineExpose({ openCreateDialog })
     </div>
     <div class="panel-content" @contextmenu.prevent.stop="void 0">
       <div v-if="localBranches.length > 0" class="group">
-        <div class="group-title group-branch" @click="toggleGroup('local')">
+        <div class="group-title" @click="toggleGroup('local')">
           <span class="group-title-left">
             <ChevronRight v-if="!expanded.local" :size="12" class="group-caret" />
             <ChevronDown v-else :size="12" class="group-caret" />
             <span>{{ t('branchPanel.local') }}</span>
           </span>
-          <span class="group-count">{{ localBranches.length }}</span>
         </div>
         <div v-show="expanded.local" class="group-body">
           <div
@@ -363,13 +362,12 @@ defineExpose({ openCreateDialog })
       </div>
 
       <div v-if="remoteBranches.length > 0" class="group">
-        <div class="group-title group-branch" @click="toggleGroup('remote')">
+        <div class="group-title" @click="toggleGroup('remote')">
           <span class="group-title-left">
             <ChevronRight v-if="!expanded.remote" :size="12" class="group-caret" />
             <ChevronDown v-else :size="12" class="group-caret" />
             <span>{{ t('branchPanel.remote') }}</span>
           </span>
-          <span class="group-count">{{ remoteBranches.length }}</span>
         </div>
         <div v-show="expanded.remote" class="group-body">
           <div
@@ -391,7 +389,6 @@ defineExpose({ openCreateDialog })
             <ChevronDown v-else :size="12" class="group-caret" />
             <span>{{ t('branchPanel.stash') }}</span>
           </span>
-          <span class="group-count">{{ stashes.length }}</span>
         </div>
         <div v-show="expanded.stash" class="group-body">
           <div
@@ -776,6 +773,8 @@ defineExpose({ openCreateDialog })
   justify-content: space-between;
   align-items: center;
   margin-right: -8px;
+  /* 右侧 18px 是负 margin -8px 铺满滚动条槽后补回 8px + 基础 10px 的几何补偿，
+     不能改成左右对称的 10px。 */
   padding: 5px 18px 5px 12px;
   font-size: 10px;
   color: var(--text-secondary);
@@ -800,30 +799,7 @@ defineExpose({ openCreateDialog })
   color: var(--text-tertiary);
 }
 
-.group-count {
-  font-size: 10px;
-  min-width: 18px;
-  height: 16px;
-  padding: 0 5px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--bg-tertiary);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-weight: 700;
-}
-
-/* 本地/远程分支分组的数量 badge 不加粗（储藏栏保持加粗） */
-.group-branch .group-count {
-  font-weight: 400;
-  min-width: auto;
-  height: auto;
-  padding: 1px 6px;
-  display: inline;
-  border-radius: 8px;
-  color: var(--text-tertiary);
-}
+/* 三个分组标题均不显示数量（本地/远程/储藏统一）。 */
 
 /* .panel-content 用 scrollbar-gutter: stable 预留了 8px 滚动条槽，行背景默认只到内容边缘，
    右侧会露出一条轨道。负 margin 让背景铺满整行（含槽位），补回等量 padding 保持内容位置不变。 */

@@ -402,8 +402,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 右边缘 18px = 分支面板分组数量的 10px 内边距 + 8px 滚动条槽，两处数量徽标同列 */
-  padding: 6px 18px 6px 10px;
+  /* 数量徽标紧跟标题（与变更文件面板 FileList .count 一致），不再推到右边缘，
+     故左右内边距对称 10px；高度仍为 29px 内容 + 1px 分隔线 = 30px。 */
+  padding: 6px 10px;
   background-color: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;
@@ -413,9 +414,9 @@ onUnmounted(() => {
 }
 
 .header-title {
-  flex: 1;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .header-icon {
@@ -424,7 +425,10 @@ onUnmounted(() => {
 }
 
 .count-badge {
+  /* 显式锁定字重/字距，避免日后标题栏字重或 letter-spacing 调整时徽标外观漂移。 */
   font-size: 10px;
+  font-weight: 600;
+  letter-spacing: normal;
   padding: 1px 6px;
   background-color: var(--bg-tertiary);
   color: var(--text-tertiary);
