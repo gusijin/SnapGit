@@ -95,8 +95,10 @@ onMounted(() => {
       :submodule-visible="showSubmodulePanel"
       :sidebar-collapsed="leftPanelCollapsed"
       :current-view="mainView"
+      :log-collapsed="logCollapsed"
       @toggle-submodules="handleMenuAction('toggle-submodules')"
       @toggle-sidebar="handleMenuAction('toggle-sidebar')"
+      @toggle-log-panel="handleMenuAction('toggle-log-panel')"
       @show-working-tree="handleMenuAction('show-working-tree')"
       @show-log="handleMenuAction('show-log')"
     />

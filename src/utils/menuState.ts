@@ -6,7 +6,7 @@ export const MENU_LABEL_KEYS = [
   'openRepo', 'cloneRepo', 'quit', 'config',
   'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll',
   'commit', 'push', 'pull', 'refresh', 'newBranch', 'checkoutBranch',
-  'worktreeView', 'logView', 'submodules', 'sidebar', 'darkTheme', 'aboutSnapGit',
+  'worktreeView', 'logView', 'logPanel', 'submodules', 'sidebar', 'darkTheme', 'aboutSnapGit',
 ] as const
 
 export interface MenuStateInput {
@@ -14,6 +14,8 @@ export interface MenuStateInput {
   dark: boolean
   sidebarCollapsed: boolean
   submodulesVisible: boolean
+  /** 提交日志面板是否展开（= !logCollapsed），同步 macOS「视图 → 提交日志面板」勾选态 */
+  logPanelVisible: boolean
   view: 'worktree' | 'log'
   t: (key: string) => string
 }
@@ -24,6 +26,7 @@ export interface MenuStatePayload {
   dark: boolean
   sidebarCollapsed: boolean
   submodulesVisible: boolean
+  logPanelVisible: boolean
   view: string
   labels: Record<string, string>
 }
@@ -43,6 +46,7 @@ export function buildMenuState(input: MenuStateInput): MenuStatePayload {
     dark: input.dark,
     sidebarCollapsed: input.sidebarCollapsed,
     submodulesVisible: input.submodulesVisible,
+    logPanelVisible: input.logPanelVisible,
     view: input.view,
     labels,
   }

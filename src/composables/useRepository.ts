@@ -2156,6 +2156,10 @@ function handleMenuAction(payload: any) {
     case 'toggle-submodules':
       showSubmodulePanel.value = !showSubmodulePanel.value
       break
+    case 'toggle-log-panel':
+      // 与 LogView 自带折叠按钮、macOS「视图 → 提交日志面板」共用同一状态
+      logCollapsed.value = !logCollapsed.value
+      break
     case 'toggle-sidebar':
       leftPanelCollapsed.value = !leftPanelCollapsed.value
       break
@@ -2220,7 +2224,7 @@ watch(repoPath, (path) => {
 })
 
 // ===== macOS 原生菜单状态同步 =====
-// 单一 menu-state 事件携带完整快照：语言列表、当前语言、主题、侧边栏/子模块显隐、当前视图，
+// 单一 menu-state 事件携带完整快照：语言列表、当前语言、主题、侧边栏/子模块/提交日志面板显隐、当前视图，
 // 以及按当前界面语言翻译好的菜单文案。后端 native_menu.rs 一次性对齐全部勾选态与文案；
 // Windows/Linux 没有原生菜单，emit 无监听者、无害。
 function syncNativeMenu() {
@@ -2229,6 +2233,7 @@ function syncNativeMenu() {
     dark: theme.value === 'dark',
     sidebarCollapsed: leftPanelCollapsed.value,
     submodulesVisible: showSubmodulePanel.value,
+    logPanelVisible: !logCollapsed.value,
     view: mainView.value,
     t,
   })
@@ -2237,7 +2242,7 @@ function syncNativeMenu() {
 
 // 任一状态变化都重发完整快照；启动时 onMounted 再发一次（含从 localStorage 恢复的偏好）。
 // 语言变化同时会刷新 labels，原生菜单文案跟着界面语言切换。
-watch([locale, theme, leftPanelCollapsed, showSubmodulePanel, mainView], syncNativeMenu)
+watch([locale, theme, leftPanelCollapsed, showSubmodulePanel, logCollapsed, mainView], syncNativeMenu)
 
 // 应用级快捷键：Windows/Linux 全量注册（菜单不标快捷键）；macOS 只保留 ⌘B，
 // 其余 ⌘S/⇧⌘P/⇧⌘L/⌘R 由原生菜单 accelerator 派发，前端注册会导致执行两次。

@@ -53,6 +53,7 @@ pub(crate) struct NativeMenuState {
     edit_menu: Submenu<Wry>,
     worktree_item: CheckMenuItem<Wry>,
     log_item: CheckMenuItem<Wry>,
+    log_panel_item: CheckMenuItem<Wry>,
     sidebar_item: CheckMenuItem<Wry>,
     submodules_item: CheckMenuItem<Wry>,
     theme_item: CheckMenuItem<Wry>,
@@ -94,6 +95,15 @@ fn build_menu(
     )?;
     let log_item =
         CheckMenuItem::with_id(app, "show-log", "历史视图", true, false, None::<&str>)?;
+    // 提交日志面板（勾选 = 展开）：与前端 logCollapsed 取反同步，默认展开
+    let toggle_log_panel_item = CheckMenuItem::with_id(
+        app,
+        "toggle-log-panel",
+        "提交日志面板",
+        true,
+        true,
+        None::<&str>,
+    )?;
     let toggle_submodules_item = CheckMenuItem::with_id(
         app,
         "toggle-submodules",
@@ -181,6 +191,7 @@ fn build_menu(
             &worktree_item,
             &log_item,
             &view_sep1,
+            &toggle_log_panel_item,
             &toggle_submodules_item,
             &toggle_sidebar_item,
             &view_sep2,
@@ -233,6 +244,10 @@ fn build_menu(
         ("menu.worktreeView".into(), TextItem::Check(worktree_item.clone())),
         ("menu.logView".into(), TextItem::Check(log_item.clone())),
         (
+            "menu.logPanel".into(),
+            TextItem::Check(toggle_log_panel_item.clone()),
+        ),
+        (
             "menu.submodules".into(),
             TextItem::Check(toggle_submodules_item.clone()),
         ),
@@ -254,6 +269,7 @@ fn build_menu(
             edit_menu,
             worktree_item,
             log_item,
+            log_panel_item: toggle_log_panel_item,
             sidebar_item: toggle_sidebar_item,
             submodules_item: toggle_submodules_item,
             theme_item: toggle_theme_item,
@@ -309,7 +325,7 @@ fn sync_locales(app: &App, locales: &[(String, String)]) {
     *current = next;
 }
 
-/// 前端每侧状态变化（语言/主题/侧边栏/子模块/当前视图）都会发一份完整快照，
+/// 前端每侧状态变化（语言/主题/侧边栏/子模块/提交日志面板/当前视图）都会发一份完整快照，
 /// 这里一次性把所有勾选态对齐，避免多事件之间的先后竞争。
 pub(crate) fn setup_native_menu(app: &App) -> tauri::Result<()> {
     let (menu, state) = build_menu(app, &default_locales())?;
@@ -383,6 +399,9 @@ pub(crate) fn setup_native_menu(app: &App) -> tauri::Result<()> {
         }
         if let Some(visible) = payload.get("submodulesVisible").and_then(|v| v.as_bool()) {
             let _ = state.submodules_item.set_checked(visible);
+        }
+        if let Some(visible) = payload.get("logPanelVisible").and_then(|v| v.as_bool()) {
+            let _ = state.log_panel_item.set_checked(visible);
         }
         if let Some(view) = payload.get("view").and_then(|v| v.as_str()) {
             let _ = state.worktree_item.set_checked(view == "worktree");

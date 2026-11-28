@@ -86,6 +86,7 @@ export default {
     sidebar: '侧边栏',
     worktreeView: '工作视图',
     logView: '历史视图',
+    logPanel: '提交日志面板',
     aboutSnapGit: '关于 SnapGit',
   },
   sidebar: {

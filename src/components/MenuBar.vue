@@ -23,10 +23,12 @@ import {
   Check,
 } from 'lucide-vue-next'
 
-// 父组件传入的面板显隐状态与当前主视图，分别用于「视图 → 子模块」「视图 → 工作视图/历史视图」的勾选态显示
+// 父组件传入的面板显隐状态与当前主视图，用于「视图」下各勾选菜单项的勾选态显示
+// （子模块 / 侧边栏 / 提交日志面板 / 工作视图 / 历史视图）
 const props = defineProps<{
   submoduleVisible?: boolean
   sidebarCollapsed?: boolean
+  logCollapsed?: boolean
   currentView?: 'worktree' | 'log'
 }>()
 
@@ -34,7 +36,7 @@ const emit = defineEmits([
   'open-repo', 'clone-repo', 'commit', 'push', 'pull',
   'branch', 'checkout-branch', 'refresh',
   'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules', 'toggle-sidebar',
-  'show-working-tree', 'show-log'
+  'show-working-tree', 'show-log', 'toggle-log-panel'
 ])
 
 const { theme, toggleTheme } = useTheme()
@@ -126,6 +128,12 @@ const menuItems = computed<MenuEntry[]>(() => [
         checked: props.currentView === 'log'
       },
       { type: 'separator' },
+      {
+        type: 'check',
+        labelKey: 'menu.logPanel',
+        action: 'toggle-log-panel',
+        checked: props.logCollapsed !== true
+      },
       {
         type: 'check',
         labelKey: 'menu.submodules',

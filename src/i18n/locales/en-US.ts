@@ -85,6 +85,7 @@ export default {
     sidebar: 'Sidebar',
     worktreeView: 'Working Tree',
     logView: 'History',
+    logPanel: 'Commit Log Panel',
     aboutSnapGit: 'About SnapGit',
   },
   sidebar: {
