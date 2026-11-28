@@ -4,15 +4,6 @@ import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../stores/theme'
 import { availableLocales, setLocale } from '../i18n'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import {
   FolderOpen,
@@ -41,7 +32,7 @@ const props = defineProps<{
 
 const emit = defineEmits([
   'open-repo', 'clone-repo', 'commit', 'push', 'pull',
-  'branch', 'checkout-branch', 'merge', 'refresh',
+  'branch', 'checkout-branch', 'refresh',
   'repo-config', 'quit', 'about', 'toggle-theme', 'toggle-submodules', 'toggle-sidebar',
   'show-working-tree', 'show-log'
 ])
@@ -160,7 +151,6 @@ const menuItems = computed<MenuEntry[]>(() => [
 ])
 
 const activeMenu = ref<string | null>(null)
-const showAbout = ref(false)
 const menubarRef = ref<HTMLElement | null>(null)
 // 悬停离开后的延迟收起缓冲：给鼠标水平扫过切换到下一个菜单留时间，避免闪断
 let menuLeaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -226,7 +216,7 @@ async function handleAction(action: string | undefined) {
     return
   }
   if (action === 'about') {
-    showAbout.value = true
+    // 共用 Repository.vue 里的 AboutDialog（macOS 原生菜单也走同一入口）
     emit('about')
     return
   }
@@ -313,37 +303,6 @@ async function handleAction(action: string | undefined) {
     </div>
   </div>
 
-  <Dialog v-model:open="showAbout">
-    <DialogContent class="sm:max-w-md">
-      <DialogHeader>
-        <DialogTitle class="flex items-center gap-2">
-          <span class="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold">S</span>
-          SnapGit
-        </DialogTitle>
-        <DialogDescription>
-          {{ t('about.supportedBy') }}
-        </DialogDescription>
-      </DialogHeader>
-
-      <div class="space-y-3 text-sm">
-        <div class="flex items-center justify-between">
-          <span class="text-muted-foreground">{{ t('about.version') }}</span>
-          <span class="font-medium">v1.0.2</span>
-        </div>
-        <div class="flex items-center justify-between gap-4">
-          <span class="text-muted-foreground">{{ t('about.techStack') }}</span>
-          <span class="font-medium text-right">Tauri 2 · Vue 3 · TypeScript</span>
-        </div>
-        <p class="text-muted-foreground leading-relaxed">
-          {{ t('about.description') }}
-        </p>
-      </div>
-
-      <DialogFooter>
-        <Button variant="default" @click="showAbout = false">{{ t('about.confirm') }}</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>
 
 <style scoped>

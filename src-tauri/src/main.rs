@@ -13,8 +13,6 @@ use std::time::{Duration, Instant};
 use tauri::command;
 
 use git2::{BranchType, DiffOptions, Repository, Status, StatusOptions};
-#[cfg(target_os = "macos")]
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[allow(unused_imports)]
 use tauri::{
     AppHandle, Emitter, Listener, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindow,
@@ -41,6 +39,9 @@ mod diff;
 mod stash_submodules;
 
 mod edit_menu;
+
+#[cfg(target_os = "macos")]
+mod native_menu;
 
 pub(crate) use checkout::*;
 pub(crate) use diff::*;
@@ -105,68 +106,8 @@ fn main() {
             // Windows/Linux: 不设置原生菜单，由前端 Vue 组件 MenuBar.vue 渲染窗口内菜单栏
             #[cfg(target_os = "macos")]
             {
-                // 构建原生菜单栏（含语言切换项，用于同步勾选态）
-                let (menu, lang_items, sidebar_item, submodules_item) = build_menu(&app.handle())?;
-                app.set_menu(menu)?;
-
-                // 语言项引用：菜单事件与前端 locale-changed 事件共用，各自持有一份克隆
-                let lang_for_menu = lang_items.clone();
-                let lang_for_state = lang_items;
-                // 管理状态，供 locale-changed 监听回写勾选态
-                app.manage(LangMenuState {
-                    items: lang_for_state,
-                });
-
-                let app_handle = app.handle().clone();
-                app.on_menu_event(move |app, event| {
-                    let id = event.id().0.clone();
-                    if id.starts_with("set-locale-") {
-                        // 更新原生菜单勾选态，使当前语言保持勾选
-                        for it in &lang_for_menu {
-                            let _ = it.set_checked(it.id().0 == id);
-                        }
-                        if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.emit("menu-action", serde_json::json!({ "action": id }));
-                        }
-                        return;
-                    }
-                    if let Some(win) = app.get_webview_window("main") {
-                        on_menu_event(&app_handle, &win, &id);
-                    }
-                });
-
-                // 前端切换语言（含启动时初始同步）后回传，保持原生菜单勾选态一致
-                let app_handle2 = app.handle().clone();
-                app.listen("locale-changed", move |event| {
-                    let payload: serde_json::Value =
-                        serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
-                    if let Some(code) = payload.get("locale").and_then(|v| v.as_str()) {
-                        let target = format!("set-locale-{}", code);
-                        let state = app_handle2.state::<LangMenuState>();
-                        for it in &state.items {
-                            let _ = it.set_checked(it.id().0 == target);
-                        }
-                    }
-                });
-
-                // 前端侧边栏折叠/展开后回传，保持原生菜单「侧边栏」勾选态一致
-                app.listen("sidebar-toggled", move |event| {
-                    let payload: serde_json::Value =
-                        serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
-                    if let Some(collapsed) = payload.get("collapsed").and_then(|v| v.as_bool()) {
-                        let _ = sidebar_item.set_checked(!collapsed);
-                    }
-                });
-
-                // 前端「视图 → 子模块」切换后回传，保持原生菜单勾选态一致；
-                // 前端启动时也会同步一次，用于恢复 localStorage 里保存的显隐偏好。
-                app.listen("submodules-toggled", move |event| {
-                    let payload: serde_json::Value =
-                        serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
-                    if let Some(visible) = payload.get("visible").and_then(|v| v.as_bool()) {
-                        let _ = submodules_item.set_checked(visible);
-                    }
-                });
+                // 构建菜单、转发点击事件、监听前端 menu-state 状态快照，全部在 native_menu.rs
+                native_menu::setup_native_menu(&app.handle())?;
             }
 
             // Windows/Linux: 默认无原生窗口菜单，前端 MenuBar.vue 负责渲染

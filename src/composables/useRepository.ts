@@ -18,6 +18,8 @@ import {
 } from './repositoryUtils'
 import { useTheme } from '../stores/theme'
 import { setLocale } from '../i18n'
+import { matchShortcut } from '../utils/menuShortcuts'
+import { buildMenuState } from '../utils/menuState'
 import {
   useLayout, flushLayout,
   LEFT_PANEL_MIN, LEFT_PANEL_MAX,
@@ -27,7 +29,7 @@ import BranchPanel from '../components/BranchPanel.vue'
 import SubmodulePanel from '../components/SubmodulePanel.vue'
 
 export function useRepository() {
-const { toggleTheme } = useTheme()
+const { theme, toggleTheme } = useTheme()
 const { t, locale } = useI18n()
 const LAST_REPO_KEY = 'snapgit-last-repo'
 const FIRST_LAUNCH_KEY = 'snapgit-first-launch'
@@ -38,6 +40,10 @@ const SUBMODULE_PANEL_KEY = 'snapgit-show-submodules'
 // 判断操作系统：macOS 使用原生菜单栏，隐藏窗口内菜单栏
 // 优先使用 navigator.platform（更可靠），userAgent 作为后备
 const isMacOS = /mac/i.test(navigator.platform) || /mac|darwin/i.test(navigator.userAgent)
+
+// 「关于」对话框：Windows 由 MenuBar 的 emit 打开，macOS 由原生菜单 menu-action('about') 打开，
+// 两端共用 Repository.vue 里挂载的 AboutDialog（macOS 不渲染 MenuBar）。
+const showAbout = ref(false)
 
 // ===== 状态 =====
 const repoPath = ref<string>('')
@@ -2107,11 +2113,8 @@ function handleMenuAction(payload: any) {
   // macOS 原生菜单「编辑 → 语言」发出的 set-locale-<code>
   if (action.startsWith('set-locale-')) {
     const code = action.slice('set-locale-'.length)
+    // locale 变化由统一 watch 发 menu-state，同步 macOS 菜单勾选态与文案
     setLocale(code)
-    // 回传后端，保持原生菜单勾选态一致（仅 macOS 原生菜单消费，其余平台忽略）
-    import('@tauri-apps/api/event').then(({ emit }) =>
-      emit('locale-changed', { locale: code })
-    )
     return
   }
 
@@ -2167,7 +2170,8 @@ function handleMenuAction(payload: any) {
       toggleTheme()
       break
     case 'about':
-      alert(t('repository.aboutDialog'))
+      // 与 Windows 共用 shadcn Dialog，不再用浏览器原生 alert
+      showAbout.value = true
       break
     default:
       // 未处理的菜单动作
@@ -2215,28 +2219,54 @@ watch(repoPath, (path) => {
   }
 })
 
-// 侧边栏快捷键：Ctrl/⌘+B 折叠/展开（与 VS Code 一致）。不拦截普通输入态的 B，仅组合键生效。
-function onSidebarShortcut(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B')) {
-    e.preventDefault()
-    leftPanelCollapsed.value = !leftPanelCollapsed.value
+// ===== macOS 原生菜单状态同步 =====
+// 单一 menu-state 事件携带完整快照：语言列表、当前语言、主题、侧边栏/子模块显隐、当前视图，
+// 以及按当前界面语言翻译好的菜单文案。后端 native_menu.rs 一次性对齐全部勾选态与文案；
+// Windows/Linux 没有原生菜单，emit 无监听者、无害。
+function syncNativeMenu() {
+  const payload = buildMenuState({
+    locale: locale.value,
+    dark: theme.value === 'dark',
+    sidebarCollapsed: leftPanelCollapsed.value,
+    submodulesVisible: showSubmodulePanel.value,
+    view: mainView.value,
+    t,
+  })
+  import('@tauri-apps/api/event').then(({ emit }) => emit('menu-state', payload))
+}
+
+// 任一状态变化都重发完整快照；启动时 onMounted 再发一次（含从 localStorage 恢复的偏好）。
+// 语言变化同时会刷新 labels，原生菜单文案跟着界面语言切换。
+watch([locale, theme, leftPanelCollapsed, showSubmodulePanel, mainView], syncNativeMenu)
+
+// 应用级快捷键：Windows/Linux 全量注册（菜单不标快捷键）；macOS 只保留 ⌘B，
+// 其余 ⌘S/⇧⌘P/⇧⌘L/⌘R 由原生菜单 accelerator 派发，前端注册会导致执行两次。
+function onAppShortcut(e: KeyboardEvent) {
+  const action = matchShortcut(e, isMacOS)
+  if (!action) return
+  e.preventDefault()
+  switch (action) {
+    case 'toggle-sidebar':
+      leftPanelCollapsed.value = !leftPanelCollapsed.value
+      break
+    case 'commit':
+      if (repoPath.value && !isCommitting.value) handleCommitFromToolbar()
+      break
+    case 'push':
+      if (repoPath.value && !isPushing.value) handlePush()
+      break
+    case 'pull':
+      if (repoPath.value && !isPulling.value) handlePull()
+      break
+    case 'refresh':
+      refreshAll()
+      break
   }
 }
 
-// 把折叠态回传 macOS 原生菜单（Windows/Linux 无原生菜单，事件无监听者，无害）
-function syncSidebarMenu(collapsed: boolean) {
-  import('@tauri-apps/api/event').then(({ emit }) => emit('sidebar-toggled', { collapsed }))
-}
-watch(leftPanelCollapsed, (v) => syncSidebarMenu(v))
-
-// 子模块面板显隐：视图菜单切换后写入 localStorage（下次启动恢复），
-// 同时回传 macOS 原生菜单的「子模块」勾选态（Win/Linux 前端菜单直接读 prop，无需事件）
-function syncSubmodulesMenu(visible: boolean) {
-  import('@tauri-apps/api/event').then(({ emit }) => emit('submodules-toggled', { visible }))
-}
+// 子模块面板显隐：视图菜单切换后写入 localStorage（下次启动恢复）
 watch(showSubmodulePanel, (v) => {
   try { localStorage.setItem(SUBMODULE_PANEL_KEY, v ? '1' : '0') } catch {}
-  syncSubmodulesMenu(v)
 })
 
 // 视图切换联动侧边栏：历史视图的日志面板已在左侧，再显示侧边栏会挤占提交详情区，
@@ -2247,15 +2277,9 @@ watch(mainView, (view) => {
 
 onMounted(() => {
   setupMenuListener()
-  window.addEventListener('keydown', onSidebarShortcut)
-  // 初始同步一次侧边栏折叠态到 macOS 原生菜单勾选态
-  syncSidebarMenu(leftPanelCollapsed.value)
-  // 初始同步一次子模块面板显隐到 macOS 原生菜单（含重启后恢复的偏好）
-  syncSubmodulesMenu(showSubmodulePanel.value)
-  // 通知后端当前语言（含启动时恢复的语言偏好），同步 macOS 原生菜单勾选态
-  import('@tauri-apps/api/event').then(({ emit }) =>
-    emit('locale-changed', { locale: locale.value })
-  )
+  window.addEventListener('keydown', onAppShortcut)
+  // 启动同步一次：恢复的语言/主题/面板偏好 + 真实语言列表 + 当前界面菜单文案
+  syncNativeMenu()
   window.addEventListener('focus', onWindowFocus)
 
   // 优先：加载保存的扫描结果。缓存键存在即视为「有缓存」，绝不触发扫盘。
@@ -2309,7 +2333,7 @@ onBeforeUnmount(() => {
   stopResizeCenter()
   stopResizeLeftPanel()
   window.removeEventListener('focus', onWindowFocus)
-  window.removeEventListener('keydown', onSidebarShortcut)
+  window.removeEventListener('keydown', onAppShortcut)
   stopFileWatcher()
   if (diffLoadingTimer) {
     clearTimeout(diffLoadingTimer)
@@ -2565,9 +2589,9 @@ onBeforeUnmount(() => {
     onWindowFocus,
     handleMenuAction,
     setupMenuListener,
-    onSidebarShortcut,
-    syncSidebarMenu,
-    syncSubmodulesMenu,
+    onAppShortcut,
+    syncNativeMenu,
+    showAbout,
     toggleTheme,
     t,
     locale,

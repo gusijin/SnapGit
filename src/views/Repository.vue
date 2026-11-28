@@ -2,6 +2,7 @@
 import { defineAsyncComponent, onMounted } from 'vue'
 import { useRepository } from '../composables/useRepository'
 import MenuBar from '../components/MenuBar.vue'
+import AboutDialog from '../components/AboutDialog.vue'
 import TitleBar from '../components/TitleBar.vue'
 import ToolBar from '../components/ToolBar.vue'
 import RepositoryList from '../components/RepositoryList.vue'
@@ -41,7 +42,7 @@ const {
   checkoutTargetBranch, showStashDialog, stashMessage, stashIncludeUntracked, stashKeepIndex, isStashing,
   toastMessage, toastType, toastVisible, errorDialogVisible, errorMessage, showPushDialog, pushDialogBranch,
   pushDialogAuthMode, pushDialogError, showCloneDialog, showRepoConfig, configRepoPath, showCheckoutBranch,
-  branchPanelRef, submodulePanelRef, showSubmodulePanel, showInitRepoDialog, pendingInitPath, initing,
+  branchPanelRef, submodulePanelRef, showSubmodulePanel, showAbout, showInitRepoDialog, pendingInitPath, initing,
   showNoRemoteDialog, showPullDivergedDialog, pullConflictActive, pendingPullStrategy,
   showAddRemoteDialog, showWelcomeDialog, isPulling, isPushing, statusBarMode, statusBarText,
   handleOpenRepo, handleCommitFromToolbar, handlePush, handlePull, refreshAll, loadFullBranches, handleCheckoutBranch,
@@ -89,8 +90,8 @@ onMounted(() => {
       @refresh="refreshAll"
       @branch="handleMenuAction('new-branch')"
       @checkout-branch="handleMenuAction('checkout-branch')"
-      @merge="handleMenuAction('merge')"
       @repo-config="handleMenuAction('repo-config')"
+      @about="showAbout = true"
       :submodule-visible="showSubmodulePanel"
       :sidebar-collapsed="leftPanelCollapsed"
       :current-view="mainView"
@@ -555,6 +556,9 @@ onMounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- 「关于」对话框：Windows 菜单栏与 macOS 原生菜单共用同一个入口 -->
+    <AboutDialog v-model:open="showAbout" />
 
     <!-- 错误提示对话框：持久弹窗，需用户点击「关闭」才消失（不会自动消失） -->
     <Dialog v-model:open="errorDialogVisible">
