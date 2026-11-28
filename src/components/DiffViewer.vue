@@ -176,6 +176,11 @@ const topIdx = computed(() => {
   return computeWindow(total).start
 })
 
+// ---- 横向滚动：原生滚动条 + sticky 行号 ----
+// ⚠️ 不要引入「自定义横滚条 / scroll 事件驱动位移」：用户拖的滑块与代码位移分处两帧，
+//    拖动会明显不平滑。横向滚动必须由 .side 自己的原生滚动条承担（浏览器同帧更新滑块与内容）。
+//    行号列用 CSS position:sticky;left:0 由合成层固定，零 JS 位移、不抖动；
+//    轨道左端 45px 用行号列底色分段，视觉上滚条只压代码区，滑块仍完整可见。
 // 记录滚动位置，供 renderLines 动态切片
 function onScroll(e: Event) {
   const el = e.target as HTMLElement
@@ -896,7 +901,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   flex: 1;
   overflow-y: auto;
   /* 横向滚动条常驻（IDEA 式）：避免一侧内容宽出现横滚条、另一侧没有
-     导致两栏视口高度差 10px，滚到底部附近 scrollTop 被钳制而行错位 */
+     导致两栏视口高度差 10px，滚到底部附近 scrollTop 被钳制而行错位。
+     ⚠️ 必须是原生横滚条：自定义滚条要靠 scroll 事件回写 scrollLeft，
+        滑块与代码差一帧，左右拖动不平滑（古哥 2026-11-28 反馈）。 */
   overflow-x: scroll;
   min-width: 0;
 }
@@ -906,8 +913,16 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   height: 10px;
 }
 
+/* 轨道左端 45px 染成行号列底色：视觉上滚动条只压代码区、行号列延伸到底，
+   但不遮挡 thumb —— 滑块始终完整可见、可原生拖动（遮罩会在超长行时把窄滑块整块盖掉）。 */
 .side::-webkit-scrollbar-track {
-  background: var(--bg-tertiary);
+  background: linear-gradient(
+    to right,
+    var(--bg-toolbar) 0,
+    var(--bg-toolbar) 45px,
+    var(--bg-tertiary) 45px,
+    var(--bg-tertiary) 100%
+  );
 }
 
 .side::-webkit-scrollbar-thumb {
@@ -922,10 +937,13 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
 .side-inner {
   display: flex;
   flex-direction: column;
+  /* 内容层撑到最长代码行的宽度：所有 .table-row 才能 stretch 到同一宽度，
+     sticky 行号的约束矩形也才有足够宽度一直粘在左侧（滚到行尾不会被顶走）。 */
+  width: max-content;
+  min-width: 100%;
   min-height: 100%;
   position: relative;
-  /* 补偿 .side 的 overflow-x:scroll 常驻横滚条占用的底部 10px，
-     否则滚到最底时末行被横滚条盖住一截（与编辑窗口 .editor-textarea 同根因）。
+  /* 补偿 .side 常驻原生横滚条占用的底部 10px，否则滚到最底时末行被滚条盖住一截。
      div 滚动容器的 padding 不会增加 scrollHeight，故补偿必须加在内容层。 */
   padding-bottom: 10px;
 }
@@ -986,7 +1004,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   border-bottom-width: 0;
 }
 
-/* 行号列：中性 gutter（与编辑文件对比一致，不随差异行染色） */
+/* 行号列：中性 gutter（与编辑文件对比一致，不随差异行染色）。
+   sticky 由浏览器合成层原生处理：横滚时行号纹丝不动、代码正常滚，
+   彻底避免旧方案「scroll 事件写变量 + translateX 补偿」的一帧滞后抖动。 */
 .line-num {
   width: 40px;
   flex-shrink: 0;
@@ -998,8 +1018,9 @@ function sideTokens(line: DiffLine, side: 'left' | 'right'): StyledToken[] {
   -webkit-user-drag: none;
   user-select: none;
   background: var(--bg-toolbar) !important;
-  position: relative;
-  z-index: 1;
+  position: sticky;
+  left: 0;
+  z-index: 2; /* 高于斜纹层(0)与代码行(1)：横滚时行号盖住下面滑过的代码 */
   border-right: 1px solid var(--border-color);
 }
 
